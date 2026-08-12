@@ -1,5 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 
+import {
+  sanitizeSentryEvent,
+  sentryTraceSampleRate,
+} from "@/lib/sentry-config";
+
 /**
  * Sentry edge-runtime init (middleware + edge route handlers). DORMANT BY
  * DEFAULT — with no SENTRY_DSN the SDK is `enabled: false` and sends nothing.
@@ -13,6 +18,10 @@ Sentry.init({
   enabled: Boolean(dsn),
   environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
   release: process.env.VERCEL_GIT_COMMIT_SHA,
-  tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? "0.1"),
+  tracesSampleRate: sentryTraceSampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE),
   sendDefaultPii: false,
+  beforeSend: sanitizeSentryEvent,
+  beforeBreadcrumb(breadcrumb) {
+    return breadcrumb.category === "console" ? null : breadcrumb;
+  },
 });

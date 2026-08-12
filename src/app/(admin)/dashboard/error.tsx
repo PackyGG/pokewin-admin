@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 import Link from "next/link";
 import { AlertTriangle, RotateCw, LayoutDashboard } from "lucide-react";
@@ -18,6 +20,12 @@ export default function DashboardError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(admin)/dashboard",
+      error,
+      digest: error.digest,
+    });
     console.error("[dashboard] page error boundary caught:", error);
   }, [error]);
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import * as React from "react";
 
 /**
@@ -17,6 +19,12 @@ export default function RootError({
 }) {
   React.useEffect(() => {
     try {
+      reportWebappError({
+        source: "react-boundary",
+        boundary: "root",
+        error,
+        digest: error.digest,
+      });
       console.error("[root-error] route render failed:", error);
     } catch {
       // Logging must never be able to break the last usable route fallback.

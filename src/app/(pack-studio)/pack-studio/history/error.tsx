@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 import { HostLink } from "@/components/host-link";
 import { AlertTriangle, ArrowLeft, RotateCw } from "lucide-react";
@@ -30,6 +32,12 @@ export default function PackHistoryError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(pack-studio)/pack-studio/history",
+      error,
+      digest: error.digest,
+    });
     console.error("[pack-studio/history] error boundary caught:", error);
   }, [error]);
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 import Link from "next/link";
 import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
@@ -29,6 +31,12 @@ export default function RolesError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(admin)/admin-users/roles",
+      error,
+      digest: error.digest,
+    });
     console.error("[admin-users/roles] page error boundary caught:", error);
   }, [error]);
 

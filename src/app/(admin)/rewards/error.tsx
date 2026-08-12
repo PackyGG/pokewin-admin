@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 import Link from "next/link";
 import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
@@ -23,6 +25,12 @@ export default function RewardsError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(admin)/rewards",
+      error,
+      digest: error.digest,
+    });
     console.error("[rewards] page error boundary caught:", error);
   }, [error]);
 

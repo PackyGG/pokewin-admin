@@ -1,5 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 
+import {
+  sanitizeSentryEvent,
+  sentryTraceSampleRate,
+} from "@/lib/sentry-config";
+
 /**
  * Sentry server-runtime init (Node.js). DORMANT BY DEFAULT — same contract as
  * the PostgreSQL / Redis layers: with no SENTRY_DSN the SDK is `enabled: false`
@@ -16,9 +21,10 @@ Sentry.init({
   environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
   release: process.env.VERCEL_GIT_COMMIT_SHA,
   // Performance tracing — sample modestly in prod; override via env.
-  tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? "0.1"),
+  tracesSampleRate: sentryTraceSampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE),
   // Never attach cookies / headers / user PII automatically.
   sendDefaultPii: false,
+  beforeSend: sanitizeSentryEvent,
   // SECURITY (SECURITY_AUDIT.md LOW): drop console breadcrumbs. Server logs
   // (e.g. backend-api error payloads) can carry user data; keep them out of
   // Sentry events entirely rather than risk egressing PII on the next capture.

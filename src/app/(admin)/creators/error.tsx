@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 import Link from "next/link";
 import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
@@ -26,6 +28,12 @@ export default function CreatorsError({
     // Server logs already capture the stack via console.error in the
     // page. This logs the client-side rehydration error too so Vercel
     // function logs cover both edges.
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(admin)/creators",
+      error,
+      digest: error.digest,
+    });
     console.error("[creators] page error boundary caught:", error);
   }, [error]);
 

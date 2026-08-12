@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 import { AlertTriangle, RotateCw } from "lucide-react";
 
@@ -37,6 +39,12 @@ export default function PackStudioError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(pack-studio)/pack-studio",
+      error,
+      digest: error.digest,
+    });
     console.error("[pack-studio] error boundary caught:", error);
   }, [error]);
 

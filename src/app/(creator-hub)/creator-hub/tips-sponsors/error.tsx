@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 
 import { HubErrorPage } from "../_components/hub-error-page";
@@ -20,6 +22,12 @@ export default function CreatorHubTipsSponsorsError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(creator-hub)/creator-hub/tips-sponsors",
+      error,
+      digest: error.digest,
+    });
     console.error("[creator-hub/tips-sponsors] error boundary caught:", error);
   }, [error]);
 

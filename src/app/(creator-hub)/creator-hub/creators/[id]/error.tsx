@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, RotateCw } from "lucide-react";
@@ -31,6 +33,12 @@ export default function CreatorHubCreatorDetailError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(creator-hub)/creator-hub/creators/[id]",
+      error,
+      digest: error.digest,
+    });
     console.error("[creator-hub/creators/[id]] error boundary caught:", error);
   }, [error]);
 

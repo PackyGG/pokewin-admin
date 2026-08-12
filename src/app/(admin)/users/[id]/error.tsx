@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect, useTransition } from "react";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, Loader2, RotateCw } from "lucide-react";
@@ -23,6 +25,12 @@ export default function UserDetailError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(admin)/users/[id]",
+      error,
+      digest: error.digest,
+    });
     console.error("[users/[id]] page error boundary caught:", error);
   }, [error]);
 

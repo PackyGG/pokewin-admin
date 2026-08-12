@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 import Link from "next/link";
 import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
@@ -18,6 +20,12 @@ export default function WithdrawalsError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(admin)/withdrawals",
+      error,
+      digest: error.digest,
+    });
     console.error("[withdrawals] page error boundary caught:", error);
   }, [error]);
 

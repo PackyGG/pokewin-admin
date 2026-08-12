@@ -368,7 +368,9 @@ const nextConfig: NextConfig = {
 // Runtime error/perf capture is driven by src/instrumentation*.ts regardless;
 // this wrapper adds source maps + release tagging when the owner sets env.
 const sentryEnabled =
-  Boolean(process.env.SENTRY_DSN) || Boolean(process.env.SENTRY_AUTH_TOKEN);
+  Boolean(process.env.SENTRY_DSN) ||
+  Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN) ||
+  Boolean(process.env.SENTRY_AUTH_TOKEN);
 
 export default sentryEnabled
   ? withSentryConfig(nextConfig, {
@@ -378,6 +380,9 @@ export default sentryEnabled
       silent: !process.env.CI,
       widenClientFileUpload: true,
       disableLogger: true,
+      // Proxy browser events through this deployment so privacy/ad-blocking
+      // extensions cannot silently discard client-side admin failures.
+      tunnelRoute: "/monitoring",
       // Skip source-map upload unless an auth token is present.
       sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
     })

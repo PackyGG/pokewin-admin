@@ -2,6 +2,8 @@
 
 import * as React from "react";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 /**
  * Minimal client-side error boundary for a SINGLE dashboard section.
  *
@@ -32,7 +34,13 @@ export class SectionErrorBoundary extends React.Component<
     return { hasError: true };
   }
 
-  componentDidCatch(error: unknown) {
+  componentDidCatch(error: unknown, info: React.ErrorInfo) {
+    reportWebappError({
+      source: "react-component",
+      boundary: "creator-hub-section",
+      error,
+      componentStack: info.componentStack,
+    });
     console.error("[creator-hub] section error boundary caught:", error);
   }
 

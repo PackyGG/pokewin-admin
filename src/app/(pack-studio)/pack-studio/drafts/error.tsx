@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 import { HostLink } from "@/components/host-link";
 import { AlertTriangle, ArrowLeft, RotateCw } from "lucide-react";
@@ -29,6 +31,12 @@ export default function PackDraftsError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(pack-studio)/pack-studio/drafts",
+      error,
+      digest: error.digest,
+    });
     console.error("[pack-studio/drafts] error boundary caught:", error);
   }, [error]);
 

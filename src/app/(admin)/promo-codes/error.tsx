@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 import Link from "next/link";
 import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
@@ -27,6 +29,12 @@ export default function PromoCodesError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(admin)/promo-codes",
+      error,
+      digest: error.digest,
+    });
     console.error("[promo-codes] page error boundary caught:", error);
   }, [error]);
 

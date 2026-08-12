@@ -284,4 +284,11 @@ test("all four webapps route browser and React failures with source context", ()
   assert.match(routeBoundary, /reportWebappError/);
   assert.match(panelBoundary, /info\.componentStack/);
   assert.match(instrumentation, /registerWebappErrorListeners\(\)/);
+  assert.match(instrumentation, /Sentry\.init\(/);
+  assert.match(
+    instrumentation,
+    /onRouterTransitionStart = Sentry\.captureRouterTransitionStart/,
+  );
+  assert.doesNotMatch(instrumentation, /import\("@sentry\/nextjs"\)/);
+  assert.match(reporter, /Sentry\.captureException\(input\.error\)/);
 });

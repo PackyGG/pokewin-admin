@@ -356,6 +356,6 @@ export const config = {
   // API route handlers are host-agnostic infrastructure and bypass page-host
   // routing. All user-facing pages remain middleware-protected.
   matcher: [
-    "/((?!api/|_next/static|_next/image|favicon.ico|.*\\.png$|.*\\.svg$|.*\\.ico$).*)",
+    "/((?!api/|monitoring(?:/|$)|_next/static|_next/image|favicon.ico|.*\\.png$|.*\\.svg$|.*\\.ico$).*)",
   ],
 };

@@ -1,5 +1,7 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
+
 type WebappErrorSource =
   | "react-boundary"
   | "react-component"
@@ -40,13 +42,34 @@ function componentNames(stack: string | null | undefined): string[] {
  */
 export function reportWebappError(input: WebappErrorReport): void {
   if (typeof window === "undefined") return;
+  const names = componentNames(input.componentStack);
+
+  // React catches boundary errors before Sentry's global handler can observe
+  // them. Capture them explicitly with bounded diagnostic context; window
+  // errors and unhandled rejections are already handled by the SDK itself.
+  if (input.source === "react-boundary" || input.source === "react-component") {
+    try {
+      Sentry.withScope((scope) => {
+        scope.setTag("webapp.error_source", input.source);
+        scope.setTag("webapp.boundary", input.boundary.slice(0, 80));
+        scope.setContext("webapp", {
+          ...(input.digest ? { digest: input.digest.slice(0, 128) } : {}),
+          componentNames: names,
+        });
+        Sentry.captureException(input.error);
+      });
+    } catch {
+      // Sentry must never interfere with the existing fallback/report path.
+    }
+  }
+
   const body = {
     source: input.source,
     boundary: input.boundary.slice(0, 80),
     route: window.location.pathname.slice(0, 300),
     errorName: errorName(input.error),
     ...(input.digest ? { digest: input.digest.slice(0, 128) } : {}),
-    componentNames: componentNames(input.componentStack),
+    componentNames: names,
   };
 
   void fetch("/api/antifraud/webapp-errors", {

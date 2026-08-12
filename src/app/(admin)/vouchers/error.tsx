@@ -1,5 +1,7 @@
 "use client";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 import { useEffect } from "react";
 import Link from "next/link";
 import { AlertTriangle, RotateCw, ArrowLeft } from "lucide-react";
@@ -25,6 +27,12 @@ export default function VouchersError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "(admin)/vouchers",
+      error,
+      digest: error.digest,
+    });
     console.error("[vouchers] page error boundary caught:", error);
   }, [error]);
 
