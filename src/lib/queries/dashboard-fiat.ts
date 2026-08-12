@@ -9,7 +9,7 @@ import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import {
-  kpiWindowToCutoff,
+  kpiWindowToCacheCutoff,
   type DashboardKpiWindow,
 } from "./dashboard-period";
 import {
@@ -356,6 +356,6 @@ export async function getDashboardFiatMetrics(
 ): Promise<DashboardFiatMetrics> {
   return loadDashboardFiatMetricsForCutoff(
     window,
-    kpiWindowToCutoff(window, now).toISOString(),
+    kpiWindowToCacheCutoff(window, now).toISOString(),
   );
 }

@@ -8,7 +8,10 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { excludeStaffCreatorsAndBlacklistedSqlFromIds } from "./_blacklist";
-import { kpiWindowToCutoff, type DashboardKpiWindow } from "./dashboard-period";
+import {
+  kpiWindowToCacheCutoff,
+  type DashboardKpiWindow,
+} from "./dashboard-period";
 import { WAGER_LEG_FILTER, PAYOUT_LEG_FILTER } from "@/lib/metrics/gaming-sql";
 import {
   WAGER_TYPES_SQL,
@@ -279,7 +282,7 @@ export async function getDepositFundedGgrForWindow(
   window: DashboardKpiWindow,
   now: Date = new Date(),
 ): Promise<number> {
-  const cutoff = kpiWindowToCutoff(window, now);
+  const cutoff = kpiWindowToCacheCutoff(window, now);
   const cutoffIso = cutoff.toISOString();
   const blacklist = await getExcludedUserIds();
   const env = await readDbEnv();

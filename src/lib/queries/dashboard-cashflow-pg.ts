@@ -9,7 +9,7 @@ import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { excludeStaffAndBlacklistedSqlFromIds } from "./_blacklist";
 import {
-  kpiWindowToCutoff,
+  kpiWindowToCacheCutoff,
   type DashboardKpiWindow,
 } from "./dashboard-period";
 import { getDashboardFiatMetrics } from "./dashboard-fiat";
@@ -210,7 +210,7 @@ export async function getDashboardCashflowFromPostgres(
   window: DashboardKpiWindow,
   now: Date = new Date(),
 ): Promise<DashboardCashflow> {
-  const cutoff = kpiWindowToCutoff(window, now);
+  const cutoff = kpiWindowToCacheCutoff(window, now);
   const cutoffIso = cutoff.toISOString();
   const blacklist = await getExcludedUserIds();
   const env = await readDbEnv();

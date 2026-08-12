@@ -53,6 +53,7 @@ import {
   DEFAULT_DASHBOARD_PERIOD,
   DEFAULT_DASHBOARD_KPI_WINDOW,
   DASHBOARD_KPI_WINDOW_TITLE,
+  kpiWindowToCacheCutoff,
   kpiWindowToCutoff,
   periodToCutoff,
   type DashboardPeriod,
@@ -81,6 +82,7 @@ export {
   DASHBOARD_KPI_WINDOW_LABELS,
   DASHBOARD_KPI_WINDOW_TITLE,
   DEFAULT_DASHBOARD_KPI_WINDOW,
+  kpiWindowToCacheCutoff,
   kpiWindowToCutoff,
   parseDashboardKpiWindow,
 } from "./dashboard-period";
@@ -233,7 +235,14 @@ const cachedRollingWindowMetrics = unstable_cache(
 function cachedWindowMetricsForPeriod(
   period: DashboardPeriod,
   blacklistIdNotIn: string,
+  env: Awaited<ReturnType<typeof readDbEnv>>,
 ): Promise<WindowMetrics> {
+  // Framework cache callbacks are detached from request cookie context. Keep
+  // dev-toggled reads live in the request so getReadDrizzleDb cannot silently
+  // fall back to the production mirror.
+  if (env !== "prod") {
+    return windowMetricsForPeriodInner(period, blacklistIdNotIn);
+  }
   return period === "all"
     ? cachedLifetimeWindowMetrics(period, blacklistIdNotIn)
     : cachedRollingWindowMetrics(period, blacklistIdNotIn);
@@ -1096,6 +1105,7 @@ export async function getTotalUserCount(): Promise<number> {
  * already revalidates them via the 60s AutoRefresh.
  */
 export const getDashboardStats = cache(async (period: DashboardPeriod = DEFAULT_DASHBOARD_PERIOD) => {
+  const env = await readDbEnv();
   return withTiming("dashboard.getDashboardStats", () =>
     dashboardStatsInner({
       cutoff: periodToCutoff(period, new Date()),
@@ -1107,7 +1117,7 @@ export const getDashboardStats = cache(async (period: DashboardPeriod = DEFAULT_
       // to sparse cachedDailySignups rows only.
       chartPeriod: period,
       loadWindowMetrics: (blacklistIdNotIn) =>
-        cachedWindowMetricsForPeriod(period, blacklistIdNotIn),
+        cachedWindowMetricsForPeriod(period, blacklistIdNotIn, env),
     }),
   );
 });
@@ -1135,7 +1145,8 @@ export const getDashboardStats = cache(async (period: DashboardPeriod = DEFAULT_
 export const getDashboardKpiStats = cache(
   async (window: DashboardKpiWindow = DEFAULT_DASHBOARD_KPI_WINDOW) => {
     const now = new Date();
-    const cutoff = kpiWindowToCutoff(window, now);
+    const cutoff = kpiWindowToCacheCutoff(window, now);
+    const env = await readDbEnv();
     const stats = await withTiming("dashboard.getDashboardKpiStats", () =>
       dashboardStatsInner({
         cutoff,
@@ -1152,7 +1163,9 @@ export const getDashboardKpiStats = cache(
         // results this path discards entirely (see the doc above).
         includeSnapshotMetrics: false,
         loadWindowMetrics: (blacklistIdNotIn) =>
-          cachedKpiWindowMetrics(window, cutoff.toISOString(), blacklistIdNotIn),
+          env === "prod"
+            ? cachedKpiWindowMetrics(window, cutoff.toISOString(), blacklistIdNotIn)
+            : getWindowMetrics({ window: { since: cutoff } }),
       }),
     );
     // Exactly the fields `computeKpiWindowPayload` consumes. Values are
@@ -2205,11 +2218,14 @@ const cachedKpiGgrBreakdown = unstable_cache(
 export async function getGgrBreakdownForKpiWindow(
   window: DashboardKpiWindow,
 ): Promise<GgrBreakdown> {
-  const cutoff = kpiWindowToCutoff(window, new Date());
+  const cutoff = kpiWindowToCacheCutoff(window, new Date());
   const blacklistIdNotIn = blacklistNotInClause(
     "id",
     await getExcludedUserIds(),
   );
+  if ((await readDbEnv()) !== "prod") {
+    return ggrBreakdownForWindow({ since: cutoff });
+  }
   return cachedKpiGgrBreakdown(window, cutoff.toISOString(), blacklistIdNotIn);
 }
 

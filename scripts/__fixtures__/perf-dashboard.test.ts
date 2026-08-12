@@ -13,6 +13,7 @@ const dashboard = read("src/lib/queries/dashboard.ts");
 const fiat = read("src/lib/queries/dashboard-fiat.ts");
 const page = read("src/app/(admin)/dashboard/page.tsx");
 const payload = read("src/app/(admin)/dashboard/kpi-window-data.ts");
+const redis = read("src/lib/cache/redis.ts");
 
 test("the today/24h KPI path does not run the discarded snapshot aggregates", () => {
   // `computeKpiWindowPayload` reads five fields off this aggregate. Running the
@@ -77,9 +78,10 @@ test("the KPI GGR breakdown reuses a cache instead of re-running the gaming legs
   const start = dashboard.indexOf("export async function getGgrBreakdownForKpiWindow");
   const body = dashboard.slice(start, dashboard.indexOf("\n}", start));
   assert.match(body, /cachedKpiGgrBreakdown\(/);
-  assert.ok(
-    !body.includes("ggrBreakdownForWindow("),
-    "the KPI breakdown must not call the uncached legs core directly",
+  assert.match(
+    body,
+    /if \(\(await readDbEnv\(\)\) !== "prod"\)[\s\S]{0,100}ggrBreakdownForWindow/,
+    "only a dev-toggled request may bypass the shared production cache",
   );
 
   // The breakdown and the headline it must reconcile with share a revalidation
@@ -90,6 +92,40 @@ test("the KPI GGR breakdown reuses a cache instead of re-running the gaming legs
     const decl = dashboard.slice(at, dashboard.indexOf("\n);", at));
     assert.match(decl, /tags: \["dashboard-activity"\]/);
   }
+});
+
+test("dashboard metric caches preserve DB environment isolation", () => {
+  // Cookie lookup inside unstable_cache can fall back to prod because the
+  // callback is detached from the request. Dev-toggled reads must bypass it.
+  assert.match(dashboard, /if \(env !== "prod"\) \{[\s\S]{0,140}windowMetricsForPeriodInner/);
+  assert.match(dashboard, /env === "prod"[\s\S]{0,120}cachedKpiWindowMetrics/);
+  assert.match(dashboard, /await readDbEnv\(\)[\s\S]{0,100}!== "prod"[\s\S]{0,100}ggrBreakdownForWindow/);
+});
+
+test("rolling KPI caches use a reusable minute-bucket cutoff", () => {
+  const period = read("src/lib/queries/dashboard-period.ts");
+  assert.match(period, /export function kpiWindowToCacheCutoff\(/);
+  assert.match(period, /Math\.floor\(now\.getTime\(\) \/ 60_000\) \* 60_000/);
+  assert.match(dashboard, /const cutoff = kpiWindowToCacheCutoff\(window, now\);/);
+  for (const file of [
+    "src/lib/queries/dashboard-cashflow-pg.ts",
+    "src/lib/queries/dashboard-fiat.ts",
+    "src/lib/queries/dashboard-deposit-funded-ggr.ts",
+  ]) {
+    assert.match(read(file), /kpiWindowToCacheCutoff\(window, now\)/, file);
+  }
+});
+
+test("every dashboard Redis operation has a fail-open deadline", () => {
+  assert.match(redis, /const REDIS_OPERATION_TIMEOUT_MS = /);
+  for (const operation of ["get", "set", "incr", "expire", "ttl", "del"]) {
+    assert.match(
+      redis,
+      new RegExp(`withRedisDeadline\\(r\\.${operation}(?:<[^>]+>)?\\(`),
+      `Redis ${operation.toUpperCase()} must be deadline bounded`,
+    );
+  }
+  assert.doesNotMatch(redis, /await r\.(?:get|set|incr|expire|ttl|del)\(/);
 });
 
 test("the fiat metrics memo keys on a resolved cutoff, never on a Date argument", () => {
@@ -103,7 +139,7 @@ test("the fiat metrics memo keys on a resolved cutoff, never on a Date argument"
   assert.match(fiat, /const loadDashboardFiatMetricsForCutoff = cache\(/);
   assert.match(
     fiat,
-    /loadDashboardFiatMetricsForCutoff\(\s*window,\s*kpiWindowToCutoff\(window, now\)\.toISOString\(\),/,
+    /loadDashboardFiatMetricsForCutoff\(\s*window,\s*kpiWindowToCacheCutoff\(window, now\)\.toISOString\(\),/,
   );
 });
 

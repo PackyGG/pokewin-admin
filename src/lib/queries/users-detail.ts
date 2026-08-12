@@ -4,7 +4,6 @@ import * as mainSchema from "@/lib/db-schema/main/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import { isUserId, isUuid } from "@/lib/utils/ids";
 import { calculateUserPnl } from "./pnl";
-import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
 import { logError } from "@/lib/errors/logger";
@@ -12,41 +11,6 @@ import { isPostgresError } from "@/lib/postgres-errors";
 import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
 
 const TIP_RECENT_LIMIT = 10;
-
-/**
- * Hard wall-clock budget for the OPTIONAL leaderboard-title lookups in
- * {@link enrichLeaderboardWins}.
- *
- * Those lookups are cosmetic — they only turn "Leaderboard win" into
- * "Leaderboard win — <title>". They are also the single riskiest thing in this
- * whole aggregate: `backendApi`'s timeout is 8s PER ATTEMPT and GETs retry on
- * 429/503, and `affiliateLeaderboardsApi.get` additionally falls back to a
- * per-id PostgreSQL read when the backend errors. One stalled backend could
- * therefore burn far more than the caller's 15s `safeQuery` budget and blank
- * the ENTIRE user-detail band ("User details failed to load") over a missing
- * subtitle. Capping the fan-out here guarantees the tip/prize numbers always
- * render; a backend slower than this just degrades the titles to null, which
- * is exactly what the existing per-id 404 fallback already does.
- *
- * Same defence the wager-progress read applies via WAGER_BACKEND_BUDGET_MS
- * (`src/lib/queries/users-wager-progress.ts`).
- */
-const LEADERBOARD_TITLE_BUDGET_MS = 3_000;
-
-/** Resolve `null` if `p` doesn't settle within `ms` (never rejects). */
-function withBudget<T>(p: Promise<T>, ms: number): Promise<T | null> {
-  let timer: ReturnType<typeof setTimeout>;
-  const cap = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), ms);
-  });
-  return Promise.race([
-    p.then(
-      (v) => v,
-      () => null,
-    ),
-    cap,
-  ]).finally(() => clearTimeout(timer));
-}
 
 function toIso(value: string | Date): string {
   return value instanceof Date
@@ -89,6 +53,7 @@ async function getUserTips(userId: string) {
     amount: string;
     created_at: Date | string;
     metadata: unknown;
+    leaderboard_title: string | null;
     type_count: string;
     type_total: string | null;
   };
@@ -148,9 +113,21 @@ async function getUserTips(userId: string) {
               ) r) AS tip_rows,
            (SELECT COALESCE(jsonb_agg(to_jsonb(p) ORDER BY p.created_at DESC), '[]'::jsonb)
               FROM (
-                SELECT id, type, amount::text, created_at, metadata,
-                       type_count::text, type_total::text
-                  FROM prize_ranked
+                SELECT pr.id, pr.type, pr.amount::text, pr.created_at, pr.metadata,
+                       COALESCE(
+                         pr.metadata->>'title',
+                         (SELECT al.title
+                            FROM affiliate_leaderboards al
+                           WHERE al.id = CASE
+                             WHEN pr.metadata->>'leaderboard_id' ~
+                               '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+                             THEN (pr.metadata->>'leaderboard_id')::uuid
+                             ELSE NULL
+                           END
+                           LIMIT 1)
+                       ) AS leaderboard_title,
+                       pr.type_count::text, pr.type_total::text
+                  FROM prize_ranked pr
                  WHERE row_num <= $2
               ) p) AS prize_rows`,
     userId,
@@ -242,7 +219,7 @@ async function getUserTips(userId: string) {
     leaderboardWins: {
       count: Number(leaderboardAgg?.count ?? 0),
       totalUsd: toNumber(leaderboardAgg?.total ?? 0),
-      recent: await enrichLeaderboardWins(leaderboardRecent),
+      recent: enrichLeaderboardWins(leaderboardRecent),
     },
     raceClaims: {
       count: Number(raceAgg?.count ?? 0),
@@ -283,25 +260,23 @@ function parseRaceClaimMetadata(metadata: unknown): {
  * Resolve each `affiliate_leaderboard_prize` ledger row to the
  * leaderboard it came from. The backend writes the prize event with
  * `metadata.leaderboard_id` (UUID) and `metadata.position` (1-based
- * rank). Titles aren't on the row — we fetch them in one bulk call to
- * the backend admin API and join client-side, so each unique
- * leaderboard is fetched at most once per page render.
+ * rank). The existing tips/prizes SQL resolves a missing metadata title from
+ * `affiliate_leaderboards`, so this mapping starts no backend work and cannot
+ * leave HTTP retries or fallback reads running after a UI timeout.
  *
  * Graceful degradation: rows whose metadata is missing or malformed
  * still render — the UI just shows "Leaderboard win" with no link or
- * sub-line. Backend fetches that 404 (deleted leaderboards) also fall
- * through to a metadata-only display so a hard-deleted source can't
- * blank out the section.
+ * sub-line. Deleted sources fall through to a metadata-only display.
  */
-async function enrichLeaderboardWins(
+function enrichLeaderboardWins(
   rows: {
     id: string;
     amount: { toString(): string } | number | string;
     created_at: Date | string;
     metadata: unknown;
+    leaderboard_title: string | null;
   }[],
-): Promise<
-  {
+): {
     id: string;
     amountUsd: number;
     counterpartyId: null;
@@ -310,8 +285,7 @@ async function enrichLeaderboardWins(
     leaderboardId: string | null;
     leaderboardTitle: string | null;
     position: number | null;
-  }[]
-> {
+  }[] {
   // First pass: pull (id, position, optional title) off each row's
   // metadata. Treat the metadata as `unknown` and narrow defensively —
   // older rows (or rows from a backend rev that didn't populate the
@@ -336,43 +310,9 @@ async function enrichLeaderboardWins(
     return { leaderboardId, position, title };
   });
 
-  // Collect the unique leaderboard IDs that still need a title — skip
-  // any row that already carried `title` in its metadata so we don't
-  // pay a network hop for rows that don't need one.
-  const needTitle = new Set<string>();
-  for (const p of parsed) {
-    if (p.leaderboardId && !p.title) needTitle.add(p.leaderboardId);
-  }
-
-  // Resolve titles in parallel. Per-leaderboard `.catch` means a 404
-  // (hard-deleted leaderboard) only blanks that one row's title; the
-  // other entries still resolve. We never throw from this enricher —
-  // a failed backend round-trip must not 500 the user detail page.
-  const titleById = new Map<string, string>();
-  if (needTitle.size > 0) {
-    // Bounded by LEADERBOARD_TITLE_BUDGET_MS — see the const's doc comment.
-    // `null` (budget blown) leaves every title unresolved, which the mapping
-    // below already tolerates.
-    const results = await withBudget(
-      Promise.allSettled(
-        Array.from(needTitle).map((id) =>
-          affiliateLeaderboardsApi.get(id).then((r) => ({ id, title: r.title })),
-        ),
-      ),
-      LEADERBOARD_TITLE_BUDGET_MS,
-    );
-    for (const r of results ?? []) {
-      if (r.status === "fulfilled") {
-        titleById.set(r.value.id, r.value.title);
-      }
-    }
-  }
-
   return rows.map((r, i) => {
     const p = parsed[i];
-    const resolvedTitle =
-      p.title ??
-      (p.leaderboardId ? (titleById.get(p.leaderboardId) ?? null) : null);
+    const resolvedTitle = p.title ?? r.leaderboard_title;
     return {
       id: r.id,
       amountUsd: toNumber(r.amount),

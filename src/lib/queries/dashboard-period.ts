@@ -128,6 +128,25 @@ export function kpiWindowToCutoff(
 }
 
 /**
+ * Stable cutoff for cross-request KPI caches.
+ *
+ * "today" already has a stable UTC-midnight boundary. A raw rolling-24h
+ * cutoff contains the current millisecond, however, so using it as a cache
+ * argument mints a different entry on every request and defeats a 60-second
+ * cache. Floor the observation time to the cache cadence before subtracting
+ * 24 hours. The resulting window can lag real time by at most 59.999 seconds,
+ * which is already inside the dashboard's 60-second freshness contract.
+ */
+export function kpiWindowToCacheCutoff(
+  window: DashboardKpiWindow,
+  now: Date,
+): Date {
+  if (window === "today") return utcStartOfDay(now);
+  const minuteStart = Math.floor(now.getTime() / 60_000) * 60_000;
+  return new Date(minuteStart - MS_PER_DAY);
+}
+
+/**
  * Sanitize a free-string (URL param / client value) to a real
  * DashboardKpiWindow — unknown values fall back to the default ("today").
  */

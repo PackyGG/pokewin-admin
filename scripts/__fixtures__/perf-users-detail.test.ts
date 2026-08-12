@@ -66,26 +66,16 @@ test("battle limits, wager breakdown and referral counts stay folded into the co
   );
 });
 
-test("the optional leaderboard-title fan-out is wall-clock bounded", () => {
-  // affiliateLeaderboardsApi.get retries on 429/503 AND falls back to a
-  // per-id PostgreSQL read, so an unbounded fan-out here can blow the
-  // caller's whole safeQuery budget and blank the entire user page over a
-  // cosmetic subtitle.
-  const enricher = detailSource.slice(
-    detailSource.indexOf("async function enrichLeaderboardWins("),
-    detailSource.indexOf("Slim header-only query"),
-  );
-  assert.ok(enricher.length > 0, "enrichLeaderboardWins must exist");
-  assert.match(
-    enricher,
-    /withBudget\(\s*Promise\.allSettled\(/,
-    "the leaderboard-title lookups must run under a wall-clock budget",
-  );
-  assert.match(
-    detailSource,
-    /const LEADERBOARD_TITLE_BUDGET_MS = /,
-    "the budget must be a named constant",
-  );
+test("leaderboard titles are folded into the existing prizes statement", () => {
+  // A timed-out Promise.race does not cancel backend retries or their per-id
+  // PostgreSQL fallbacks. Resolve the cosmetic title in the already-required
+  // tips/prizes statement so no work survives the page result.
+  assert.match(detailSource, /FROM affiliate_leaderboards al/);
+  assert.match(detailSource, /AS leaderboard_title/);
+  assert.doesNotMatch(detailSource, /affiliateLeaderboardsApi/);
+  assert.doesNotMatch(detailSource, /Promise\.allSettled/);
+  assert.match(detailSource, /function enrichLeaderboardWins\(/);
+  assert.doesNotMatch(detailSource, /async function enrichLeaderboardWins\(/);
 });
 
 test("the streamed body resolves its reads in a single awaited gate", () => {

@@ -45,6 +45,25 @@ import { Redis } from "@upstash/redis";
 // to "no client" (env absent) and cached so we don't re-check every call.
 let resolvedClient: Redis | null | undefined;
 
+/** Redis is an accelerator; it must never consume a page's database budget. */
+const REDIS_OPERATION_TIMEOUT_MS = 1_000;
+
+async function withRedisDeadline<T>(operation: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("Redis cache operation timed out")),
+      REDIS_OPERATION_TIMEOUT_MS,
+    );
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 /**
  * Lazy singleton accessor. Reads the Upstash REST env on first call:
  *   • both URL + token present → construct and cache a `Redis` client.
@@ -153,7 +172,7 @@ export async function cacheGetOrSet<T>(
   // Best-effort read. Any Redis error here is swallowed so we degrade to
   // computing fresh — a cache GET failure must never surface to the caller.
   try {
-    const hit = await r.get<T>(key);
+    const hit = await withRedisDeadline(r.get<T>(key));
     if (hit !== null && hit !== undefined) return hit;
   } catch {
     // Fall through to compute fresh below.
@@ -165,7 +184,7 @@ export async function cacheGetOrSet<T>(
 
   // Best-effort write. A failed SET must not affect the returned value.
   try {
-    await r.set(key, fresh, { ex: ttlSeconds });
+    await withRedisDeadline(r.set(key, fresh, { ex: ttlSeconds }));
   } catch {
     // Ignore — the fresh value is already computed and returned below.
   }
@@ -223,7 +242,7 @@ export async function cacheGetOrSetStale<T>(
 
   let retained: StaleCacheEntry<T> | null = null;
   try {
-    const cached = await r.get<StaleCacheEntry<T>>(key);
+    const cached = await withRedisDeadline(r.get<StaleCacheEntry<T>>(key));
     if (
       cached &&
       typeof cached === "object" &&
@@ -250,7 +269,7 @@ export async function cacheGetOrSetStale<T>(
         refreshedAtMs: Date.now(),
       };
       try {
-        await r.set(key, entry, { ex: staleSeconds });
+        await withRedisDeadline(r.set(key, entry, { ex: staleSeconds }));
       } catch {
         // The fresh upstream result is still valid.
       }
@@ -352,14 +371,14 @@ export async function rateLimit(
   }
 
   try {
-    const count = await r.incr(key);
+    const count = await withRedisDeadline(r.incr(key));
     // First hit in this window: start the TTL. (If EXPIRE races/fails the key
     // simply persists; a stuck counter would only over-restrict, but the
     // catch below fails open on any throw.)
     if (count === 1) {
-      await r.expire(key, windowSeconds);
+      await withRedisDeadline(r.expire(key, windowSeconds));
     }
-    const ttl = await r.ttl(key);
+    const ttl = await withRedisDeadline(r.ttl(key));
     return {
       allowed: count <= limit,
       limit,
@@ -388,7 +407,7 @@ export async function cacheInvalidate(key: string): Promise<void> {
   const r = getRedis();
   if (!r) return;
   try {
-    await r.del(key);
+    await withRedisDeadline(r.del(key));
   } catch {
     // Ignore — invalidation is best-effort.
   }
