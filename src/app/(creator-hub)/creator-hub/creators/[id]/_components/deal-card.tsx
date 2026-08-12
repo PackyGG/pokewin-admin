@@ -348,7 +348,7 @@ function PnlDealCard({ userId, deal, allDeals }: { userId: string; deal: AdminCr
             <div className="flex items-center justify-between gap-3 border-t pt-3">
               <span className="text-xs text-muted-foreground">
                 {canCalculate
-                  ? "Calculate and freeze the exact UTC frame before choosing a manual payout."
+                  ? "Calculate and freeze the exact UTC frame before crediting the contractual payout."
                   : "The calculation is frozen. Review it, then enter the approved manual credit."}
               </span>
               {canCalculate ? <PnlCalculateButton userId={userId} dealId={deal.id} expectedVersion={deal.version} /> : <PnlSettlementButton

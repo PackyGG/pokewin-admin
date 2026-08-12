@@ -624,9 +624,9 @@ export async function getCreatorCurrentDealPnl(input: {
       calculationState: frozen ? "frozen" : "provisional",
       sitePnlUsd: money(pnl.frame_site_pnl_usd),
       creatorShareUsd,
-      creditedAmountUsd: current.credited_amount_usd === null
-        ? null
-        : money(current.credited_amount_usd),
+      // This column is populated at reservation time, before MAIN commits.
+      // The current-deal endpoint must never describe it as a completed credit.
+      creditedAmountUsd: null,
       affiliatesMadeUsUsd: money(pnl.affiliate_contribution_usd),
       affiliateDepositsUsd: money(pnl.affiliate_deposits_usd),
       affiliateWithdrawalsUsd: money(pnl.affiliate_withdrawals_usd),

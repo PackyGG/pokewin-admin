@@ -5,7 +5,8 @@ import { z } from "zod";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import { createAdminAuditEventDurable } from "@/lib/admin-audit";
-import { queryMainRows, queryRows } from "@/lib/drizzle-query";
+import { getPrimaryDrizzleDb } from "@/lib/db";
+import { queryRows } from "@/lib/drizzle-query";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { adjustBalance } from "@/app/(admin)/users/[id]/actions";
 import { roundSettlementMoney } from "@/lib/creator-pnl-settlement-math";
@@ -70,6 +71,23 @@ export async function creditCreatorPnlShareAction(input: z.input<typeof CreditSc
     if (Number(deal.credited_amount_usd) !== payoutAmountUsd) {
       return { success: false, error: "The settled payout does not match the frozen contractual share." };
     }
+    const [ledger] = await queryRows<Array<{
+      id: string; amount: string; balance_before: string; balance_after: string; created_at: string;
+    }>>(
+      await getPrimaryDrizzleDb(),
+      `SELECT id::text,amount::text,balance_before::text,balance_after::text,created_at::text
+         FROM ledger_transactions
+        WHERE id=$1::uuid AND external_tx_id=$2 AND user_id=$3
+          AND type::text='admin_balance_adjustment' AND status='completed'
+          AND amount::numeric=$4::numeric
+          AND metadata->>'adjustment_category'='creator_pnl_share'
+          AND metadata->>'creator_pnl_deal_id'=$5 LIMIT 1`,
+      deal.credit_ledger_id, deal.credit_idempotency_key, data.userId,
+      payoutAmountUsd, deal.id,
+    );
+    if (!ledger) {
+      return { success: false, error: "The settled payout ledger does not match the frozen PnL contract." };
+    }
     await adminDrizzle.transaction(async (tx) => {
       await queryRows(tx, `SELECT id FROM creator_pnl_deals WHERE id=$1::uuid FOR UPDATE`, deal.id);
       await queryRows(tx,
@@ -86,7 +104,10 @@ export async function creditCreatorPnlShareAction(input: z.input<typeof CreditSc
           amountUsd: payoutAmountUsd,
           contractualAmountUsd: payoutAmountUsd,
           deviationUsd: 0,
-          ledgerTxId: deal.credit_ledger_id,
+          ledgerTxId: ledger.id,
+          ledgerCreatedAt: ledger.created_at,
+          balanceBeforeUsd: Number(ledger.balance_before),
+          balanceAfterUsd: Number(ledger.balance_after),
           externalTxId: deal.credit_idempotency_key,
           settlementReason: deal.settlement_reason,
           frameStartAt: deal.frame_start_utc,
@@ -102,7 +123,7 @@ export async function creditCreatorPnlShareAction(input: z.input<typeof CreditSc
           repairedOnRetry: true,
         }), deal.id);
     });
-    return { success: true, ledgerTxId: deal.credit_ledger_id, amountUsd: payoutAmountUsd };
+    return { success: true, ledgerTxId: ledger.id, amountUsd: payoutAmountUsd };
   }
   if (!["calculated", "crediting"].includes(deal.status)) {
     return { success: false, error: `PnL deal cannot be credited from ${deal.status}.` };
@@ -194,7 +215,8 @@ export async function creditCreatorPnlShareAction(input: z.input<typeof CreditSc
     // An ambiguous transaction outcome is reconciled from the unique marker.
     let recovered: Array<{ id: string }>;
     try {
-      recovered = await queryMainRows<Array<{ id: string }>>(
+      recovered = await queryRows<Array<{ id: string }>>(
+        await getPrimaryDrizzleDb(),
         `SELECT id::text FROM ledger_transactions WHERE external_tx_id=$1
         AND user_id=$2 AND type::text='admin_balance_adjustment' AND status='completed'
         AND amount::numeric=$3::numeric AND metadata->>'adjustment_category'='creator_pnl_share'
@@ -215,7 +237,7 @@ export async function creditCreatorPnlShareAction(input: z.input<typeof CreditSc
       await adminDrizzle.transaction(async (tx) => {
         await queryRows(tx, `SELECT id FROM creator_pnl_deals WHERE id=$1::uuid FOR UPDATE`, deal.id);
         const failed = await queryRows<Array<{ id: string }>>(tx,
-          `UPDATE creator_pnl_deals SET status='calculated', credit_status='failed',
+          `UPDATE creator_pnl_deals SET credit_status='failed',
             credit_error=$2, version=version+1, updated_at=now()
             WHERE id=$1::uuid AND status='crediting' AND credit_ledger_id IS NULL
             RETURNING id::text`,
@@ -239,9 +261,10 @@ export async function creditCreatorPnlShareAction(input: z.input<typeof CreditSc
     }
   }
 
-  const ledgerRows = await queryMainRows<Array<{
+  const ledgerRows = await queryRows<Array<{
     id: string; amount: string; balance_before: string; balance_after: string; created_at: string;
   }>>(
+    await getPrimaryDrizzleDb(),
     `SELECT id::text,amount::text,balance_before::text,balance_after::text,created_at::text
        FROM ledger_transactions
       WHERE id=$1::uuid AND external_tx_id=$2 AND user_id=$3
@@ -257,12 +280,15 @@ export async function creditCreatorPnlShareAction(input: z.input<typeof CreditSc
   }
   await adminDrizzle.transaction(async (tx) => {
     await queryRows(tx, `SELECT id FROM creator_pnl_deals WHERE id=$1::uuid FOR UPDATE`, deal.id);
-    await queryRows(tx,
+    const finalized = await queryRows<Array<{ id: string }>>(tx,
       `UPDATE creator_pnl_deals SET status='settled', credit_status='credited',
         credit_error=NULL, credit_ledger_id=$2,
+        credited_by_admin_user_id=$3::uuid,
         credited_at=COALESCE(credited_at,now()), settled_at=COALESCE(settled_at,now()),
         version=version+1, updated_at=now()
-        WHERE id=$1::uuid AND status IN ('crediting','settled')`, deal.id, ledger.id);
+        WHERE id=$1::uuid AND status IN ('crediting','settled')
+        RETURNING id::text`, deal.id, ledger.id, session.userId);
+    if (!finalized[0]) throw new Error("PnL deal left the crediting state before settlement finalized.");
     if (recoveredAfterAmbiguousOutcome) {
       await queryRows(tx,
         `INSERT INTO admin_audit_events (admin_user_id,event_type,target_user_id,metadata)
@@ -323,6 +349,7 @@ const CalculateSchema = z.object({
 
 export async function calculateCreatorPnlAction(input: z.input<typeof CalculateSchema>) {
   const session = await requireCreatorHubAccess("Not authorized to calculate creator PnL.");
+  await requireCapability(session, "__can_create_creator_deal", "calculate creator PnL settlements");
   const parsed = CalculateSchema.safeParse(input);
   if (!parsed.success) return { success: false as const, error: "Invalid PnL deal." };
   const deal = await getAdminCreatorPnlDeal(parsed.data.userId, parsed.data.dealId);
@@ -376,6 +403,7 @@ export async function calculateCreatorPnlAction(input: z.input<typeof CalculateS
 const CancelSchema = z.object({ userId: z.string().min(8).max(128), dealId: z.string().uuid(), reason: z.string().trim().min(3).max(500) });
 export async function cancelCreatorPnlDealAction(input: z.input<typeof CancelSchema>) {
   const session = await requireCreatorHubAccess("Not authorized to cancel creator PnL deals.");
+  await requireCapability(session, "__can_create_creator_deal", "cancel creator PnL deals");
   const parsed = CancelSchema.safeParse(input);
   if (!parsed.success) return { success: false as const, error: "Enter a cancellation reason." };
   const deal = await getAdminCreatorPnlDeal(parsed.data.userId, parsed.data.dealId);

@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { createCreatorDealApprovalRequest } from "@/lib/creator-deal-approvals";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
+import { requireCapability } from "@/lib/require-capability";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 
 import type { DealPayload } from "./deal-form-shared";
@@ -145,6 +146,18 @@ export async function submitCreatorDealApproval(input: {
     const session = await requireCreatorHubAccess(
       "Not authorized to submit creator deals.",
     );
+    if (input.dealPayload || input.pnlPayload) {
+      await requireCapability(session, "__can_create_creator_deal", "submit creator deals");
+    }
+    if (input.multiplierPayload || input.pnlPayload?.funding.type === "new_multiplier") {
+      await requireCapability(session, "__can_create_multiplier_deal", "submit multiplier-funded creator deals");
+    }
+    if (input.leaderboardPayload) {
+      await requireCapability(session, "__can_approve_leaderboard", "submit creator leaderboards");
+    }
+    if (input.rewardPayload) {
+      await requireCapability(session, "__can_create_reward", "submit creator rewards");
+    }
     const result = await createCreatorDealApprovalRequest({
       ...input,
       submittedByAdminUserId: session.userId,

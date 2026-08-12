@@ -34,6 +34,8 @@ import {
   type PnlMultiplierFundingSnapshot,
 } from "@/lib/creator-pnl-funding-snapshot";
 import {
+  CREATOR_PNL_MAX_FRAME_DAYS,
+  creatorPnlFrameDurationDays,
   isCreatorPnlDealDurationAllowed,
   CREATOR_PNL_MAX_MULTIPLIER_BPS,
 } from "@/lib/creator-pnl-contract";
@@ -156,11 +158,12 @@ const PnlPayloadSchema = z.object({
   if (endMs <= startMs) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["frame_end_utc"], message: "P&L frame end must be after its start." });
   }
-  if (!isCreatorPnlDealDurationAllowed(deal.frame_start_utc, deal.frame_end_utc)) {
+  const durationDays = creatorPnlFrameDurationDays(deal.frame_start_utc, deal.frame_end_utc);
+  if (!Number.isFinite(durationDays) || durationDays < 1 || durationDays > CREATOR_PNL_MAX_FRAME_DAYS) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["frame_end_utc"],
-      message: "P&L frame duration must be exactly 1, 2, 3, or 4 weeks.",
+      message: `P&L frame duration must be 1 to ${CREATOR_PNL_MAX_FRAME_DAYS} days.`,
     });
   }
   if (
@@ -352,10 +355,19 @@ export async function createCreatorDealApprovalRequest(input: {
   const dealPayload = rawDeal == null ? null : DealPayloadSchema.parse(rawDeal);
   const multiplierPayload = rawMultiplier == null ? null : MultiplierPayloadSchema.parse(rawMultiplier);
   const pnlPayload = rawPnl == null ? null : PnlPayloadSchema.parse(rawPnl);
+  if (pnlPayload && !isCreatorPnlDealDurationAllowed(
+    pnlPayload.frame_start_utc,
+    pnlPayload.frame_end_utc,
+  )) {
+    error(400, "pnl_duration_invalid", "New P&L deals must last exactly 1, 2, 3, or 4 weeks.");
+  }
   const rewardPayload = rawReward == null ? null : RewardPayloadSchema.parse(rawReward);
   const leaderboardPayload = rawLeaderboard == null ? null : LeaderboardPayloadSchema.parse(rawLeaderboard);
   const agreement = await getPublishedCreatorAgreementTerms();
   if (!agreement) error(409, "agreement_missing", "Publish creator agreement terms before submitting a deal.");
+  if (agreement.lines.join("\n\n").length > 3_800) {
+    error(409, "agreement_too_long", "The published agreement is too long to display completely in Discord. Publish a version under 3,800 characters first.");
+  }
   if (multiplierPayload && agreement.lines.join("\n").length > 20_000) {
     error(409, "agreement_too_long", "The published agreement is too long for a multiplier deal. Publish a version under 20,000 characters first.");
   }
@@ -1588,9 +1600,23 @@ export async function respondToCreatorDealApproval(input: {
     )).limit(1);
     if (!activeSetup) error(403, "creator_setup_revoked", "This creator's linked Discord setup is no longer active.");
 
-    const prior = await tx.select({ id: creator_deal_approval_events.id, metadata: creator_deal_approval_events.metadata })
+    const prior = await tx.select({
+      id: creator_deal_approval_events.id,
+      requestId: creator_deal_approval_events.request_id,
+      eventType: creator_deal_approval_events.event_type,
+      actorDiscordUserId: creator_deal_approval_events.actor_discord_user_id,
+      metadata: creator_deal_approval_events.metadata,
+    })
       .from(creator_deal_approval_events).where(eq(creator_deal_approval_events.interaction_id, parsed.interactionId)).limit(1);
-    if (prior[0]) return request;
+    if (prior[0]) {
+      const metadata = z.record(z.string(), z.unknown()).nullable().parse(prior[0].metadata);
+      if (prior[0].requestId !== request.id
+        || prior[0].actorDiscordUserId !== parsed.actorDiscordUserId
+        || (prior[0].eventType !== "expired" && metadata?.action !== parsed.action)) {
+        error(409, "interaction_reuse_conflict", "This Discord interaction is already bound to a different approval action.");
+      }
+      return request;
+    }
 
     // Canonical for every kind — a standalone leaderboard or reward request
     // has no deal snapshot to read a window from.
@@ -1608,7 +1634,7 @@ export async function respondToCreatorDealApproval(input: {
         actor_kind: "system",
         actor_discord_user_id: parsed.actorDiscordUserId,
         interaction_id: parsed.interactionId,
-        metadata: { reason: "deal_window_elapsed" },
+        metadata: { reason: "deal_window_elapsed", action: parsed.action },
       });
       return expired;
     }

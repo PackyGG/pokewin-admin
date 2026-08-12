@@ -20,9 +20,13 @@ export function PnlCalculateButton(props: { userId: string; dealId: string; expe
   const [pending, startTransition] = useTransition();
   return <Button type="button" size="sm" variant="outline" disabled={pending}
     onClick={() => startTransition(async () => {
-      const result = await calculateCreatorPnlAction(props);
-      if (!result.success) { toast.error(result.error); return; }
-      toast.success(`Frozen frame preview · contractual payout ${formatCurrency(result.creatorShareUsd)}`);
+      try {
+        const result = await calculateCreatorPnlAction(props);
+        if (!result.success) { toast.error(result.error); return; }
+        toast.success(`Frozen frame preview · contractual payout ${formatCurrency(result.creatorShareUsd)}`);
+      } catch {
+        toast.error("Could not calculate the PnL frame. Refresh and retry.");
+      }
     })}>
     {pending ? <Spinner size={14} /> : <HandCoins className="size-3.5" />}
     {pending ? "Calculating…" : "Calculate frame"}
@@ -84,15 +88,19 @@ export function PnlSettlementButton(props: {
             <Button variant="outline" disabled={pending} onClick={() => setOpen(false)}>Cancel</Button>
             <Button disabled={pending || !valid} onClick={() => startTransition(async () => {
               if (contractualAmountUsd == null || contractualAmountUsd <= 0) return;
-              const result = await creditCreatorPnlShareAction({
-                userId: props.userId, dealId: props.dealId,
-                expectedVersion: props.expectedVersion,
-                reason,
-                totpCode,
-              });
-              if (!result.success) { toast.error(result.error); return; }
-              toast.success(`Credited ${formatCurrency(result.amountUsd)} to the creator`);
-              setOpen(false);
+              try {
+                const result = await creditCreatorPnlShareAction({
+                  userId: props.userId, dealId: props.dealId,
+                  expectedVersion: props.expectedVersion,
+                  reason,
+                  totpCode,
+                });
+                if (!result.success) { toast.error(result.error); return; }
+                toast.success(`Credited ${formatCurrency(result.amountUsd)} to the creator`);
+                setOpen(false);
+              } catch {
+                toast.error("Could not verify the PnL credit. Refresh and retry; the payment is idempotent.");
+              }
             })}>
               {pending ? <Spinner size={14} /> : <HandCoins className="size-4" />}
               {pending ? "Crediting…" : `Credit ${contractualAmountUsd == null ? "payout" : formatCurrency(contractualAmountUsd)}`}

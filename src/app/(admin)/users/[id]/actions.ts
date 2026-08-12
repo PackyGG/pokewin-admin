@@ -648,6 +648,38 @@ export async function adjustBalance(data: {
 
   const meta = categoryResult.meta;
 
+  // P&L is not a generic balance-adjustment category. The Creator Hub first
+  // freezes the contract and reserves its exact amount in ADMIN; re-read that
+  // reservation here so a crafted Server Action call cannot invent or poison
+  // a P&L ledger marker.
+  if (parsed.category === "creator_pnl_share") {
+    const reservation = (await adminDrizzle.execute<{
+      creator_user_id: string; frame_start_utc: string; frame_end_utc: string;
+      positive_pnl_share_bps: number; frame_site_pnl_usd: string;
+      creator_share_usd: string; credited_amount_usd: string;
+    }>(sql`
+      SELECT creator_user_id, frame_start_utc::text, frame_end_utc::text,
+             positive_pnl_share_bps, frame_site_pnl_usd::text,
+             creator_share_usd::text, credited_amount_usd::text
+        FROM creator_pnl_deals
+       WHERE id = ${meta.creatorPnlDealId}::uuid
+         AND status = 'crediting'
+         AND credit_status IN ('crediting','failed')
+       LIMIT 1
+    `)).rows[0];
+    if (!reservation
+      || reservation.creator_user_id !== parsed.userId
+      || reservation.creator_user_id !== meta.creatorId
+      || Number(reservation.creator_share_usd) !== parsed.amount
+      || Number(reservation.credited_amount_usd) !== parsed.amount
+      || reservation.frame_start_utc !== meta.creatorPnlFrameStartUtc
+      || reservation.frame_end_utc !== meta.creatorPnlFrameEndUtc
+      || reservation.positive_pnl_share_bps !== meta.creatorPnlShareBps
+      || Number(reservation.frame_site_pnl_usd) !== meta.creatorPnlFrameSitePnlUsd) {
+      return { success: false, error: "Creator PnL credit does not match an immutable reserved settlement" };
+    }
+  }
+
   // Creator-linked adjustments (leaderboard, official_stream) link to a
   // creator — verify the linked id is a real creator on the main DB before
   // writing. `user.role === 'creator'` is the established creator marker
