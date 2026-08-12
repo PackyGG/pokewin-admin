@@ -115,7 +115,7 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   {
     method: "POST",
     path: "/api/v1/discord/creator-setups/stream-events",
-    summary: "Body { after }. Returns recently changed creator stream sessions mapped to their Discord creator sections for private admin-log delivery.",
+    summary: "Body { after }. Returns creator stream lifecycle transitions mapped to their Discord sections for private admin-log delivery, including ending balance and the exact converted-to-real-balance amount (including zero).",
     scopes: ["discord:creator:setup"],
   },
   {

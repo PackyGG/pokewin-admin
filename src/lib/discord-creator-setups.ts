@@ -702,8 +702,20 @@ export async function getCreatorSetupStreamEvents(input: { after: string }) {
         conversion_rate_bps_snapshot, converted_to_raw_usd::text, version, updated_at
       FROM creator_stream_sessions
       WHERE user_id = ANY(${pgArrayParam(ids)}::text[])
-        AND updated_at >= ${cutoff}::timestamptz
-      ORDER BY updated_at ASC
+        AND (
+          updated_at >= ${cutoff}::timestamptz
+          OR activated_at >= ${cutoff}::timestamptz
+          OR first_bet_at >= ${cutoff}::timestamptz
+          OR ended_at >= ${cutoff}::timestamptz
+          OR converted_at >= ${cutoff}::timestamptz
+        )
+      ORDER BY GREATEST(
+        updated_at,
+        activated_at,
+        COALESCE(first_bet_at, '-infinity'::timestamp),
+        COALESCE(ended_at, '-infinity'::timestamp),
+        COALESCE(converted_at, '-infinity'::timestamp)
+      ) ASC
       LIMIT 500
     `),
     db.execute<CreatorTipEventRow>(sql`

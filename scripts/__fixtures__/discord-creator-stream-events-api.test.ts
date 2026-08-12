@@ -24,6 +24,23 @@ test("creator stream events expose recipient-aware tip and sponsored-battle logs
   assert.match(service, /'creator_multiplier_spend_tip'/);
   assert.match(service, /lt\.status::text = 'completed'/);
 
+  // MAIN does not guarantee that every lifecycle mutation advances
+  // updated_at. Each transition timestamp must therefore be independently
+  // cursor-visible, especially end/conversion where the payout amount and
+  // zero-balance result are attached to the final snapshot.
+  assert.match(
+    service,
+    /OR first_bet_at >= \$\{cutoff\}::timestamptz/,
+  );
+  assert.match(service, /OR ended_at >= \$\{cutoff\}::timestamptz/);
+  assert.match(service, /OR converted_at >= \$\{cutoff\}::timestamptz/);
+  assert.match(service, /converted_to_raw_usd::text/);
+  assert.match(service, /ending_balance_usd::text/);
+  assert.match(
+    service,
+    /ORDER BY GREATEST\([\s\S]*COALESCE\(converted_at, '-infinity'::timestamp\)/,
+  );
+
   assert.match(service, /JOIN battles b ON b\.id = bp\.battle_id/);
   assert.match(service, /b\.user_id AS creator_user_id/);
   assert.match(service, /bp\.user_id AS recipient_user_id/);
