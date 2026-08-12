@@ -26,7 +26,8 @@ test("only a confirmed manual decision adds the Rain reward lock", async () => {
   assert.match(action, /decision === "confirm"/);
   assert.match(action, /requireCapability[\s\S]*__can_toggle_feature_locks/);
   assert.match(action, /confirmRainRewardAbuse/);
-  assert.match(action, /WHERE status = 'pending'|eq\(reward_abuse_reviews\.status, "pending"\)/);
+  assert.match(action, /review\.status !== "pending"/);
+  assert.match(action, /pg_advisory_xact_lock/);
 });
 
 test("confirmation caps Rain forfeiture in the authoritative backend", async () => {
