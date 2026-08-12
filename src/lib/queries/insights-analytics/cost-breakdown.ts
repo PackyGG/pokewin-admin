@@ -508,7 +508,7 @@ function residualGroup(type: string): {
  * sees, and they are the reference this table must reconcile with.
  *
  * The previous implementation summed a LEGACY ledger payout set
- * (`_wager-payout-types.ts` `WAGER_PAYOUT_PAYOUT_TYPES`) which folds
+ * (the retired legacy wager/payout set) which folded
  * `card_sale`, `voucher_redeemed`, `card_exchange` and every reward type
  * into the payout side — disposals of value the user already owns +
  * house-funded rewards, NOT gameplay winnings. That over-counted the

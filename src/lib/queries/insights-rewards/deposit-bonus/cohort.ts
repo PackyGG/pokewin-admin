@@ -24,9 +24,8 @@ import {
  *   - top-1% deposit size per side
  *   - 7d / 30d retention via subsequent wager activity after the deposit
  *
- * Plus the bonus / deposit ratio histogram in 5 fixed buckets
- * (matches the existing legacy helper in `deposit-bonus-analytics.ts`)
- * + a continuous mean / median ratio.
+ * Plus the bonus / deposit ratio histogram in 5 fixed buckets and a
+ * continuous mean / median ratio.
  *
  * Bonus↔deposit pairing rule: `bonus.balance_before == deposit.balance_after`
  * within 30 seconds of the deposit. Same rule used by the other
@@ -300,8 +299,7 @@ async function computeRatioDistribution(
 
   // Ratio histogram + count-weighted mean + global median in a single
   // pass over the paired set. Only paired rows count toward the
-  // distribution (an unpaired deposit has no ratio). Same bucket
-  // definitions as the legacy `deposit-bonus-analytics.ts`.
+  // distribution (an unpaired deposit has no ratio).
   //
   // PERFORMANCE — same materialised hash-join shape as the rollup above
   // (see the long PERFORMANCE comment in computeCohortComparison): the

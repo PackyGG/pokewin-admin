@@ -128,8 +128,7 @@ export async function getResolvedBlacklist(): Promise<string[]> {
 
 /**
  * AND-fragment that filters a user-id column to non-staff, non-creator,
- * non-blacklisted users. Mirrors the inline patterns in
- * `rewards-category-analytics.ts`.
+ * non-blacklisted users.
  *
  *   - subqueryColumn   — id column of the table the subquery selects
  *                        FROM; defaults to `id` since the inner SELECT

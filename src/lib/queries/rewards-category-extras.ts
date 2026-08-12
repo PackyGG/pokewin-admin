@@ -6,11 +6,8 @@ import { toNumber } from "@/lib/utils/decimal";
 import type { RewardsPeriod } from "./rewards-analytics";
 
 /**
- * Category-specific extras for the deep-stats tabs on
- * /rewards/analytics. The shared `rewards-category-analytics.ts` helper
- * gives every tab the same baseline (total / count / avg / median / max
- * / unique / daily / top users / top days). These extras are the
- * per-category nuances:
+ * Category-specific extras for reward deep-stat surfaces. These are the
+ * per-category nuances beyond the common totals and time-series metrics:
  *
  *   - Race      → distinct races, avg prize per race, largest single
  *                 prize, top race by total prize pool in the window

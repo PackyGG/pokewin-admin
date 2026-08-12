@@ -111,7 +111,7 @@ export type OverviewDay = {
 //
 // Each leg is now wrapped in `safeQuery` with the canonical heavy-read
 // timeout and a NEUTRAL fallback (all-zero metrics, empty series), exactly
-// like `getGgrPageData` in `@/lib/queries/ggr.ts`. A single slow/failed leg
+// like the other resilient analytics assemblers. A single slow/failed leg
 // (in practice the unbounded-lifetime canonical GGR/NGR reads) degrades to
 // 0/empty and the REST of the Overview KPIs still render. This is a pure
 // resilience change — no metric formula, scope, or query shape is altered;

@@ -10,8 +10,7 @@ export const maxDuration = 300;
 /**
  * SSE proxy for the antifraud monitor's websocket feed.
  *
- * Wire format matches `sseResponse` in `@/lib/sse` so the browser side can use
- * the shared `useSseStream` hook:
+ * Wire format matches the shared `useSseStream` browser hook:
  *   - `event: row`        → one monitor frame (`{ id, type, at, data }`)
  *   - `id: <redis-id>`    → replay cursor retained by EventSource
  *

@@ -5,7 +5,7 @@ import * as React from "react";
 /**
  * Browser-side subscription to a server SSE stream.
  *
- * Contract matches `sseResponse` in `@/lib/sse`:
+ * Contract matches the event-stream routes used by the live feeds:
  *   - `init`      → `onInit(rows)` (single call when the connection opens)
  *   - `row`       → `onRow(row)`   (one call per new row)
  *   - `reconnect` → client tears down and opens a fresh EventSource

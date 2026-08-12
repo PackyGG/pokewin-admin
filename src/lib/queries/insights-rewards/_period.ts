@@ -7,10 +7,8 @@ import type { RewardsPeriod } from "@/lib/queries/rewards-analytics";
  * rewards-analytics page supports.
  *
  * Internally each helper maps the wider set down to either:
- *   - a `RewardsPeriod` for the upstream per-category helpers (today /
- *     7d / 30d / all), so the per-category tab on /insights/rewards can
- *     reuse the cached rewards-category-analytics + rewards-category-extras
- *     helpers without forking a second cache key set, OR
+ *   - a `RewardsPeriod` for compatible category helpers (today / 7d / 30d /
+ *     all), so per-category panels can reuse established cache keys, OR
  *   - a raw day count (number | null) for the cross-category queries
  *     in this folder, which compute pre/post / lift / stacking lenses
  *     across reward types and need the full 6-window precision.
@@ -106,8 +104,7 @@ export function daysForInsightsPeriodCapped(p: InsightsRewardsPeriod): number {
 
 /**
  * Map an InsightsRewardsPeriod onto the closest `RewardsPeriod` used by
- * the existing per-category helpers (`rewards-category-analytics.ts` and
- * `rewards-category-extras.ts`). The /rewards/analytics page only exposes
+ * the existing per-category helpers. The /rewards/analytics page only exposes
  * today / 7d / 30d / all — finer windows (3d / 90d) round to the nearest
  * supported bucket so the per-category panels still reconcile with what
  * an admin sees on /rewards/analytics for the same range. Lifetime (all)
@@ -137,10 +134,7 @@ export function insightsPeriodToCategoryPeriod(
 /**
  * Default cache TTL for cross-category helpers — 60 seconds for shorter
  * windows where activity changes fast, 5 minutes for the lifetime view
- * which barely moves second-to-second. Mirrors the pattern used in
- * `rewards-category-analytics.ts` (60s revalidate) while loosening it
- * for the lifetime sweep so the heavier query doesn't refire on every
- * admin scroll.
+ * which barely moves second-to-second.
  */
 export function cacheTtlForInsightsPeriod(p: InsightsRewardsPeriod): number {
   return p === "all" ? 300 : 60;

@@ -99,13 +99,12 @@ export type { DashboardKpiWindow } from "./dashboard-period";
  * lower bound — and on the dashboard that read had NO `safeQuery` timeout
  * and NO cache, so a slow full-history scan blocked the KPI strip until
  * Postgres returned or the platform killed the request. So "all" is now
- * bounded to the SAME capped lookback the `/ggr` page already uses for its
- * Lifetime chip (`GGR_LIFETIME_LOOKBACK_DAYS = 365` in
- * `src/lib/queries/ggr.ts`, itself mirroring the canonical 365-day guard
+ * bounded to the same capped 365-day lookback used by other lifetime views,
+ * mirroring the canonical guard
  * shared by deposit-bonus `_shared.ts` / rakeback ROI / `signup/daily.ts`
  * / `suspicious.ts`). The value is inlined here as a local constant —
- * rather than imported from the `server-only` `ggr.ts` — to keep this
- * module decoupled and free of a `server-only` import (client components
+ * rather than imported from a server-only query module, keeping this module
+ * decoupled and free of a `server-only` import (client components
  * pull this module's TYPES via `import type`), the SAME way `suspicious.ts`
  * / `signup/daily.ts` inline `365` with a reference comment. Keep this in
  * sync with the canonical 365-day guard.
@@ -2126,8 +2125,8 @@ export async function getActiveRain(): Promise<ActiveRainSummary> {
 // GGR breakdown — makes the headline GGR number auditable.
 //
 // Both helpers below now mirror the canonical `@/lib/metrics`
-// inventory-delta GGR (NOT the old `_wager-payout-types.ts` 19-type
-// payout list, which folded the NEUTRAL card/voucher conversions and a
+// inventory-delta GGR (not the retired 19-type payout list, which folded
+// the NEUTRAL card/voucher conversions and a
 // phantom ledger `upgrader_payout` into the payout side). The popover
 // therefore reconciles with the headline `getWindowMetrics.ggr` by
 // construction.

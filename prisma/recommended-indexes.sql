@@ -301,7 +301,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ledger_tx_created_at
 -- lookup. Also helps any per-battle participant fetch.
 --
 -- Accelerates:
---   • src/lib/queries/battles.ts getBattles biggest-hit multiplier CTE
+--   • historical biggest-hit battle multiplier query
 --   • per-battle participant joins generally
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_battle_participants_battle_id
   ON battle_participants (battle_id);
@@ -1200,7 +1200,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_affiliate_codes_upper_code_prefix
 -- ===================================================================
 -- New admin page: a live leaderboard of the most active packy chat senders
 -- for the CURRENT UTC calendar day (getTopChattersToday in
--- src/lib/queries/chat.ts). Query shape:
+-- historical chat-message query). Query shape:
 --   SELECT cm.user_id, COUNT(*) FROM chat_messages cm
 --   WHERE cm.is_deleted = false
 --     AND cm.created_at >= <today 00:00 UTC> AND cm.created_at < <tomorrow 00:00 UTC>

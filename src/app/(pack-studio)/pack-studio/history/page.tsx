@@ -119,7 +119,7 @@ async function loadHistory(
   );
   // Batched ADMIN read: resolve every captured_by id → display name/email so the
   // timeline shows WHO captured each row instead of a raw UUID slug. Same
-  // pattern as src/lib/queries/changelog.ts:106 / src/lib/balance-limits.ts:146.
+  // pattern as the batched actor lookup in src/lib/balance-limits.ts.
   const capturedByIds = Array.from(new Set(snapshots.map((s) => s.capturedBy)));
   // Batched MAIN read: card identity for the union of every card_id across all
   // visible snapshots. One PK probe (`id = ANY(...)`) — same shape as the

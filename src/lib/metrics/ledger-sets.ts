@@ -236,10 +236,9 @@ export const GAMING_PAYOUT_TYPES = [
  *
  * These are EXCLUDED from the payout side of GGR — this partition is the
  * live canonical GGR's treatment of them (neutral). The legacy
- * dashboard-only set in `src/lib/queries/_wager-payout-types.ts`
- * (`WAGER_PAYOUT_PAYOUT_TYPES`) still folds most of them into ITS payout
- * side, but that is a separate, non-canonical "GGR" definition (closer to
- * NGR) — keeping `card_sale` (alone hundreds of thousands of rows) out of
+ * retired dashboard-only set folded most of them into its payout side, but
+ * that was a separate, non-canonical "GGR" definition (closer to NGR).
+ * Keeping `card_sale` (alone hundreds of thousands of rows) out of
  * the canonical payout side was the biggest single divergence the
  * canonical model fixed. They still appear in realized PnL via the
  * balance / inventory / voucher deltas — that is correct and intentional.

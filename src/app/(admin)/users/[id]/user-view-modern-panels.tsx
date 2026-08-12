@@ -201,11 +201,10 @@ function RollingPnlChip({ label, value }: { label: string; value: number }) {
  *   • Locked (`removeKind="wager"`) — the bonus/wager-requirement debt is
  *     cleared by `clearUserWagerRequirementAction`, which routes through
  *     the backend HTTP API. That action exists but it is a
- *     panel-wide action surfaced on the dedicated Wager Requirement card
- *     (`user-wager-requirement-card.tsx`); reusing it from this row
- *     would dilute the dialog UX that card carries (confirm copy +
+ *     panel-wide action surfaced on the Wager Progress card; reusing it
+ *     from this row would dilute the dialog UX that card carries (confirm copy +
  *     audit row + toast). For now the row's inline Remove button stays
- *     disabled and the tooltip points operators at the dedicated card —
+ *     disabled and the tooltip points operators at that card —
  *     same "show the affordance" reasoning as the vault case.
  *
  * When either action ships in a panel-friendly form (a confirm dialog +

@@ -1,10 +1,8 @@
-// Single shared navigation config — the ONE source of truth for the
-// sidebar (`src/components/app-sidebar.tsx`), the command palette
-// (`src/lib/commands.ts`), and the `/system/commands` docs grouping.
+// Single shared navigation config — the source of truth for the admin
+// sidebar and the derived navigation group helpers below.
 //
-// Before this module those three lists drifted independently. Now they all
-// DERIVE from `NAV_ENTRIES` below, so adding/moving a route in one place
-// surfaces it everywhere consistently.
+// Keeping routes in `NAV_ENTRIES` prevents permission and presentation
+// metadata from drifting across consumers.
 //
 // Relationship to the permission system:
 //   - `src/lib/admin-pages.ts` (`ADMIN_PAGES`) stays the authoritative

@@ -16,7 +16,6 @@ function isHistoricalArtifact(file: string): boolean {
     /(?:^|\/)(?:archive|archives)(?:\/|$)/i.test(file) ||
     /(?:^|\/)[^/]*archive[^/]*\.(?:md|json|sql)$/i.test(file) ||
     /(?:^|\/)migrations?\/.*\.sql$/i.test(file) ||
-    file === "src/lib/changelog/recent-pushes.json" ||
     file === "scripts/__fixtures__/postgres-drizzle-boundary.test.ts"
   );
 }

@@ -15,7 +15,17 @@
     "*.{ts,mjs}"
   ],
   "ignore": [
-    "src/lib/db-schema/**"
+    "src/lib/db-schema/**",
+    "src/app/(admin)/vouchers/actions.ts",
+    "src/app/(admin)/vouchers/create-dialog.tsx",
+    "src/app/(antifraud)/antifraud/_components/live-feed.tsx",
+    "src/lib/api-auth/endpoints.ts",
+    "src/lib/queries/dashboard-deposit-funded-ggr.ts",
+    "src/lib/queries/fiat-withdrawal-review.ts",
+    "src/lib/queries/insights-analytics/overview.ts",
+    "src/lib/queries/insights-rewards/motha/overview.ts",
+    "src/lib/queries/insights-rewards/signup/_shared.ts",
+    "src/lib/queries/insights-rewards/signup/overview.ts"
   ],
   "include": [
     "files",

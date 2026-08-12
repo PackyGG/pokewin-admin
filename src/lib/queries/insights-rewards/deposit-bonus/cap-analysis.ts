@@ -270,9 +270,8 @@ async function computeCapAnalysis(
     lastHitAt: new Date(r.last_hit_at).toISOString(),
   }));
 
-  // Step 3: top 10 deposits that triggered a cap-equal bonus. Same
-  // canonical bonus↔deposit pairing as `deposit-bonus-analytics.ts`
-  // (balance_before == balance_after, 30s window).
+  // Step 3: top 10 deposits that triggered a cap-equal bonus using the
+  // canonical balance_before == balance_after pairing within 30 seconds.
   //
   // PERFORMANCE — hash join over a materialised, cap-equal bonus set, NOT
   // a correlated LATERAL. The original `JOIN LATERAL (… LIMIT 1)` had no

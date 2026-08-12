@@ -4,9 +4,8 @@
  * Per-user withdrawal wager-requirement standing (read-only display) with
  * optional admin controls to adjust or clear the frozen debt counter.
  *
- * Sibling to `user-wager-requirement-card.tsx` (which manages the per-user
- * override CONFIG). This card shows the user's actual standing against the
- * FROZEN-RATE DEBT gate (backend rework 2026-06-14): a PARTIAL lock where the
+ * This card shows the user's actual standing against the FROZEN-RATE DEBT
+ * gate (backend rework 2026-06-14): a PARTIAL lock where the
  * locked debt (`balances.wager_requirement_remaining`) reserves that many
  * balance dollars and `withdrawable = max(0, available − locked)` is free to
  * leave. Sourced read-only from the backend-written `balances` columns (see

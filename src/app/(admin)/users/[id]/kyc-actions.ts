@@ -1,7 +1,7 @@
 "use server";
 
 // TAG-ONLY invalidation for the user-detail surface — same rationale as
-// fraud-locks-actions.ts. The card updates in place from the action's return
+// other user-control actions. The card updates in place from the action's return
 // value, so a current-route `revalidatePath('/users/[id]')` would only
 // re-render + re-suspend the page and lose the admin's scroll. Busting the
 // per-user `users-detail-${userId}` tag keeps the cached reads fresh.
