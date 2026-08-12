@@ -75,7 +75,10 @@ test("overview metrics use bounded real sources and never equate KYC with fraud"
   assert.match(query, /pwe\.event_type = 'payment\.succeeded'/);
   assert.match(query, /DISTINCT ON \(payment_id\)/);
   assert.match(query, /automaticBanSql/);
-  assert.match(query, /Automatic fraud ban:/);
+  assert.match(query, /COALESCE\(u\.banned_reason LIKE/);
+  assert.match(query, /Automatic % ban:/);
+  assert.match(query, /WHERE is_banned AND NOT \$\{automaticBanSql\(\)\}/);
+  assert.match(query, /WHERE is_banned AND \$\{automaticBanSql\(\)\}/);
   assert.match(query, /kyc_required_by LIKE 'system:%'/);
   assert.match(query, /SELECT generate_series\([\s\S]*interval '29 days'/);
   assert.match(query, /interval '30 days'/);
@@ -84,7 +87,7 @@ test("overview metrics use bounded real sources and never equate KYC with fraud"
   assert.match(query, /revalidate: 60/);
   assert.match(query, /getAntifraudMonitorOverview/);
   assert.match(query, /canonical\.lifetimeCents/);
-  assert.match(query, /antifraud-overview-dashboard-v5/);
+  assert.match(query, /antifraud-overview-dashboard-v6/);
   assert.doesNotMatch(
     query,
     /fraud[\s\S]{0,120}user_kyc\.kyc_required\s*=\s*TRUE/i,

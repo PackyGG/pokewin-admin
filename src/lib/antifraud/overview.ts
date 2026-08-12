@@ -115,10 +115,7 @@ type MainFeedRow = {
 
 function automaticBanSql(): ReturnType<typeof sql> {
   return sql`
-    (
-      u.banned_reason LIKE 'Automatic fraud ban:%'
-      OR u.banned_reason LIKE 'Automatic Antifraud ban:%'
-    )
+    COALESCE(u.banned_reason LIKE 'Automatic % ban:%', FALSE)
   `;
 }
 
@@ -702,7 +699,7 @@ async function computeAntifraudOverviewData(
 
 const cachedAntifraudOverviewData = unstable_cache(
   computeAntifraudOverviewData,
-  ["antifraud-overview-dashboard-v5"],
+  ["antifraud-overview-dashboard-v6"],
   {
     revalidate: 60,
     tags: ["antifraud-overview", "fiat-operations"],
