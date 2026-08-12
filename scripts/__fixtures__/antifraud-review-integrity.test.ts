@@ -117,10 +117,18 @@ test("approving a case releases every antifraud-owned automatic lock", () => {
   // remain protected because they do not carry the automatic ownership prefix.
   assert.match(release, /previous\.deposits_reason LIKE/);
   assert.match(release, /previous\.withdrawals_reason LIKE/);
+  // Release must match EVERY reason prefix the containment pipeline writes,
+  // not just "Automatic fraud lock: ". The blocked-email-domain path writes
+  // "Automatic fraud ban: " into the same columns, and while release compared a
+  // single literal those locks survived a cleared case forever — the UI
+  // reported "review locks removed" while the account stayed locked. The
+  // pattern list is bound as one text[] via pgArrayParam (house array rule).
   assert.match(
     release,
-    /previous\.withdrawals_reason LIKE \$\{AUTOMATIC_FRAUD_LOCK_REASON_PREFIX \+ "%"\}/,
+    /previous\.withdrawals_reason LIKE ANY \(\$\{pgArrayParam\(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS\)\}::text\[\]\)/,
   );
+  assert.match(release, /const AUTOMATIC_FRAUD_LOCK_REASON_PREFIXES = \[/);
+  assert.match(release, /"Automatic fraud ban: "/);
   // A KYC gate is owner/admin + 2FA only. An analyst's clear must never lift
   // it, and an unreadable KYC state fails CLOSED.
   assert.match(

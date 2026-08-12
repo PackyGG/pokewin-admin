@@ -21,6 +21,45 @@ import {
 const AUTOMATIC_FRAUD_LOCK_REASON_PREFIX = "Automatic fraud lock: ";
 
 /**
+ * EVERY reason prefix the automatic containment pipeline writes. Release has to
+ * match all of them, not just the one it happens to write itself.
+ *
+ * `email-domain-containment.ts` writes its blocked-domain variant as
+ * "Automatic fraud ban: …" and stores that straight into
+ * `locked_withdrawals_reason` / `locked_deposits_reason`. Because release only
+ * compared the "Automatic fraud lock: " literal, those locks were invisible to
+ * it: clearing the case reported "review locks removed" while the account
+ * stayed fiat- and withdrawal-locked permanently, with nothing left in the
+ * queue to reveal it.
+ *
+ * Widening this list only ever releases reasons the pipeline itself authored.
+ * Staff and manual locks use different reason text and remain untouched, which
+ * is the property that makes automatic release safe in the first place.
+ */
+const AUTOMATIC_FRAUD_LOCK_REASON_PREFIXES = [
+  AUTOMATIC_FRAUD_LOCK_REASON_PREFIX,
+  "Automatic fraud ban: ",
+] as const;
+
+/** True when `reason` was authored by the automatic containment pipeline. */
+function isAutomaticFraudLockReason(reason: string | null | undefined): boolean {
+  return (
+    typeof reason === "string" &&
+    AUTOMATIC_FRAUD_LOCK_REASON_PREFIXES.some((prefix) =>
+      reason.startsWith(prefix),
+    )
+  );
+}
+
+/**
+ * `LIKE ANY (...)` patterns for the same set. Bound through `pgArrayParam` as a
+ * single `text[]` parameter — the house rule for array binding, since a bare
+ * array in a tagged template expands to `($1, $2, …)` rather than one array.
+ */
+const AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS = AUTOMATIC_FRAUD_LOCK_REASON_PREFIXES
+  .map((prefix) => `${prefix}%`);
+
+/**
  * WITHDRAWAL RELEASE — the account side of an Account Review verdict.
  *
  * Clearing a case used to be a note in the ADMIN DB and nothing else, so an
@@ -207,9 +246,7 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
     const current = await getUserFeatureLocks(userId);
     if (
       current.locked_reward_categories.length > 0 &&
-      current.locked_rewards_reason?.startsWith(
-        AUTOMATIC_FRAUD_LOCK_REASON_PREFIX,
-      )
+      isAutomaticFraudLockReason(current.locked_rewards_reason)
     ) {
       const previousCategories = Array.isArray(
         catchallSnapshot?.previousCategories,
@@ -359,50 +396,50 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
       UPDATE user_feature_locks AS locks
       SET
         locked_deposits_fiat = CASE
-          WHEN previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.deposits_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
             THEN '{}'::text[]
           ELSE locks.locked_deposits_fiat
         END,
         locked_deposits_at = CASE
-          WHEN previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.deposits_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
             AND COALESCE(array_length(previous.deposits_crypto, 1), 0) = 0
             THEN NULL
           ELSE locks.locked_deposits_at
         END,
         locked_deposits_by = CASE
-          WHEN previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.deposits_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
             AND COALESCE(array_length(previous.deposits_crypto, 1), 0) = 0
             THEN NULL
           ELSE locks.locked_deposits_by
         END,
         locked_deposits_reason = CASE
-          WHEN previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.deposits_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
             AND COALESCE(array_length(previous.deposits_crypto, 1), 0) = 0
             THEN NULL
           ELSE locks.locked_deposits_reason
         END,
         locked_withdrawals_crypto = CASE
-          WHEN previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.withdrawals_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
             THEN '{}'::text[]
           ELSE locks.locked_withdrawals_crypto
         END,
         locked_withdrawals_items = CASE
-          WHEN previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.withdrawals_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
             THEN FALSE
           ELSE locks.locked_withdrawals_items
         END,
         locked_withdrawals_at = CASE
-          WHEN previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.withdrawals_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
             THEN NULL
           ELSE locks.locked_withdrawals_at
         END,
         locked_withdrawals_by = CASE
-          WHEN previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.withdrawals_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
             THEN NULL
           ELSE locks.locked_withdrawals_by
         END,
         locked_withdrawals_reason = CASE
-          WHEN previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.withdrawals_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
             THEN NULL
           ELSE locks.locked_withdrawals_reason
         END,
@@ -411,10 +448,10 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
       WHERE locks.user_id = previous.user_id
         AND (
           (
-            previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+            previous.deposits_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
             AND COALESCE(array_length(previous.deposits_fiat, 1), 0) > 0
           ) OR (
-            previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+            previous.withdrawals_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
             AND (
               COALESCE(array_length(previous.crypto, 1), 0) > 0
               OR previous.items
@@ -425,11 +462,11 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
         previous.crypto AS previous_crypto,
         previous.items AS previous_items,
         (
-          previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+          previous.deposits_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
           AND COALESCE(array_length(previous.deposits_fiat, 1), 0) > 0
         ) AS released_fiat,
         (
-          previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
+          previous.withdrawals_reason LIKE ANY (${pgArrayParam(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS)}::text[])
           AND (
             COALESCE(array_length(previous.crypto, 1), 0) > 0
             OR previous.items

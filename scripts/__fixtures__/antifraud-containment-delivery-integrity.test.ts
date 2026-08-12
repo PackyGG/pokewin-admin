@@ -196,3 +196,70 @@ test("the containment action timestamp is written once, not per verification", (
   // The per-verification timestamp keeps its own column.
   assert.match(source, /containment_last_verified_at = CASE/);
 });
+
+/**
+ * Regression: the automatic containment pipeline writes TWO reason prefixes
+ * ("Automatic fraud lock: " and "Automatic fraud ban: "), but the cleared-case
+ * release only matched the first. A blocked-email-domain lock was therefore
+ * invisible to release: clearing the case reported "review locks removed"
+ * while the account stayed fiat- and withdrawal-locked permanently, with
+ * nothing left in the queue to reveal it.
+ *
+ * Derived from the containment sources, so adding a new automatic reason
+ * without teaching release about it fails here.
+ */
+test("cleared-case release matches every automatic lock reason the pipeline writes", () => {
+  const release = read("src/lib/antifraud/withdrawal-release.ts");
+
+  const declared = new Set(
+    [
+      ...(release.match(
+        /const AUTOMATIC_FRAUD_LOCK_REASON_PREFIXES = \[([\s\S]*?)\] as const;/,
+      )?.[1] ?? "").matchAll(/"([^"]+)"/g),
+    ].map((m) => m[1]),
+  );
+  // The list references the singular constant by name for the first entry.
+  if (release.includes("AUTOMATIC_FRAUD_LOCK_REASON_PREFIX,")) {
+    declared.add("Automatic fraud lock: ");
+  }
+
+  const written = new Set<string>();
+  for (const file of [
+    "src/lib/antifraud/email-domain-containment.ts",
+    "src/lib/antifraud/fiat-identity-containment.ts",
+    "src/lib/antifraud/critical-signup-containment.ts",
+    "src/lib/antifraud/abstract-catchall-containment.ts",
+    "src/lib/antifraud/behavioral-withdrawal-containment.ts",
+    "src/lib/antifraud/risky-free-battle-containment.ts",
+  ]) {
+    let source: string;
+    try {
+      source = read(file);
+    } catch {
+      continue;
+    }
+    for (const m of source.matchAll(/(Automatic fraud [a-z]+: )/g)) {
+      written.add(m[1]);
+    }
+  }
+
+  const unmatched = [...written].filter((prefix) => !declared.has(prefix));
+  assert.deepEqual(
+    unmatched,
+    [],
+    "these automatic lock reasons are written by containment but are not " +
+      "released when a case is cleared, so the account stays locked forever",
+  );
+
+  // The SQL must use the widened list, bound as one text[] via the house
+  // array helper rather than a bare interpolated array.
+  assert.match(
+    release,
+    /LIKE ANY \(\$\{pgArrayParam\(AUTOMATIC_FRAUD_LOCK_REASON_PATTERNS\)\}::text\[\]\)/,
+  );
+  assert.doesNotMatch(
+    release,
+    /LIKE \$\{AUTOMATIC_FRAUD_LOCK_REASON_PREFIX \+ "%"\}/,
+    "the single-prefix comparison must not come back",
+  );
+});
