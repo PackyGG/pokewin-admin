@@ -36,6 +36,7 @@ import {
   creatorApprovalWindowHasEnded,
   hasAllCreatorApprovalAssets,
 } from "@/lib/creator-deal-provisioning-window";
+import { matchingApprovedLeaderboards } from "@/lib/creator-leaderboard-reconciliation";
 
 const DiscordId = z.string().regex(/^\d{17,20}$/);
 const UserId = z.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/);
@@ -1278,44 +1279,56 @@ async function ensureRewardProgram(request: typeof creator_deal_approval_request
   });
 }
 
-/**
- * Create the approved leaderboard on MAIN and bind its id to the request.
- *
- * MAIN creates this board with the approval request UUID as its requested
- * primary key. Its admin-create endpoint serializes that UUID and returns the
- * existing board only when every approved term still matches. Consequently a
- * retry after MAIN committed but before `request.leaderboard_id` was saved is
- * a safe replay rather than a second site-funded leaderboard.
- */
-async function ensureLeaderboard(request: typeof creator_deal_approval_requests.$inferSelect): Promise<string | null> {
+async function findProvisionedLeaderboard(
+  request: typeof creator_deal_approval_requests.$inferSelect,
+): Promise<string | null> {
   if (!request.leaderboard_payload) return null;
-  if (request.leaderboard_id) return request.leaderboard_id;
   const board = LeaderboardPayloadSchema.parse(request.leaderboard_payload);
   const codes = await validateCreatorAndCodes(request.creator_user_id, board.codes);
-  const created = await affiliateLeaderboardsApi.create({
-    // A UUID is unique within MAIN's leaderboard table; using the approval UUID
-    // requires no cross-database schema marker and survives ambiguous responses.
-    requested_id: request.id,
-    creator_user_id: request.creator_user_id,
-    co_creator_user_ids: [],
+  const rows = [];
+  let offset = 0;
+  do {
+    const page = await affiliateLeaderboardsApi.list({
+      status: "approved",
+      creator_user_id: request.creator_user_id,
+      include_cancelled: false,
+      offset,
+      limit: 100,
+    });
+    rows.push(...page.leaderboards);
+    offset += page.leaderboards.length;
+    if (offset >= page.total || page.leaderboards.length === 0) break;
+  } while (true);
+  const matches = matchingApprovedLeaderboards(rows, {
+    creatorUserId: request.creator_user_id,
+    approvedBy: request.submitted_by,
     title: board.title,
-    affiliate_codes: codes,
-    site_bonus_usd: board.siteBonusUsd,
-    start_date: board.startsAt,
-    end_date: board.endsAt,
-    prize_tiers: board.prizeTiers.map((tier) => ({ position: tier.position, prize_amount_usd: tier.prizeAmountUsd })),
-  }, request.submitted_by);
+    codes,
+    siteBonusUsd: board.siteBonusUsd,
+    startsAt: board.startsAt,
+    endsAt: board.endsAt,
+    prizeTiers: board.prizeTiers,
+  });
+  if (matches.length > 1) {
+    error(409, "leaderboard_reconciliation_ambiguous", "Multiple existing leaderboards match this approval.");
+  }
+  return matches[0]?.id ?? null;
+}
+
+async function bindProvisionedLeaderboard(
+  request: typeof creator_deal_approval_requests.$inferSelect,
+  leaderboardId: string,
+  recovered: boolean,
+): Promise<void> {
+  const board = LeaderboardPayloadSchema.parse(request.leaderboard_payload);
   await adminDrizzle.transaction(async (tx) => {
     await tx.update(creator_deal_approval_requests).set({
-      leaderboard_id: created.id,
+      leaderboard_id: leaderboardId,
       updated_at: new Date().toISOString(),
     }).where(eq(creator_deal_approval_requests.id, request.id));
-    // The house share is our own cost-accounting annotation, not a backend
-    // field — mirrors `setLeaderboardSponsorship`, which needs an interactive
-    // admin session this worker does not have.
     if (board.sponsoredPct !== 100) {
       await tx.insert(admin_leaderboard_sponsorship).values({
-        leaderboard_id: created.id,
+        leaderboard_id: leaderboardId,
         sponsored_percentage: String(board.sponsoredPct),
         set_by_admin_id: request.submitted_by,
       }).onConflictDoUpdate({
@@ -1329,11 +1342,35 @@ async function ensureLeaderboard(request: typeof creator_deal_approval_requests.
     }
     await tx.insert(creator_deal_approval_events).values({
       request_id: request.id,
-      event_type: "leaderboard_provisioned",
+      event_type: recovered ? "leaderboard_reconciled" : "leaderboard_provisioned",
       actor_kind: "system",
-      metadata: { leaderboardId: created.id, sponsoredPct: board.sponsoredPct, siteBonusUsd: board.siteBonusUsd },
+      metadata: { leaderboardId, recovered, sponsoredPct: board.sponsoredPct, siteBonusUsd: board.siteBonusUsd },
     });
   });
+}
+
+/** Reconcile an ambiguous prior create before ever creating another board. */
+async function ensureLeaderboard(request: typeof creator_deal_approval_requests.$inferSelect): Promise<string | null> {
+  if (!request.leaderboard_payload) return null;
+  if (request.leaderboard_id) return request.leaderboard_id;
+  const recoveredId = await findProvisionedLeaderboard(request);
+  if (recoveredId) {
+    await bindProvisionedLeaderboard(request, recoveredId, true);
+    return recoveredId;
+  }
+  const board = LeaderboardPayloadSchema.parse(request.leaderboard_payload);
+  const codes = await validateCreatorAndCodes(request.creator_user_id, board.codes);
+  const created = await affiliateLeaderboardsApi.create({
+    creator_user_id: request.creator_user_id,
+    co_creator_user_ids: [],
+    title: board.title,
+    affiliate_codes: codes,
+    site_bonus_usd: board.siteBonusUsd,
+    start_date: board.startsAt,
+    end_date: board.endsAt,
+    prize_tiers: board.prizeTiers.map((tier) => ({ position: tier.position, prize_amount_usd: tier.prizeAmountUsd })),
+  }, request.submitted_by);
+  await bindProvisionedLeaderboard(request, created.id, false);
   return created.id;
 }
 
@@ -1374,6 +1411,15 @@ export async function provisionApprovedCreatorDealRequest(
     const approvedAt = request.approved_at ? new Date(request.approved_at) : new Date();
     const kind = request.request_kind as CreatorApprovalRequestKind;
     const windowEnded = creatorApprovalWindowHasEnded(request.window_end_at);
+    // A read-only exact-match recovery is safe after expiry: it binds an asset
+    // that MAIN already created and never authorizes a new financial object.
+    if (windowEnded && request.leaderboard_payload && !request.leaderboard_id) {
+      const recoveredId = await findProvisionedLeaderboard(request);
+      if (recoveredId) {
+        await bindProvisionedLeaderboard(request, recoveredId, true);
+        request.leaderboard_id = recoveredId;
+      }
+    }
     const allAssetsAlreadyProvisioned = hasAllCreatorApprovalAssets({
       requestKind: kind,
       backendDealId: request.backend_deal_id,
