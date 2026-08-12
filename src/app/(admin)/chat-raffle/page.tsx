@@ -80,7 +80,7 @@ export default async function ChatRafflePage() {
   await requirePageAccess("/chat-raffle");
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHero>
         <SectionHeading
           icon={Trophy}
@@ -328,8 +328,8 @@ async function NoActiveRound({
   );
 
   return (
-    <FadeIn className="space-y-6">
-      <div className="rounded-2xl border border-dashed p-6 text-center">
+    <FadeIn className="space-y-4">
+      <div className="rounded-2xl border border-dashed p-4 text-center sm:p-5">
         <ListOrdered className="mx-auto size-6 text-muted-foreground" />
         <p className="mt-2 text-sm font-medium">
           Create a leaderboard to reward the top XP earners

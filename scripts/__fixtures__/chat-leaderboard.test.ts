@@ -44,6 +44,8 @@ test("chat leaderboard is persisted, finalized by rank, and exposed on the page"
   assert.doesNotMatch(page, /No round running/);
   assert.doesNotMatch(page, /No XP leaderboard running/);
   assert.match(page, /Chat Raffle & XP Leaderboard/);
+  assert.match(page, /<div className="space-y-4">/);
+  assert.match(page, /<FadeIn className="space-y-4">/);
   assert.equal(page.match(/mode="create" competitionType="leaderboard"/g)?.length, 1);
   assert.match(page, /FinalizeLeaderboardButton/);
   assert.match(dialogs, /\(\[7, 14\] as const\)/);
