@@ -1,0 +1,31 @@
+-- Restore the application's session safety limits at the DATABASE level so
+-- they survive connection pooling.
+--
+-- Why this is needed
+-- ------------------
+-- src/lib/admin-db.ts sets `statement_timeout` and
+-- `idle_in_transaction_session_timeout` as node-postgres pool options, which
+-- are delivered as PostgreSQL *startup parameters*. PgBouncer does not track
+-- those two parameters, so they must be listed in
+-- PGBOUNCER_IGNORE_STARTUP_PARAMETERS for connections to be accepted at all —
+-- and "ignore" means exactly that: the values are dropped, not forwarded.
+--
+-- Measured through the pooled endpoint before this migration:
+--   statement_timeout                    = 5min   (server default, not 30s)
+--   idle_in_transaction_session_timeout  = 0      (disabled entirely)
+--
+-- That silently removes both limits for every pooled connection: a runaway
+-- admin query could hold a backend for five minutes and an abandoned
+-- transaction could hold one forever, which is precisely the pool-exhaustion
+-- failure the pool options existed to prevent.
+--
+-- Setting them on the database makes them the default for EVERY new session,
+-- pooled or direct. Direct connections still send their own startup values,
+-- which take precedence and are identical (30s), so behaviour is unchanged
+-- there. Idempotent: re-running simply re-asserts the same values.
+--
+-- Deliberate DDL still needs to opt out; scripts/apply-admin-sql.mjs disables
+-- the statement timeout for the migration session it opens.
+
+ALTER DATABASE railway SET statement_timeout = '30s';
+ALTER DATABASE railway SET idle_in_transaction_session_timeout = '30s';
