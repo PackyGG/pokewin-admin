@@ -1,18 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BadgeCheck, Check, Inbox, Search, ShieldQuestion } from "lucide-react";
+import { BadgeCheck, Check, Inbox, ShieldQuestion } from "lucide-react";
 import type { RowSelectionState } from "@tanstack/react-table";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { SectionHeading } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
 import type { CreatorRewardClaimRow } from "@/lib/creator-vip/queries";
@@ -30,23 +22,19 @@ export function RequestsPanel({
   claims,
   userHrefBase,
   claimsCap,
+  query,
+  programId,
+  onClearFilters,
 }: {
   claims: CreatorRewardClaimRow[];
   userHrefBase: string;
   claimsCap?: number;
+  query: string;
+  programId: string;
+  onClearFilters: () => void;
 }) {
-  const [query, setQuery] = useState("");
-  const [programId, setProgramId] = useState<string>(ALL_PROGRAMS);
   const [selection, setSelection] = useState<RowSelectionState>({});
   const [bulkOpen, setBulkOpen] = useState(false);
-
-  /** Distinct programs present in the loaded page, so the filter can't offer
-      an option that would match nothing. */
-  const programOptions = useMemo(() => {
-    const byId = new Map<string, string>();
-    for (const c of claims) byId.set(c.programId, c.programName);
-    return [...byId.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [claims]);
 
   // Client-side over the already-loaded page — narrowing a queue must not cost
   // a round-trip, and the cap note below still tells the truth about what was
@@ -91,8 +79,7 @@ export function RequestsPanel({
   const selectedTotal = selected.reduce((sum, c) => sum + c.amountUsd, 0);
 
   function clearFilters() {
-    setQuery("");
-    setProgramId(ALL_PROGRAMS);
+    onClearFilters();
   }
 
   const emptySub = filtered ? (
@@ -113,50 +100,6 @@ export function RequestsPanel({
 
   return (
     <div className="space-y-5">
-      {claims.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full min-w-0 sm:w-64">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Player, user ID or program…"
-              className="h-9 pl-9"
-              aria-label="Search claims"
-            />
-          </div>
-          <Select
-            value={programId}
-            onValueChange={(v) => setProgramId(v ?? ALL_PROGRAMS)}
-          >
-            <SelectTrigger
-              className="h-9 w-full text-xs sm:w-[220px]"
-              aria-label="Filter by program"
-            >
-              {/* Explicit label — `SelectValue` renders the raw value when it
-                  has no children, which would print the `__all__` sentinel. */}
-              <SelectValue>
-                {programId === ALL_PROGRAMS
-                  ? "All programs"
-                  : (programOptions.find(([id]) => id === programId)?.[1] ??
-                    "All programs")}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_PROGRAMS}>All programs</SelectItem>
-              {programOptions.map(([id, name]) => (
-                <SelectItem key={id} value={id}>
-                  {name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <span className="text-xs tabular-nums text-muted-foreground sm:ml-auto">
-            {matching.length} of {claims.length}
-          </span>
-        </div>
-      )}
-
       <div className="space-y-3">
         <SectionHeading icon={Inbox} title="Awaiting review" />
 

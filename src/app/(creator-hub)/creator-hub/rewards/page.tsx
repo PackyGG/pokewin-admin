@@ -4,7 +4,7 @@ import { AlertTriangle, Crown, HandCoins, Hourglass, Inbox } from "lucide-react"
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { requirePageAccess } from "@/lib/dal";
 import { FadeIn } from "@/components/fade-in";
-import { KpiTile, SectionHeading } from "@/components/modern-panels";
+import { KpiTile } from "@/components/modern-panels";
 import {
   safeQueryOrNull,
   REWARD_QUERY_TIMEOUT_MS,
@@ -50,9 +50,8 @@ const CLAIMS_CAP = 200;
  * remains stricter than Hub membership alone. The `requireAdmin()` write gate
  * is untouched.
  *
- * Shell-first: the identity heading renders immediately; both reads stream
- * behind one Suspense boundary (loading.tsx shares the same skeleton), each
- * degraded independently.
+ * Both reads stream behind one Suspense boundary (loading.tsx shares the same
+ * skeleton), each degraded independently.
  */
 export default async function CreatorHubRewardsPage({
   searchParams,
@@ -67,12 +66,9 @@ export default async function CreatorHubRewardsPage({
     rawTab === "programs" || rawTab === "requests" ? rawTab : undefined;
 
   return (
-    <div className="space-y-6">
-      <SectionHeading icon={Crown} title="Creator Rewards" />
-      <Suspense fallback={<RewardsBodySkeleton />}>
-        <Body tab={tab} />
-      </Suspense>
-    </div>
+    <Suspense fallback={<RewardsBodySkeleton />}>
+      <Body tab={tab} />
+    </Suspense>
   );
 }
 
@@ -145,7 +141,7 @@ async function Body({ tab }: { tab: CreatorVipTab | undefined }) {
             label="Pending claims"
             value={claims.data === null ? "—" : String(pending.length)}
             sub="awaiting review"
-            icon={Inbox}
+            icon={Crown}
             accent={pending.length > 0 ? "amber" : "blue"}
           />
           {/* House-POV: an approved claim pays the player, so the queued total
@@ -178,7 +174,7 @@ async function Body({ tab }: { tab: CreatorVipTab | undefined }) {
                 ? undefined
                 : `of ${livePrograms} total`
             }
-            icon={Crown}
+            icon={Inbox}
             accent="blue"
           />
         </div>

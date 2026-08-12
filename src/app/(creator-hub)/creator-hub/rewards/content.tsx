@@ -1,11 +1,19 @@
 "use client";
 
-import { useId, useMemo } from "react";
+import { useId, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Crown, Inbox } from "lucide-react";
+import { Crown, Inbox, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { STATUS_COLORS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { useHostHref } from "@/lib/use-app-host";
@@ -28,6 +36,7 @@ import { RequestsPanel } from "./_components/requests-panel";
  */
 
 export type CreatorVipTab = "programs" | "requests";
+const ALL_PROGRAMS = "__all__";
 
 export function CreatorVipContent({
   programs,
@@ -71,6 +80,8 @@ export function CreatorVipContent({
 }) {
   const uid = useId();
   const searchParams = useSearchParams();
+  const [requestQuery, setRequestQuery] = useState("");
+  const [requestProgramId, setRequestProgramId] = useState(ALL_PROGRAMS);
   // Host-aware, like every other Hub tab bar: `/rewards` on
   // marketing.packydash.com, `/creator-hub/rewards` on the apex. Without it a
   // tab switch bounces through the middleware's canonicalizing redirect.
@@ -84,6 +95,30 @@ export function CreatorVipContent({
   // Archived programs are history, not inventory — the tab count reflects what
   // an operator can actually act on, matching the panel's default view.
   const liveCount = programs.filter((p) => p.archivedAt == null).length;
+  const requestProgramOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const claim of claims) {
+      byId.set(claim.programId, claim.programName);
+    }
+    return [...byId.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [claims]);
+  const requestMatchingCount = useMemo(() => {
+    const query = requestQuery.trim().toLowerCase();
+    return claims.filter((claim) => {
+      if (
+        requestProgramId !== ALL_PROGRAMS &&
+        claim.programId !== requestProgramId
+      ) {
+        return false;
+      }
+      if (query === "") return true;
+      return (
+        (claim.username ?? "").toLowerCase().includes(query) ||
+        claim.userId.toLowerCase().includes(query) ||
+        claim.programName.toLowerCase().includes(query)
+      );
+    }).length;
+  }, [claims, requestProgramId, requestQuery]);
 
   /**
    * `?tab=` is always written explicitly on both tabs, keeping navigation and
@@ -127,38 +162,82 @@ export function CreatorVipContent({
 
   return (
     <div className="space-y-4">
-      <div
-        className="inline-flex gap-1 rounded-lg border bg-muted/50 p-1"
-        role="tablist"
-        aria-label="Creator rewards"
-      >
-        {tabs.map(({ value, label, Icon, badge }) => {
-          const active = activeTab === value;
-          return (
-            <Link
-              key={value}
-              href={hrefFor(value)}
-              role="tab"
-              id={`${uid}-tab-${value}`}
-              aria-selected={active}
-              aria-controls={`${uid}-panel-${value}`}
-              // Pushed, not replaced (the roster switch replaces): Back was the
-              // gap this tab bar was fixing, and a reviewer who deep-linked
-              // into Requests expects Back to return to Programs.
-              scroll={false}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                active
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+        <div
+          className="inline-flex w-fit shrink-0 gap-1 rounded-lg border bg-muted/50 p-1"
+          role="tablist"
+          aria-label="Creator rewards"
+        >
+          {tabs.map(({ value, label, Icon, badge }) => {
+            const active = activeTab === value;
+            return (
+              <Link
+                key={value}
+                href={hrefFor(value)}
+                role="tab"
+                id={`${uid}-tab-${value}`}
+                aria-selected={active}
+                aria-controls={`${uid}-panel-${value}`}
+                scroll={false}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                  active
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Icon className="size-4" aria-hidden />
+                {label}
+                {badge}
+              </Link>
+            );
+          })}
+        </div>
+
+        {activeTab === "requests" && claims.length > 0 && (
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <div className="relative w-full min-w-0 sm:w-64">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={requestQuery}
+                onChange={(event) => setRequestQuery(event.target.value)}
+                placeholder="Player, user ID or program…"
+                className="h-9 pl-9"
+                aria-label="Search claims"
+              />
+            </div>
+            <Select
+              value={requestProgramId}
+              onValueChange={(value) =>
+                setRequestProgramId(value ?? ALL_PROGRAMS)
+              }
             >
-              <Icon className="size-4" aria-hidden />
-              {label}
-              {badge}
-            </Link>
-          );
-        })}
+              <SelectTrigger
+                className="h-9 w-full text-xs sm:w-[220px]"
+                aria-label="Filter by program"
+              >
+                <SelectValue>
+                  {requestProgramId === ALL_PROGRAMS
+                    ? "All programs"
+                    : (requestProgramOptions.find(
+                        ([id]) => id === requestProgramId,
+                      )?.[1] ?? "All programs")}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_PROGRAMS}>All programs</SelectItem>
+                {requestProgramOptions.map(([id, name]) => (
+                  <SelectItem key={id} value={id}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="text-xs tabular-nums text-muted-foreground lg:ml-auto">
+              {requestMatchingCount} of {claims.length}
+            </span>
+          </div>
+        )}
       </div>
 
       {activeTab === "programs" ? (
@@ -179,6 +258,12 @@ export function CreatorVipContent({
             claims={claims}
             userHrefBase={userHrefBase}
             claimsCap={claimsCap}
+            query={requestQuery}
+            programId={requestProgramId}
+            onClearFilters={() => {
+              setRequestQuery("");
+              setRequestProgramId(ALL_PROGRAMS);
+            }}
           />
         </div>
       )}

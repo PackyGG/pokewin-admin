@@ -75,5 +75,9 @@ test("Creator Rewards lives in Overview with request-first navigation and alerts
   assert.match(sidebar, /alertKey: "creatorRewards"/);
   assert.match(badge, /"creatorRewards"/);
   assert.match(page, /activeTab=\{tab \?\? "requests"\}/);
+  assert.doesNotMatch(page, /title="Creator Rewards"/);
+  assert.ok(
+    content.indexOf('role="tablist"') < content.indexOf('aria-label="Search claims"'),
+  );
   assert.ok(content.indexOf('value: "requests"') < content.indexOf('value: "programs"'));
 });

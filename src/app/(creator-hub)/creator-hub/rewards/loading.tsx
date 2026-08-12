@@ -1,11 +1,6 @@
-import { Crown } from "lucide-react";
-
-import { SectionHeading } from "@/components/modern-panels";
-
 /**
- * Skeleton for everything below the page identity: the 4-tile work-queue
- * strip, the Programs/Requests tab bar, the filter toolbar, and a few claim
- * rows.
+ * Skeleton for the 4-tile work-queue strip, the combined tabs/filter toolbar,
+ * and a few claim rows.
  *
  * Each placeholder MIRRORS THE BOX MODEL of the thing it stands in for rather
  * than guessing a height — the tiles reuse `KpiTile`'s own
@@ -37,11 +32,8 @@ export function RewardsBodySkeleton() {
         ))}
       </div>
 
-      {/* Tab bar: p-1 shell + py-1.5 text-sm links → 40px, not 36. */}
-      <div className="h-10 w-56 animate-pulse rounded-lg bg-muted" />
-
-      {/* Filter toolbar — search box + program select, both h-9. */}
       <div className="flex flex-wrap items-center gap-2">
+        <div className="h-10 w-56 animate-pulse rounded-lg bg-muted" />
         <div className="h-9 w-full animate-pulse rounded-md bg-muted sm:w-64" />
         <div className="h-9 w-full animate-pulse rounded-md bg-muted sm:w-[220px]" />
       </div>
@@ -68,15 +60,9 @@ export function RewardsBodySkeleton() {
 }
 
 /**
- * Route-level skeleton — the page identity (SectionHeading) is static, so it
- * renders for real; only the data-driven body is placeholdered, mirroring the
- * page's own Suspense fallback so navigating in and streaming look the same.
+ * Route-level skeleton matches the page's own Suspense fallback so navigating
+ * in and streaming look the same.
  */
 export default function Loading() {
-  return (
-    <div className="space-y-6">
-      <SectionHeading icon={Crown} title="Creator Rewards" />
-      <RewardsBodySkeleton />
-    </div>
-  );
+  return <RewardsBodySkeleton />;
 }
