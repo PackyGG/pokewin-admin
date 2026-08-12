@@ -608,27 +608,40 @@ export const FeatureLocksCard = React.memo(function FeatureLocksCard({
 export const AccountDetailsSection = React.memo(function AccountDetailsSection({
   user,
   shippingAddress,
-  vault,
-  depositAddresses,
   canEditIdentity,
 }: {
   user: UserDetail["user"];
   shippingAddress: UserDetail["shippingAddress"];
-  vault: UserDetail["vault"];
-  depositAddresses: UserDetail["depositAddresses"];
   /** Gates the Edit-email affordance — same __can_edit_identity capability updateUserIdentity checks server-side. */
   canEditIdentity: boolean;
 }) {
+  const shippingName = shippingAddress
+    ? `${shippingAddress.firstName} ${shippingAddress.lastName}`
+    : "-";
+  const shippingPhone = shippingAddress
+    ? `${shippingAddress.phoneCountryCode} ${shippingAddress.phoneNumber}`
+    : "-";
+  const shippingAddressLine = shippingAddress
+    ? [
+        shippingAddress.addressLine1,
+        shippingAddress.addressLine2,
+        shippingAddress.city,
+        shippingAddress.stateProvince,
+        shippingAddress.zipCode,
+        shippingAddress.country,
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : "-";
+
   return (
-    <div className="space-y-4">
-      {/* Row 1 — Account | Shipping Address | Vault */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {/* Account */}
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-            Account
-          </p>
-          <div className="space-y-2">
+    <div className="min-w-0">
+      <section className="min-w-0">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Account
+        </p>
+        <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
+          <div className="grid min-w-0 grid-rows-5 gap-y-2">
             <InfoRow
               label="Email"
               truncate
@@ -655,17 +668,27 @@ export const AccountDetailsSection = React.memo(function AccountDetailsSection({
               }
             />
             <InfoRow
+              label="Registered"
+              value={formatDateTime(user.createdAt)}
+            />
+            <InfoRow
               label="Signed up with"
               value={formatSignupProvider(user.signupProvider)}
             />
-            <InfoRow label="Providers" value={user.providers.join(", ") || "-"} />
-            <InfoRow label="API Key" value={user.hasApiKey ? "Yes" : "No"} />
             <InfoRow
               label="Signup IP"
               value={user.signupIp ?? "-"}
               mono
               truncate
             />
+            <InfoRow
+              label="Signup fingerprint"
+              value={user.deviceVisitorId ?? "-"}
+              mono
+              truncate
+            />
+          </div>
+          <div className="grid min-w-0 grid-rows-5 gap-y-2">
             <InfoRow
               label="Location"
               value={
@@ -674,112 +697,68 @@ export const AccountDetailsSection = React.memo(function AccountDetailsSection({
                   .join(", ") || "-"
               }
             />
-            <InfoRow
-              label="Registered"
-              value={formatDateTime(user.createdAt)}
-            />
-            <InfoRow label="Updated" value={formatDateTime(user.updatedAt)} />
+            <InfoRow label="Name" value={shippingName} truncate />
+            <InfoRow label="Phone" value={shippingPhone} truncate />
+            <InfoRow label="Address" value={shippingAddressLine} truncate />
+            <InfoRow label="User ID" value={user.id} mono truncate />
           </div>
         </div>
+      </section>
+    </div>
+  );
+});
 
-        {/* Shipping Address */}
-        {shippingAddress && (
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-              Shipping Address
-            </p>
-            <div className="space-y-2">
-              <InfoRow
-                label="Name"
-                value={`${shippingAddress.firstName} ${shippingAddress.lastName}`}
-              />
-              <InfoRow
-                label="Phone"
-                value={`${shippingAddress.phoneCountryCode} ${shippingAddress.phoneNumber}`}
-              />
-              <InfoRow
-                label="Address"
-                value={[
-                  shippingAddress.addressLine1,
-                  shippingAddress.addressLine2,
-                ]
-                  .filter(Boolean)
-                  .join(", ")}
-                truncate
-              />
-              <InfoRow label="City" value={shippingAddress.city} />
-              {shippingAddress.stateProvince && (
-                <InfoRow label="State" value={shippingAddress.stateProvince} />
-              )}
-              <InfoRow label="ZIP" value={shippingAddress.zipCode} />
-              <InfoRow label="Country" value={shippingAddress.country} />
-            </div>
+export const DepositAddressesSection = React.memo(function DepositAddressesSection({
+  vault,
+  depositAddresses,
+}: {
+  vault: UserDetail["vault"];
+  depositAddresses: UserDetail["depositAddresses"];
+}) {
+  return (
+    <div className="space-y-5">
+      {vault && (
+        <section>
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Vault
+          </p>
+          <div className="grid gap-x-8 gap-y-2 sm:grid-cols-2 xl:grid-cols-4">
+            <InfoRow label="Name" value={vault.name} />
+            <InfoRow label="ID" value={vault.id} mono truncate />
+            {vault.customerRefId && (
+              <InfoRow label="Customer Ref" value={vault.customerRefId} mono truncate />
+            )}
+            {vault.fireblocksVaultId && (
+              <InfoRow label="Fireblocks Vault" value={vault.fireblocksVaultId} mono truncate />
+            )}
+            <InfoRow label="Created" value={formatDateTime(vault.createdAt)} />
           </div>
-        )}
+        </section>
+      )}
 
-        {/* Vault */}
-        {vault && (
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-              Vault
-            </p>
-            <div className="space-y-2">
-              <InfoRow label="ID" value={vault.id} mono truncate />
-              <InfoRow label="Name" value={vault.name} />
-              {vault.customerRefId && (
-                <InfoRow
-                  label="Customer Ref"
-                  value={vault.customerRefId}
-                  mono
-                  truncate
-                />
-              )}
-              {vault.fireblocksVaultId && (
-                <InfoRow
-                  label="Fireblocks Vault"
-                  value={vault.fireblocksVaultId}
-                  mono
-                  truncate
-                />
-              )}
-              <InfoRow
-                label="Created"
-                value={formatDateTime(vault.createdAt)}
-              />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Row 2 — Deposit Addresses (full width) */}
       {depositAddresses.length > 0 && (
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+        <section className={vault ? "border-t pt-5" : undefined}>
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Deposit Addresses
           </p>
-          <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-            {depositAddresses.map((da) => (
-              <div
-                key={da.id}
-                className="space-y-1.5 rounded-md border p-2.5 min-w-0"
-              >
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-xs shrink-0">
-                    {da.assetId}
-                  </Badge>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {depositAddresses.map((depositAddress) => (
+              <div key={depositAddress.id} className="min-w-0 space-y-2 rounded-lg border bg-muted/15 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <Badge variant="outline" className="shrink-0 text-xs">{depositAddress.assetId}</Badge>
+                  <span className="text-[11px] text-muted-foreground">{formatDateTime(depositAddress.createdAt)}</span>
                 </div>
-                <p className="font-mono text-xs truncate" title={da.address}>
-                  {da.address}
-                </p>
-                {da.tag && (
-                  <p className="text-xs text-muted-foreground">
-                    Tag: <span className="font-mono">{da.tag}</span>
+                <p className="truncate font-mono text-xs" title={depositAddress.address}>{depositAddress.address}</p>
+                {depositAddress.tag && <p className="text-xs text-muted-foreground">Tag: <span className="font-mono">{depositAddress.tag}</span></p>}
+                {depositAddress.legacyAddress && (
+                  <p className="truncate text-xs text-muted-foreground" title={depositAddress.legacyAddress}>
+                    Legacy: <span className="font-mono">{depositAddress.legacyAddress}</span>
                   </p>
                 )}
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
     </div>
   );

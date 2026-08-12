@@ -45,7 +45,6 @@ import {
 import {
   Wallet,
   TrendingUp,
-  TrendingDown,
   Swords,
   Gem,
   Trophy,
@@ -59,7 +58,6 @@ import {
   ArrowLeftRight,
   Sparkles,
   Dices,
-  Percent,
   Award,
   Flag,
   Waypoints,
@@ -87,6 +85,7 @@ import {
   type PnlBreakdown,
   CategoryTransactionsTable,
   AccountDetailsSection,
+  DepositAddressesSection,
   FeatureLocksCard,
   DisposedCardsTable,
   InventoryGrid,
@@ -1935,6 +1934,116 @@ function AccountManualWithdrawal({
   );
 }
 
+function AccountStatBox({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "neutral" | "emerald" | "rose" | "amber";
+}) {
+  return (
+    <div className="min-w-0 rounded-lg border bg-muted/15 px-3 py-2">
+      <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "mt-0.5 truncate text-sm font-bold tabular-nums",
+          tone === "emerald" && "text-emerald-600 dark:text-emerald-400",
+          tone === "rose" && "text-rose-600 dark:text-rose-400",
+          tone === "amber" && "text-amber-600 dark:text-amber-400",
+        )}
+        title={value}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function AccountStatColumn({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="mb-2 truncate border-b pb-1.5 text-[11px] font-bold uppercase tracking-wider text-foreground">
+        {label}
+      </p>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+
+function AccountStatsStreamed({
+  balances,
+  pnlResultPromise,
+}: {
+  balances: UserDetail["balances"];
+  pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
+}) {
+  const result = use(pnlResultPromise);
+  const platformPnl = balances
+    ? balances.totalDeposited -
+      balances.totalWithdrawn -
+      balances.availableBalance -
+      balances.lockedBalance -
+      balances.inventoryValue -
+      balances.vouchersValue
+    : 0;
+
+  return (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <AccountStatColumn label="Lifetime">
+        <AccountStatBox label="Total Deposited" value={balances ? formatCurrency(balances.totalDeposited) : "—"} tone="emerald" />
+        <AccountStatBox label="Total Wagered" value={balances ? formatCurrency(balances.totalWagered) : "—"} tone="amber" />
+        <AccountStatBox label="P&L" value={balances ? `${platformPnl > 0 ? "+" : ""}${formatCurrency(platformPnl)}` : "—"} tone={platformPnl > 0 ? "emerald" : platformPnl < 0 ? "rose" : "neutral"} />
+      </AccountStatColumn>
+
+      {result.error ? (
+        <div className="col-span-1 lg:col-span-3">
+          <BandError title="Couldn't load windowed stats" hint="The P&L breakdown failed or timed out." />
+        </div>
+      ) : (
+        <>
+          <AccountStatColumn label="Window P&L">
+            {([
+              ["24h", result.data.pnl24h],
+              ["7d", result.data.pnl7d],
+              ["1m", result.data.pnl30d],
+            ] as const).map(([period, amount]) => (
+              <AccountStatBox key={period} label={period} value={`${amount > 0 ? "+" : ""}${formatCurrency(amount)}`} tone={amount > 0 ? "emerald" : amount < 0 ? "rose" : "neutral"} />
+            ))}
+          </AccountStatColumn>
+          <AccountStatColumn label="Deposits">
+            {([
+              ["24h", result.data.deposits24h],
+              ["7d", result.data.deposits7d],
+              ["1m", result.data.deposits30d],
+            ] as const).map(([period, amount]) => (
+              <AccountStatBox key={period} label={period} value={formatCurrency(amount)} tone="emerald" />
+            ))}
+          </AccountStatColumn>
+          <AccountStatColumn label="Wager">
+            {([
+              ["24h", result.data.wager24h],
+              ["7d", result.data.wager7d],
+              ["1m", result.data.wager30d],
+            ] as const).map(([period, amount]) => (
+              <AccountStatBox key={period} label={period} value={formatCurrency(amount)} tone="amber" />
+            ))}
+          </AccountStatColumn>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function AccountTab({
   data,
   pnlResultPromise,
@@ -1987,8 +2096,6 @@ export function AccountTab({
   // top is always shown; the admin expands the rest as needed. Same
   // controlled pattern as the Deposits & Withdrawals collapsible on the
   // Overview tab (CollapsibleSection).
-  const [wageringStatsOpen, setWageringStatsOpen] = useState(false);
-  const [windowedStatsOpen, setWindowedStatsOpen] = useState(false);
   const [adminAdjustmentsOpen, setAdminAdjustmentsOpen] = useState(false);
   const [featureLocksOpen, setFeatureLocksOpen] = useState(false);
   const [fiatDepositAccessOpen, setFiatDepositAccessOpen] = useState(false);
@@ -2000,52 +2107,29 @@ export function AccountTab({
   const [fraudLocksOpen, setFraudLocksOpen] = useState(false);
   return (
     <div className="space-y-4">
-      {/* Account Details — pinned at the TOP and NOT collapsible (owner
-          request): the identity / shipping / vault / deposit-address block is
-          the first thing an admin looks at, so it's always expanded above the
-          collapsed account-management stack below. */}
+      {/* Account Details — pinned at the top and not collapsible. Deposit
+          addresses live at the bottom of the tab so wallet identifiers never
+          crowd the primary identity, shipping, and vault facts. */}
       <SectionHeading icon={ShieldCheck} title="Account Details" />
       <Card>
         <CardContent>
-          <AccountDetailsSection
-            user={user}
-            shippingAddress={shippingAddress}
-            vault={vault}
-            depositAddresses={depositAddresses}
-            canEditIdentity={capabilities.canEditIdentity}
-          />
+          <div className="grid items-start gap-6 lg:grid-cols-3">
+            <AccountDetailsSection
+              user={user}
+              shippingAddress={shippingAddress}
+              canEditIdentity={capabilities.canEditIdentity}
+            />
+            <div className="min-w-0 lg:col-span-2 lg:border-l lg:pl-6">
+              <Suspense fallback={<SkeletonCard lines={5} />}>
+                <AccountStatsStreamed
+                  balances={balances}
+                  pnlResultPromise={pnlResultPromise}
+                />
+              </Suspense>
+            </div>
+          </div>
         </CardContent>
       </Card>
-
-      <CollapsibleSection
-        icon={Dices}
-        title="Wagering Stats"
-        open={wageringStatsOpen}
-        onOpenChange={setWageringStatsOpen}
-      >
-        <WageringStatsCard balances={balances} />
-      </CollapsibleSection>
-      {/* Windowed P&L / Deposits / Wager strips — all three are fed by the
-          same getUserPnlBreakdown call as the Overview tab's Rolling P&L
-          ladder, so they stream as one cluster on pnlResultPromise (and the
-          numbers can never drift between tabs). On failure: one VISIBLE
-          band error, never five neutral $0.00 tiles. House POV per
-          CLAUDE.md: positive P&L (user lost net) → emerald, negative (user
-          gained net) → rose. */}
-      <CollapsibleSection
-        icon={TrendingUp}
-        title="Windowed Stats"
-        open={windowedStatsOpen}
-        onOpenChange={setWindowedStatsOpen}
-      >
-        {/* Inner space-y restores the vertical gaps the strips got for free
-            as direct children of the tab's top-level space-y list. */}
-        <div className="space-y-4">
-          <Suspense fallback={<SkeletonCard lines={3} />}>
-            <WindowedStripsStreamed pnlResultPromise={pnlResultPromise} balances={balances} />
-          </Suspense>
-        </div>
-      </CollapsibleSection>
 
       {/* Admin balance adjustments — OWNER ONLY (motha). Moved here from the
           Overview tab. Non-owner admins never see this block: the server
@@ -2234,6 +2318,23 @@ export function AccountTab({
           CollapsibleSection below. */}
       <SectionHeading icon={Sparkles} title="Affiliate" />
       <AffiliateSection data={data} />
+
+      {/* Operational wallet identifiers are useful, but not primary account
+          facts. Keep them at the end so long address lists cannot push the
+          controls an admin came here to use down the page. */}
+      {(vault || depositAddresses.length > 0) && (
+        <>
+          <SectionHeading icon={Wallet} title="Vault & Deposit Addresses" />
+          <Card>
+            <CardContent>
+              <DepositAddressesSection
+                vault={vault}
+                depositAddresses={depositAddresses}
+              />
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
@@ -2407,53 +2508,6 @@ function KycDecisionInfo({
   );
 }
 
-// The three windowed strips (P&L / Deposits / Wager) share one P&L
-// breakdown — `use()`d once here so a failed breakdown renders ONE visible
-// band error instead of fifteen neutral "$0.00" tiles (a silent failure an
-// admin would read as "quiet user").
-function WindowedStripsStreamed({
-  pnlResultPromise,
-  balances,
-}: {
-  pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
-  balances: UserDetail["balances"];
-}) {
-  const r = use(pnlResultPromise);
-  if (r.error) {
-    return (
-      <>
-        <SectionHeading icon={TrendingUp} title="Windowed P&L" />
-        <BandError
-          title="Couldn't load windowed P&L / deposits / wager"
-          hint="The P&L breakdown failed or timed out — this is a load failure, not a quiet account. Retry re-runs it."
-        />
-      </>
-    );
-  }
-  const pnlBreakdown = r.data;
-  return (
-    <>
-      <SectionHeading icon={TrendingUp} title="Windowed P&L" />
-      <WindowedPnlStrip pnlBreakdown={pnlBreakdown} />
-      <SectionHeading icon={Banknote} title="Windowed Deposits" />
-      {/* Lifetime deposit total + its fiat (non-crypto) portion — context for
-          the windowed tiles below, and the Account-tab home for the fiat
-          figure that also shows on Overview's P&L box + the KYC panel. */}
-      {balances ? (
-        <p className="-mt-3 px-3 text-xs text-muted-foreground">
-          Lifetime {formatCurrency(balances.totalDeposited)}
-          {balances.fiatDeposits > 0
-            ? ` · ${formatCurrency(balances.fiatDeposits)} fiat`
-            : ""}
-        </p>
-      ) : null}
-      <WindowedDepositsStrip pnlBreakdown={pnlBreakdown} />
-      <SectionHeading icon={Coins} title="Windowed Wager" />
-      <WindowedWagerStrip pnlBreakdown={pnlBreakdown} />
-    </>
-  );
-}
-
 function WagerRequirementStreamed({
   userId,
   wagerRequirementPromise,
@@ -2581,197 +2635,4 @@ function BalanceWeightingStreamed({
 }) {
   const weighting = use(balanceWeightingPromise);
   return <UserBalanceWeightingCard data={weighting} />;
-}
-
-// Wagering stats — moved out of the hero KPI strip to keep the hero
-// compact. Headline number is Wager Loss (totalWagered − totalWon)
-// from the HOUSE perspective: positive means we won that money, so
-// emerald; negative means the user is up on bets, so rose. The three
-// supporting tiles (wagered, won, house edge) give context.
-function WageringStatsCard({
-  balances,
-}: {
-  balances: UserDetail["balances"];
-}) {
-  if (!balances) {
-    return (
-      <Card>
-        <CardContent className="p-0">
-          <EmptyState
-            icon={Dices}
-            title="No wagering data yet"
-            description="Wager totals appear once this user places their first bet."
-            compact
-          />
-        </CardContent>
-      </Card>
-    );
-  }
-  const wagerLoss = balances.totalWagered - balances.totalWon;
-  const houseEdge =
-    balances.totalWagered > 0
-      ? ((balances.totalWagered - balances.totalWon) / balances.totalWagered) *
-        100
-      : 0;
-  const isHouseUp = wagerLoss >= 0;
-  return (
-    <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-      <ModernMetricTile
-        label="Wager Loss"
-        value={
-          balances.totalWagered > 0
-            ? `${isHouseUp ? "+" : ""}${formatCurrency(wagerLoss)}`
-            : "—"
-        }
-        accent={isHouseUp ? "emerald" : "rose"}
-        icon={isHouseUp ? TrendingUp : TrendingDown}
-      />
-      <ModernMetricTile
-        label="Total Wagered"
-        value={formatCurrency(balances.totalWagered)}
-        accent="amber"
-        icon={Coins}
-      />
-      <ModernMetricTile
-        label="Total Won"
-        value={formatCurrency(balances.totalWon)}
-        accent="rose"
-        icon={Trophy}
-      />
-      <ModernMetricTile
-        label="House Edge"
-        value={
-          balances.totalWagered > 0 ? `${houseEdge.toFixed(2)}%` : "—"
-        }
-        accent="purple"
-        icon={Percent}
-      />
-    </div>
-  );
-}
-
-// ───────────────────────────────────────────────────────────────────
-//  WINDOWED P&L STRIP — used by AccountTab below the wagering stats
-// ───────────────────────────────────────────────────────────────────
-
-/**
- * Four rolling P&L tiles (24h / 3d / 7d / 14d) shown as a
- * horizontal strip on the Account tab. Each tile shows the windowed
- * realized P&L for that user, computed by `getUserPnlBreakdown` via
- * the same `getUserWindowedPnlMulti` helper that powers the Rolling
- * P&L block on the Overview tab — the numbers are guaranteed to match
- * between tabs because both consume the same `pnlBreakdown` prop.
- * (The 12h rung was dropped per owner request — 24h is now the
- * shortest window shown here.)
- *
- * House-POV color rule per CLAUDE.md:
- *   pnl > 0  → user lost net → house gain → emerald
- *   pnl < 0  → user gained net → house loss → rose
- *   pnl == 0 → neutral grey
- *
- * Tile sizing mirrors `ModernMetricTile` so the strip visually
- * matches the wagering-stats row directly above it. Grid wraps from
- * 2 columns on phones → 4 on lg (matching the Deposits/Wager strips
- * below it) so each window stays scannable without horizontal
- * scrolling on any breakpoint.
- */
-function WindowedPnlStrip({
-  pnlBreakdown,
-}: {
-  pnlBreakdown: PnlBreakdown;
-}) {
-  const windows: { label: string; pnl: number }[] = [
-    { label: "Past 24h", pnl: pnlBreakdown.pnl24h },
-    { label: "Past 3d", pnl: pnlBreakdown.pnl3d },
-    { label: "Past 7d", pnl: pnlBreakdown.pnl7d },
-    { label: "Past 14d", pnl: pnlBreakdown.pnl14d },
-  ];
-  return (
-    <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-      {windows.map((w) => {
-        // Treat exact zero as neutral so a quiet user reads grey
-        // instead of arbitrary emerald — same convention as the
-        // dashboard's P&L tiles.
-        const isZero = w.pnl === 0;
-        const isHouseGain = w.pnl > 0;
-        const accent: "emerald" | "rose" | "blue" = isZero
-          ? "blue"
-          : isHouseGain
-            ? "emerald"
-            : "rose";
-        const Icon = isZero
-          ? TrendingUp
-          : isHouseGain
-            ? TrendingUp
-            : TrendingDown;
-        const display = isZero
-          ? formatCurrency(0)
-          : `${isHouseGain ? "+" : ""}${formatCurrency(w.pnl)}`;
-        return (
-          <ModernMetricTile
-            key={w.label}
-            label={w.label}
-            value={display}
-            accent={accent}
-            icon={Icon}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function WindowedDepositsStrip({
-  pnlBreakdown,
-}: {
-  pnlBreakdown: PnlBreakdown;
-}) {
-  const windows: { label: string; amount: number }[] = [
-    { label: "Past 24h", amount: pnlBreakdown.deposits24h },
-    { label: "Past 3d", amount: pnlBreakdown.deposits3d },
-    { label: "Past 7d", amount: pnlBreakdown.deposits7d },
-    { label: "Past 14d", amount: pnlBreakdown.deposits14d },
-  ];
-  return (
-    <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-      {windows.map((w) => (
-        <ModernMetricTile
-          key={w.label}
-          label={w.label}
-          value={formatCurrency(w.amount)}
-          accent="emerald"
-          icon={Banknote}
-        />
-      ))}
-    </div>
-  );
-}
-
-// Rolling wager tiles (24h / 3d / 7d / 14d) — total bet stakes in each
-// window, mirroring the Windowed Deposits strip directly above. Amber to
-// match the "Total Wagered" tile in the wagering-stats row.
-function WindowedWagerStrip({
-  pnlBreakdown,
-}: {
-  pnlBreakdown: PnlBreakdown;
-}) {
-  const windows: { label: string; amount: number }[] = [
-    { label: "Past 24h", amount: pnlBreakdown.wager24h },
-    { label: "Past 3d", amount: pnlBreakdown.wager3d },
-    { label: "Past 7d", amount: pnlBreakdown.wager7d },
-    { label: "Past 14d", amount: pnlBreakdown.wager14d },
-  ];
-  return (
-    <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-      {windows.map((w) => (
-        <ModernMetricTile
-          key={w.label}
-          label={w.label}
-          value={formatCurrency(w.amount)}
-          accent="amber"
-          icon={Coins}
-        />
-      ))}
-    </div>
-  );
 }

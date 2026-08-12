@@ -369,14 +369,17 @@ async function UserDetailBody({
     pnl3d: 0,
     pnl7d: 0,
     pnl14d: 0,
+    pnl30d: 0,
     deposits24h: 0,
     deposits3d: 0,
     deposits7d: 0,
     deposits14d: 0,
+    deposits30d: 0,
     wager24h: 0,
     wager3d: 0,
     wager7d: 0,
     wager14d: 0,
+    wager30d: 0,
   };
   type UserTxPage = Awaited<ReturnType<typeof getUserTransactions>>;
 

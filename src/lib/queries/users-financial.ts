@@ -31,7 +31,7 @@ export type PnlBreakdown = {
   // Net
   netPnlRealized: number;
   netPnlTrue: number;
-  // Rolling windowed house P&L (past 24h / 3d / 7d / 14d, now − N) —
+  // Rolling windowed house P&L (past 24h / 3d / 7d / 14d / 30d, now − N) —
   // windowed delta form. Positive = house gain (emerald), per
   // CLAUDE.md. Four windows so the row reads as a short-to-long ladder
   // of how this user has been performing for the house. 14d added on
@@ -42,16 +42,19 @@ export type PnlBreakdown = {
   pnl3d: number;
   pnl7d: number;
   pnl14d: number;
+  pnl30d: number;
   deposits24h: number;
   deposits3d: number;
   deposits7d: number;
   deposits14d: number;
+  deposits30d: number;
   // Rolling windowed WAGER (sum of bet stakes: pack opens + battle entries +
   // upgrader bets) over the same windows, for the Account-tab wager line.
   wager24h: number;
   wager3d: number;
   wager7d: number;
   wager14d: number;
+  wager30d: number;
 };
 
 export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown> {
@@ -63,6 +66,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
   const since3d = new Date(nowMs - 3 * 24 * 60 * 60 * 1000);
   const since7d = new Date(nowMs - 7 * 24 * 60 * 60 * 1000);
   const since14d = new Date(nowMs - 14 * 24 * 60 * 60 * 1000);
+  const since30d = new Date(nowMs - 30 * 24 * 60 * 60 * 1000);
   const [rows, inventoryValue, windowed, wagerWindows] = await Promise.all([
     queryMainRows<{ type: string; net: string }[]>(
       `
@@ -112,23 +116,25 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
       { key: "d3", since: since3d },
       { key: "d7", since: since7d },
       { key: "d14", since: since14d },
+      { key: "d30", since: since30d },
     ]),
     // Windowed WAGER: sum of bet stakes per window. Wager types are the
     // user's spend on play — pack opens, battle entries (incl. sponsored
     // host funding), and upgrader bets — taken as ABS(amount) since stakes
-    // are debits (negative) on the ledger. Single round-trip, four windows
-    // via CASE-WHEN; bounded to the deepest (14d) cutoff.
-    queryMainRows<{ w24: string; w3d: string; w7d: string; w14d: string }[]>(
+  // are debits (negative) on the ledger. Single round-trip, five windows
+  // via CASE-WHEN; bounded to the deepest (30d) cutoff.
+    queryMainRows<{ w24: string; w3d: string; w7d: string; w14d: string; w30d: string }[]>(
       `
       SELECT
         COALESCE(SUM(CASE WHEN created_at >= $2 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w24,
         COALESCE(SUM(CASE WHEN created_at >= $3 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w3d,
         COALESCE(SUM(CASE WHEN created_at >= $4 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w7d,
-        COALESCE(SUM(CASE WHEN created_at >= $5 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w14d
+        COALESCE(SUM(CASE WHEN created_at >= $5 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w14d,
+        COALESCE(SUM(CASE WHEN created_at >= $6 THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS w30d
       FROM ledger_transactions
       WHERE user_id = $1
         AND status = 'completed'
-        AND created_at >= $5
+        AND created_at >= $6
         AND type::text IN ('pack_opening','battle_bet','battle_sponsorship','upgrader_bet')
     `,
       userId,
@@ -136,6 +142,7 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
       since3d,
       since7d,
       since14d,
+      since30d,
     ),
   ]);
   const wagerRow = wagerWindows[0];
@@ -199,14 +206,17 @@ export async function getUserPnlBreakdown(userId: string): Promise<PnlBreakdown>
     pnl3d: windowed.d3.pnl,
     pnl7d: windowed.d7.pnl,
     pnl14d: windowed.d14.pnl,
+    pnl30d: windowed.d30.pnl,
     deposits24h: windowed.h24.deposits,
     deposits3d: windowed.d3.deposits,
     deposits7d: windowed.d7.deposits,
     deposits14d: windowed.d14.deposits,
+    deposits30d: windowed.d30.deposits,
     wager24h: toNumber(wagerRow?.w24),
     wager3d: toNumber(wagerRow?.w3d),
     wager7d: toNumber(wagerRow?.w7d),
     wager14d: toNumber(wagerRow?.w14d),
+    wager30d: toNumber(wagerRow?.w30d),
   };
 }
 

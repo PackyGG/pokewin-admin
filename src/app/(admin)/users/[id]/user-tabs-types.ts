@@ -700,15 +700,18 @@ export type PnlBreakdown = {
   pnl3d: number;
   pnl7d: number;
   pnl14d: number;
+  pnl30d: number;
   deposits24h: number;
   deposits3d: number;
   deposits7d: number;
   deposits14d: number;
+  deposits30d: number;
   // Rolling windowed wager (bet stakes) over the same windows.
   wager24h: number;
   wager3d: number;
   wager7d: number;
   wager14d: number;
+  wager30d: number;
 };
 
 export type AdminNote = {

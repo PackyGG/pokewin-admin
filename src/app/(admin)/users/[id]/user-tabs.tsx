@@ -35,6 +35,7 @@ export {
   RewardsCard,
   FeatureLocksCard,
   AccountDetailsSection,
+  DepositAddressesSection,
   BalanceHistoryChart,
   NotesSection,
 } from "./user-tabs-cards";

@@ -23,6 +23,7 @@ import type {
   PaginatedTransactions,
   PaginatedInventory,
   Transaction,
+  TabKey,
 } from "@/app/(admin)/users/[id]/user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
@@ -162,14 +163,17 @@ const PNL: PnlBreakdown = {
   pnl3d: 0,
   pnl7d: -2_109.4,
   pnl14d: 0,
-  deposits24h: 0,
+  pnl30d: 8_742.16,
+  deposits24h: 12_500,
   deposits3d: 0,
-  deposits7d: 0,
+  deposits7d: 63_200,
   deposits14d: 0,
-  wager24h: 0,
+  deposits30d: 145_250,
+  wager24h: 48_750,
   wager3d: 0,
-  wager7d: 0,
+  wager7d: 287_450,
   wager14d: 0,
+  wager30d: 652_340.75,
 };
 
 const REWARDS: UserRewards = {
@@ -349,12 +353,54 @@ const DATA: UserDetail = {
     totalBonusDistributedUsd: 0,
     lastPayoutAt: NOW_ISO,
   },
-  shippingAddress: null,
-  vault: null,
+  shippingAddress: {
+    firstName: "Alex",
+    lastName: "Rivera",
+    phoneCountryCode: "+49",
+    phoneNumber: "15123456789",
+    addressLine1: "Torstraße 120",
+    addressLine2: "Apartment 4B",
+    city: "Berlin",
+    zipCode: "10119",
+    stateProvince: "Berlin",
+    country: "Germany",
+  },
+  vault: {
+    id: "vault_fixture_8f2291ab",
+    name: "Fixture Creator Vault",
+    customerRefId: "fb-customer-4170",
+    fireblocksVaultId: "930174",
+    createdAt: "2025-06-14T16:42:00.000Z",
+  },
   mutes: [],
   cardWithdrawals: [],
   activeSeed: null,
-  depositAddresses: [],
+  depositAddresses: [
+    {
+      id: "fixture-deposit-btc",
+      assetId: "BTC",
+      address: "bc1q7r9m3k5p2f8c4x6v9z2n5d8h3j7s4w6y",
+      tag: null,
+      legacyAddress: null,
+      createdAt: "2025-06-14T16:42:00.000Z",
+    },
+    {
+      id: "fixture-deposit-eth",
+      assetId: "ETH",
+      address: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
+      tag: null,
+      legacyAddress: null,
+      createdAt: "2025-06-14T16:45:00.000Z",
+    },
+    {
+      id: "fixture-deposit-xrp",
+      assetId: "XRP",
+      address: "rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh",
+      tag: "482913",
+      legacyAddress: null,
+      createdAt: "2025-07-02T09:10:00.000Z",
+    },
+  ],
   counts: { deposits: 256, withdrawals: 64, avgDeposit: 9_162.03 },
   tips: {
     received: { count: 0, totalUsd: 0, recent: [] },
@@ -383,7 +429,11 @@ const DATA: UserDetail = {
   },
 };
 
-export function UserDetailFixtureClient() {
+export function UserDetailFixtureClient({
+  initialTab = "overview",
+}: {
+  initialTab?: TabKey;
+} = {}) {
   // Every band input is passed as an already-resolved SafeQueryResult
   // promise (the page's streamed-band contract) — the hero + Overview tab
   // (what the audit measures) render synchronously from them. Tab-gated
@@ -426,7 +476,7 @@ export function UserDetailFixtureClient() {
       balanceWeightingPromise={Promise.resolve(null)}
       viewerIsAdjustmentOwner
       viewerCanSeeUltraLossback={false}
-      initialTab="overview"
+      initialTab={initialTab}
     />
   );
 }
