@@ -546,9 +546,9 @@ function CaseRow({
                   Automatically contained at
                 </p>
                 <p className="text-xs font-medium tabular-nums">
-                  {formatDateTime(
-                    review.automatedActionAt ?? review.createdAt,
-                  )}
+                  {review.automatedActionAt
+                    ? formatDateTime(review.automatedActionAt)
+                    : "Containment pending"}
                 </p>
               </>
             ) : (

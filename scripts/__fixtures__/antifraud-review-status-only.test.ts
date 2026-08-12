@@ -36,7 +36,8 @@ test("Account Review exposes the simplified high-risk workflow", async () => {
   assert.match(filterBar, /<OpenCaseDialog \{\.\.\.openCaseProps\} \/>/);
   assert.match(queue, /<StartReviewButton/);
   assert.match(queue, /review\.assignee\.label/);
-  assert.match(queue, /review\.automatedActionAt \?\? review\.createdAt/);
+  assert.match(queue, /formatDateTime\(review\.automatedActionAt\)/);
+  assert.match(queue, /Containment pending/);
   assert.match(queue, /Automatically contained at/);
   assert.match(queue, /review:\s*review\.id/);
   assert.match(queue, /<ReviewCaseDialog/);
