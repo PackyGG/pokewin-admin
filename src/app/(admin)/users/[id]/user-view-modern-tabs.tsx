@@ -2058,25 +2058,13 @@ export function AccountTab({
         open={featureAccessOpen}
         onOpenChange={setFeatureAccessOpen}
       >
-        <div className="space-y-4">
-          <FeatureLocksCard
-            userId={user.id}
-            featureLocks={featureLocks}
-            canToggle={capabilities.canToggleFeatureLocks}
-          />
-          {featureLocksPromise ? (
-            <Suspense fallback={<SkeletonCard lines={6} />}>
-              <RewardFeatureLocksStreamed
-                userId={user.id}
-                featureLocksPromise={featureLocksPromise}
-                canManageRewardLocks={capabilities.canToggleFeatureLocks}
-                canManageFiatAutoApproval={data.sessionRole === "admin"}
-              />
-            </Suspense>
-          ) : (
-            <SkeletonCard lines={6} />
-          )}
-          <div className="border-t pt-4">
+        <div className="grid items-start gap-4 lg:grid-cols-2">
+          <div className="space-y-4">
+            <FeatureLocksCard
+              userId={user.id}
+              featureLocks={featureLocks}
+              canToggle={capabilities.canToggleFeatureLocks}
+            />
             {fiatDepositAccessPromise && preFiatOverridePromise ? (
               <Suspense fallback={<SkeletonCard lines={3} />}>
                 <FiatDepositAccessStreamed
@@ -2090,6 +2078,18 @@ export function AccountTab({
               <SkeletonCard lines={3} />
             )}
           </div>
+          {featureLocksPromise ? (
+            <Suspense fallback={<SkeletonCard lines={6} />}>
+              <RewardFeatureLocksStreamed
+                userId={user.id}
+                featureLocksPromise={featureLocksPromise}
+                canManageRewardLocks={capabilities.canToggleFeatureLocks}
+                canManageFiatAutoApproval={data.sessionRole === "admin"}
+              />
+            </Suspense>
+          ) : (
+            <SkeletonCard lines={6} />
+          )}
         </div>
       </CollapsibleSection>
 

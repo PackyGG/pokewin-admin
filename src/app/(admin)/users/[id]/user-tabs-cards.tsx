@@ -552,52 +552,68 @@ export const FeatureLocksCard = React.memo(function FeatureLocksCard({
       locked: locks.locked_vault,
     },
   ];
+  const lockedCount = features.filter((feature) => feature.locked).length;
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-sm font-medium">Feature Locks</CardTitle>
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
+        <CardTitle className="text-sm font-medium">Platform Features</CardTitle>
+        <Badge
+          variant="outline"
+          className={
+            lockedCount > 0
+              ? "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+              : "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+          }
+        >
+          {lockedCount > 0 ? `${lockedCount} locked` : "All open"}
+        </Badge>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="grid gap-2 sm:grid-cols-2">
         {features.map((f) => (
-          <div key={f.key} className="flex items-center justify-between">
-            <span className="text-sm">{f.label}</span>
-            <div className="flex items-center gap-2">
+          <div
+            key={f.key}
+            className="flex min-w-0 items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2.5"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{f.label}</p>
               <Badge
                 variant="outline"
-                className={
+                className={`mt-1 text-[10px] ${
                   f.locked
                     ? "bg-rose-500/15 text-rose-600 dark:text-rose-400"
                     : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                }
+                }`}
               >
                 {f.locked ? "Locked" : "Open"}
               </Badge>
-              {canToggle && (
-                <Switch
-                  checked={f.locked}
-                  disabled={isPending}
-                  onCheckedChange={(checked) => {
-                    setLocks((prev) => ({ ...prev, [f.key]: checked }));
-                    startTransition(async () => {
-                      try {
-                        await toggleFeatureLock(userId, f.key, checked);
-                        toast.success(
-                          `${f.label} ${checked ? "locked" : "unlocked"}`,
-                        );
-                      } catch (err) {
-                        setLocks((prev) => ({ ...prev, [f.key]: !checked }));
-                        toast.error(
-                          err instanceof Error
-                            ? err.message
-                            : "Failed to update feature lock",
-                        );
-                      }
-                    });
-                  }}
-                />
-              )}
             </div>
+            {canToggle && (
+              <Switch
+                className="shrink-0"
+                aria-label={`${f.label} lock`}
+                checked={f.locked}
+                disabled={isPending}
+                onCheckedChange={(checked) => {
+                  setLocks((prev) => ({ ...prev, [f.key]: checked }));
+                  startTransition(async () => {
+                    try {
+                      await toggleFeatureLock(userId, f.key, checked);
+                      toast.success(
+                        `${f.label} ${checked ? "locked" : "unlocked"}`,
+                      );
+                    } catch (err) {
+                      setLocks((prev) => ({ ...prev, [f.key]: !checked }));
+                      toast.error(
+                        err instanceof Error
+                          ? err.message
+                          : "Failed to update feature lock",
+                      );
+                    }
+                  });
+                }}
+              />
+            )}
           </div>
         ))}
       </CardContent>
