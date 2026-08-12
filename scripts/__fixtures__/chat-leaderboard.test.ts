@@ -36,7 +36,10 @@ test("chat leaderboard is persisted, finalized by rank, and exposed on the page"
   assert.match(migration, /score_reached_at/);
   assert.match(actions, /finalizeChatLeaderboard/);
   assert.match(actions, /selectLeaderboardWinners/);
-  assert.match(page, /XP Leaderboards/);
+  assert.match(page, /competitionType="raffle"/);
+  assert.match(page, /competitionType="leaderboard"/);
+  assert.doesNotMatch(page, /CompetitionNavigation/);
+  assert.doesNotMatch(page, /No round running/);
   assert.match(page, /FinalizeLeaderboardButton/);
   assert.match(standings, /max\(event\.occurred_at\) AS score_reached_at/);
 });

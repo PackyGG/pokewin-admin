@@ -77,64 +77,42 @@ export const metadata = { title: "Chat Raffle" };
 const STANDINGS_TIMEOUT_MS = 20_000;
 const ROUNDS_TIMEOUT_MS = 10_000;
 
-export default async function ChatRafflePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ view?: string }>;
-}) {
+export default async function ChatRafflePage() {
   await requirePageAccess("/chat-raffle");
-  const params = await searchParams;
-  const competitionType: ChatCompetitionType =
-    params.view === "leaderboard" ? "leaderboard" : "raffle";
 
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity />
+        <PageHeroIdentity
+          action={
+            <>
+              <RoundFormDialog
+                mode="create"
+                competitionType="raffle"
+                triggerVariant="outline"
+              />
+              <RoundFormDialog mode="create" competitionType="leaderboard" />
+            </>
+          }
+        />
       </PageHero>
 
-      <CompetitionNavigation active={competitionType} />
+      <Suspense fallback={<ActiveRoundSkeleton />}>
+        <ActiveRoundSection competitionType="raffle" />
+      </Suspense>
 
       <Suspense fallback={<ActiveRoundSkeleton />}>
-        <ActiveRoundSection competitionType={competitionType} />
+        <ActiveRoundSection competitionType="leaderboard" />
       </Suspense>
 
       <Suspense fallback={<RoundHistorySkeleton />}>
-        <RoundHistorySection competitionType={competitionType} />
+        <RoundHistorySection competitionType="raffle" />
+      </Suspense>
+
+      <Suspense fallback={<RoundHistorySkeleton />}>
+        <RoundHistorySection competitionType="leaderboard" />
       </Suspense>
     </div>
-  );
-}
-
-function CompetitionNavigation({ active }: { active: ChatCompetitionType }) {
-  return (
-    <nav
-      aria-label="Chat competition type"
-      className="inline-flex rounded-xl border bg-muted/30 p-1"
-    >
-      {([
-        { type: "raffle" as const, label: "Raffles", icon: Dices, href: "/chat-raffle" },
-        { type: "leaderboard" as const, label: "XP Leaderboards", icon: ListOrdered, href: "/chat-raffle?view=leaderboard" },
-      ]).map((item) => {
-        const Icon = item.icon;
-        return (
-          <Link
-            key={item.type}
-            href={item.href}
-            aria-current={active === item.type ? "page" : undefined}
-            className={cn(
-              "inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors",
-              active === item.type
-                ? "border bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            <Icon className="size-4" />
-            {item.label}
-          </Link>
-        );
-      })}
-    </nav>
   );
 }
 
@@ -154,6 +132,7 @@ async function ActiveRoundSection({
   const round = roundResult.data;
 
   if (!round) {
+    if (competitionType === "raffle") return null;
     return <NoActiveRound competitionType={competitionType} />;
   }
 
@@ -350,23 +329,17 @@ async function NoActiveRound({
   return (
     <FadeIn className="space-y-6">
       <SectionHeading
-        icon={competitionType === "leaderboard" ? ListOrdered : Dices}
-        title={competitionType === "leaderboard" ? "No XP leaderboard running" : "No round running"}
+        icon={ListOrdered}
+        title="No XP leaderboard running"
         action={
           <RoundFormDialog mode="create" competitionType={competitionType} />
         }
       />
 
       <div className="rounded-2xl border border-dashed p-6 text-center">
-        {competitionType === "leaderboard" ? (
-          <ListOrdered className="mx-auto size-6 text-muted-foreground" />
-        ) : (
-          <Dices className="mx-auto size-6 text-muted-foreground" />
-        )}
+        <ListOrdered className="mx-auto size-6 text-muted-foreground" />
         <p className="mt-2 text-sm font-medium">
-          {competitionType === "leaderboard"
-            ? "Create a leaderboard to reward the top XP earners"
-            : "Start a round to hand out tickets"}
+          Create a leaderboard to reward the top XP earners
         </p>
         <p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">
           Below is the lifetime Community XP leaderboard across Discord and
