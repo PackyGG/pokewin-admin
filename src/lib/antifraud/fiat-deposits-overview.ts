@@ -8,6 +8,7 @@ export type FiatDepositOverviewItem = {
   id: string;
   userId: string;
   username: string | null;
+  imageUrl: string | null;
   accountEmail: string | null;
   signupEmail: string | null;
   accountCountry: string | null;
@@ -39,6 +40,7 @@ type RawDeposit = {
   id: string;
   user_id: string;
   username: string | null;
+  account_image: string | null;
   account_email: string | null;
   signup_email: string | null;
   account_country: string | null;
@@ -78,8 +80,8 @@ export async function listFiatDeposits(input: {
 
   const visibleDepositsCtes = `
     WITH eligible_intents AS (
-      SELECT i.*, u.username, u.email AS account_email, u.country_code,
-        u.signup_ip
+      SELECT i.*, u.username, u.image AS account_image,
+        u.email AS account_email, u.country_code, u.signup_ip
       FROM fiat_deposit_intents i
       JOIN "user" u ON u.id = i.user_id
       WHERE COALESCE(u.role::text, '') <> 'creator'
@@ -139,6 +141,7 @@ export async function listFiatDeposits(input: {
         id,
         user_id,
         username,
+        account_image,
         account_email,
         country_code,
         signup_ip,
@@ -179,6 +182,7 @@ export async function listFiatDeposits(input: {
         i.id,
         i.user_id,
         i.username,
+        i.account_image,
         i.account_email,
         i.country_code,
         i.signup_ip,
@@ -229,6 +233,7 @@ export async function listFiatDeposits(input: {
          deposits.id::text AS id,
          deposits.user_id::text AS user_id,
          deposits.username,
+         deposits.account_image,
          deposits.account_email,
          COALESCE(auth.signup_email, deposits.account_email) AS signup_email,
          deposits.country_code AS account_country,
@@ -303,6 +308,7 @@ export async function listFiatDeposits(input: {
       id: row.id,
       userId: row.user_id,
       username: row.username,
+      imageUrl: row.account_image,
       accountEmail: row.account_email,
       signupEmail: row.signup_email,
       accountCountry: row.account_country,

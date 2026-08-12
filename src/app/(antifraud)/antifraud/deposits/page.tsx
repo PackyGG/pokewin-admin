@@ -6,7 +6,6 @@ import {
   CreditCard,
   Mail,
   MapPin,
-  UserRound,
   Wifi,
   X,
 } from "lucide-react";
@@ -15,6 +14,7 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { HostLink } from "@/components/host-link";
 import { SectionHeading } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   listFiatAssessments,
@@ -127,32 +127,49 @@ function DepositCard({
     && deposit.providerPaymentStatus.toLowerCase() !== deposit.status.toLowerCase()
       ? `${deposit.status} · ${deposit.providerPaymentStatus}`
       : deposit.status;
+  const outcomeLabel = failed
+    ? "Failed"
+    : /completed|paid|succeeded/i.test(paymentStatus)
+      ? "Succeeded"
+      : paymentStatus.replaceAll("_", " ");
 
   return (
-    <article className="overflow-hidden rounded-xl border bg-card shadow-sm">
-      <div className="grid gap-3 px-3 py-2.5 lg:grid-cols-[minmax(14rem,1fr)_auto_auto] lg:items-center">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
-            <UserRound className="size-3.5" />
-          </div>
+    <article
+      className={cn(
+        "overflow-hidden rounded-xl border border-l-4 bg-card shadow-sm",
+        failed ? "border-l-red-500" : "border-l-emerald-500",
+      )}
+    >
+      <div className="grid gap-4 px-4 py-3.5 lg:grid-cols-[minmax(16rem,1fr)_auto_auto] lg:items-center">
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar size="lg" className="size-12 bg-background">
+            {deposit.imageUrl && (
+              <AvatarImage src={deposit.imageUrl} alt={displayName} />
+            )}
+            <AvatarFallback className="text-sm font-bold">
+              {avatarInitials(displayName)}
+            </AvatarFallback>
+          </Avatar>
           <div className="min-w-0">
             <HostLink
               href={`/users/${deposit.userId}`}
-              className="block truncate text-sm font-semibold hover:underline"
+              className="block truncate text-base font-bold hover:underline"
             >
               {displayName}
             </HostLink>
-            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-[10px] text-muted-foreground">
-              <span className="truncate font-mono" title={deposit.userId}>
-                {deposit.userId}
+            <p className="truncate text-xs text-muted-foreground">
+              {deposit.accountEmail ?? deposit.userId}
+            </p>
+            <div className="mt-1.5 flex min-w-0 items-center gap-3 text-xs text-muted-foreground">
+              <span className="shrink-0 font-medium">
+                {formatRelative(deposit.occurredAt)}
               </span>
-              <span className="shrink-0">{formatRelative(deposit.occurredAt)}</span>
               <HostLink
                 href={`/transactions/card-payments/${deposit.id}`}
-                className="inline-flex shrink-0 items-center gap-1 font-medium text-foreground hover:underline"
+                className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-foreground hover:underline"
               >
-                <CreditCard className="size-3" />
-                Details
+                <CreditCard className="size-3.5" />
+                Payment details
               </HostLink>
             </div>
           </div>
@@ -172,21 +189,21 @@ function DepositCard({
           )}
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5 lg:justify-end">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
           <Badge
             variant="outline"
             className={cn(
-              "h-5 px-1.5 text-[10px]",
+              "h-7 px-2.5 text-xs font-bold",
               statusClassName(deposit.status, deposit.providerPaymentStatus),
             )}
           >
-            {paymentStatus.replaceAll("_", " ")}
+            {outcomeLabel}
           </Badge>
           {assessment && (
             <Badge
               variant="outline"
               className={cn(
-                "h-5 px-1.5 text-[10px]",
+                "h-7 px-2.5 text-xs font-semibold",
                 assessment.verdict === "bad"
                   ? "border-rose-500/30 text-rose-700 dark:text-rose-300"
                   : assessment.verdict === "review"
@@ -200,7 +217,7 @@ function DepositCard({
         </div>
       </div>
 
-      <div className="grid gap-2 border-t bg-muted/10 px-3 py-2 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-3 border-t bg-muted/15 px-4 py-3 sm:grid-cols-2 xl:grid-cols-3">
         <ComparisonFact
           icon={Mail}
           label="Email"
@@ -233,13 +250,18 @@ function DepositCard({
       </div>
 
       {deposit.failureReason && (
-        <div className="flex items-start gap-1.5 border-t border-red-500/20 px-3 py-2 text-[11px] text-red-600 dark:text-red-400">
-          <AlertCircle className="mt-px size-3.5 shrink-0" />
+        <div className="flex items-start gap-2 border-t border-red-500/20 bg-red-500/5 px-4 py-3 text-xs font-medium text-red-700 dark:text-red-300">
+          <AlertCircle className="mt-px size-4 shrink-0" />
           <span className="line-clamp-2">{deposit.failureReason}</span>
         </div>
       )}
     </article>
   );
+}
+
+function avatarInitials(value: string): string {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  return words.slice(0, 2).map((word) => word[0]?.toUpperCase()).join("") || "?";
 }
 
 function isFailedStatus(status: string, providerStatus: string | null): boolean {
@@ -268,12 +290,12 @@ function AmountFact({
   accent?: boolean;
 }) {
   return (
-    <div className="flex h-10 min-w-28 flex-col justify-center rounded-lg border bg-background px-2.5 text-right">
-      <p className="text-[9px] font-medium uppercase leading-none tracking-wide text-muted-foreground">
+    <div className="flex h-14 min-w-36 flex-col justify-center rounded-lg border bg-background px-3.5 text-right shadow-sm">
+      <p className="text-[10px] font-semibold uppercase leading-none tracking-wide text-muted-foreground">
         {label}
       </p>
       <p className={cn(
-        "mt-1 whitespace-nowrap text-sm font-semibold leading-none tabular-nums",
+        "mt-1.5 whitespace-nowrap text-lg font-bold leading-none tabular-nums",
         accent && "text-emerald-600 dark:text-emerald-400",
       )}>
         {value}
@@ -310,7 +332,7 @@ function ComparisonFact({
   const matches = comparable ? checkout === account : null;
 
   return (
-    <dl className="relative min-w-0 rounded-lg border bg-background px-2.5 py-2">
+    <dl className="relative min-w-0 rounded-lg border bg-background px-3 py-2.5">
       {matches === true && (
         <Check
           className="absolute right-2 top-2 size-3.5 text-emerald-600 dark:text-emerald-400"
@@ -323,8 +345,8 @@ function ComparisonFact({
           aria-label={`${label} does not match`}
         />
       )}
-      <dt className="flex items-center gap-1.5 text-[10px] font-semibold">
-        <Icon className="size-3 shrink-0" />
+      <dt className="flex items-center gap-2 text-xs font-bold">
+        <Icon className="size-3.5 shrink-0" />
         {label}
       </dt>
       <dd className="mt-1 grid min-w-0 grid-cols-2 gap-2">
@@ -333,13 +355,13 @@ function ComparisonFact({
           [accountLabel, accountValue],
         ].map(([itemLabel, value], index) => (
           <div key={itemLabel} className="min-w-0">
-            <p className="truncate text-[8px] uppercase tracking-wide text-muted-foreground">
+            <p className="truncate text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
               {itemLabel}
             </p>
             <p
               className={cn(
-                "mt-0.5 truncate text-[11px] font-medium",
-                mono && "font-mono text-[10px]",
+                "mt-0.5 truncate text-xs font-semibold",
+                mono && "font-mono text-[11px]",
                 matches === false && index === 0 && "text-red-600 dark:text-red-400",
               )}
               title={value}

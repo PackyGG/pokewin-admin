@@ -25,10 +25,14 @@ test("Fraud Overview exposes a read-only Fiat deposits page", () => {
   assert.match(page, /<DepositCard/);
   assert.match(page, /<DataTablePagination/);
   assert.doesNotMatch(page, /FiatDepositReviewQueue|FiatDepositReviewDecision/);
-  assert.match(page, /lg:grid-cols-\[minmax\(14rem,1fr\)_auto_auto\]/);
+  assert.match(page, /lg:grid-cols-\[minmax\(16rem,1fr\)_auto_auto\]/);
   assert.match(page, /h-36 w-full rounded-xl/);
   assert.match(page, /providerPaymentStatus/);
   assert.match(page, /failureReason/);
+  assert.match(page, /<AvatarImage src={deposit\.imageUrl}/);
+  assert.match(page, /<AvatarFallback/);
+  assert.match(page, /border-l-red-500/);
+  assert.match(page, /border-l-emerald-500/);
   assert.match(page, /key={deposit\.rowId}/);
   assert.match(page, /aria-label={`\$\{label\} matches`}/);
   assert.match(page, /aria-label={`\$\{label\} does not match`}/);
@@ -51,6 +55,8 @@ test("Fiat deposit visibility includes resolved Whop attempts only", () => {
   assert.match(query, /audit_events/);
   assert.match(query, /failure_message/);
   assert.match(query, /rowId: row\.row_id/);
+  assert.match(query, /u\.image AS account_image/);
+  assert.match(query, /imageUrl: row\.account_image/);
   assert.match(query, /i\.status IN \([\s\S]*'completed'[\s\S]*'disputed'/);
   assert.doesNotMatch(query, /i\.status IN \([\s\S]*'checkout_ready'/);
   assert.doesNotMatch(query, /fiat_deposit_assessments/);
