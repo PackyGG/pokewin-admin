@@ -30,10 +30,10 @@ test("challenge broadcast payload preserves the fields used by the site card", (
 });
 
 test("challenge preview selects all three dedicated customer designs", () => {
-  for (const [game, challengeType] of [
-    ["keno", "keno"],
-    ["upgrader", "upgrader"],
-    ["pack", "pack_pull"],
+  for (const [game, challengeType, label] of [
+    ["keno", "keno", "Keno"],
+    ["upgrader", "upgrader", "Upgrader"],
+    ["pack", "pack_pull", "Pack Pull"],
   ] as const) {
     const preview = previewNotificationText("challenge_available", {
       challenge_name: "New challenge",
@@ -43,7 +43,11 @@ test("challenge preview selects all three dedicated customer designs", () => {
     });
     assert.equal(preview.known, true);
     assert.equal(preview.challengeGame, game);
-    assert.equal(preview.body, "Complete it to claim $10.00.");
+    assert.equal(preview.title, "New challenge is live");
+    assert.equal(
+      preview.body,
+      `Complete this ${label} challenge to claim $10.00.`,
+    );
   }
 });
 
