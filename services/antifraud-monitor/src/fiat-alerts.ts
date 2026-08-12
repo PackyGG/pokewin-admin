@@ -20,6 +20,10 @@ const HIGH_RISK_CURSOR_STREAM = "fiat-high-risk";
 const FAILED_WEBHOOK_CURSOR_STREAM = "fiat-failed-webhooks";
 const BATCH_SIZE = 100;
 const DELIVERY_BATCH_SIZE = 8;
+// A targeted risk refresh may wait on MaxMind. Keep one external-provider job
+// per serialized monitor tick so a deposit burst cannot multiply that timeout
+// and delay every unrelated antifraud phase behind it.
+const REVIEW_CLASSIFICATION_BATCH_SIZE = 1;
 const UTC = "AT TIME ZONE 'UTC'";
 
 export type FiatReviewRiskClassifier = {
@@ -899,7 +903,7 @@ export class FiatProblemAlerts {
               AND assessment.source_updated_at >= alert.occurred_at
           )
         ORDER BY alert.occurred_at, alert.source_id
-        LIMIT ${DELIVERY_BATCH_SIZE}
+        LIMIT ${REVIEW_CLASSIFICATION_BATCH_SIZE}
       `,
     );
 
