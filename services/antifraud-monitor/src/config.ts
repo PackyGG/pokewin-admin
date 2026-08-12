@@ -19,6 +19,7 @@ const schema = z.object({
   SENTRY_RELEASE: z.string().min(1).optional(),
   RAILWAY_ENVIRONMENT_NAME: z.string().optional(),
   RAILWAY_GIT_COMMIT_SHA: z.string().optional(),
+  RAILWAY_DEPLOYMENT_ID: z.string().optional(),
   // Nothing reads `config.TZ` — the process timezone is pinned by
   // `process.env.TZ ??= "UTC"` in server.ts and by `-c TimeZone=UTC` on both
   // pools. The field stays declared anyway: the audit-contracts test requires

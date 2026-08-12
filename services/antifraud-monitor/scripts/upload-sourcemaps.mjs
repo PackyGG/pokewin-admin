@@ -8,7 +8,10 @@ if (required.some((name) => !process.env[name])) {
 }
 
 const cli = fileURLToPath(new URL("../node_modules/@sentry/cli/bin/sentry-cli", import.meta.url));
-const release = process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.SENTRY_RELEASE;
+const release =
+  process.env.RAILWAY_GIT_COMMIT_SHA ??
+  process.env.RAILWAY_DEPLOYMENT_ID ??
+  process.env.SENTRY_RELEASE;
 const common = ["sourcemaps", "--org", process.env.SENTRY_ORG, "--project", process.env.SENTRY_PROJECT];
 
 function run(args) {

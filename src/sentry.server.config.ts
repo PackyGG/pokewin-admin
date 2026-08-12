@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import {
   sanitizeSentryEvent,
+  sentrySecretValues,
   sentryTraceSampleRate,
 } from "@/lib/sentry-config";
 
@@ -14,6 +15,7 @@ import {
  * Never put secrets or user PII into events (sendDefaultPii stays false).
  */
 const dsn = process.env.SENTRY_DSN ?? process.env.NEXT_PUBLIC_SENTRY_DSN;
+const secrets = sentrySecretValues(process.env);
 
 Sentry.init({
   dsn,
@@ -24,7 +26,11 @@ Sentry.init({
   tracesSampleRate: sentryTraceSampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE),
   // Never attach cookies / headers / user PII automatically.
   sendDefaultPii: false,
-  beforeSend: sanitizeSentryEvent,
+  initialScope: {
+    tags: { "app.component": "admin-dashboard", "app.runtime": "server" },
+  },
+  beforeSend: (event) => sanitizeSentryEvent(event, secrets),
+  beforeSendTransaction: (event) => sanitizeSentryEvent(event, secrets),
   // SECURITY (SECURITY_AUDIT.md LOW): drop console breadcrumbs. Server logs
   // (e.g. backend-api error payloads) can carry user data; keep them out of
   // Sentry events entirely rather than risk egressing PII on the next capture.

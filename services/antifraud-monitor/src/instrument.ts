@@ -36,9 +36,17 @@ Sentry.init({
   dsn,
   enabled: Boolean(dsn),
   environment: process.env.RAILWAY_ENVIRONMENT_NAME ?? process.env.NODE_ENV,
-  release: process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.SENTRY_RELEASE,
+  // Git-backed deploys use the commit; direct Railway CLI deploys still get a
+  // unique release through their deployment ID.
+  release:
+    process.env.RAILWAY_GIT_COMMIT_SHA ??
+    process.env.RAILWAY_DEPLOYMENT_ID ??
+    process.env.SENTRY_RELEASE,
   sendDefaultPii: false,
   enableLogs: false,
+  initialScope: {
+    tags: { "app.component": "antifraud-monitor", "app.runtime": "railway" },
+  },
   integrations: [
     Sentry.fastifyIntegration({
       // Fastify v5 request failures are captured explicitly in the service's

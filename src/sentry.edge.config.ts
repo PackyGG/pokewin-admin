@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import {
   sanitizeSentryEvent,
+  sentrySecretValues,
   sentryTraceSampleRate,
 } from "@/lib/sentry-config";
 
@@ -12,6 +13,7 @@ import {
  * Loaded by src/instrumentation.ts register() only for the edge runtime.
  */
 const dsn = process.env.SENTRY_DSN ?? process.env.NEXT_PUBLIC_SENTRY_DSN;
+const secrets = sentrySecretValues(process.env);
 
 Sentry.init({
   dsn,
@@ -20,7 +22,11 @@ Sentry.init({
   release: process.env.VERCEL_GIT_COMMIT_SHA,
   tracesSampleRate: sentryTraceSampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE),
   sendDefaultPii: false,
-  beforeSend: sanitizeSentryEvent,
+  initialScope: {
+    tags: { "app.component": "admin-dashboard", "app.runtime": "edge" },
+  },
+  beforeSend: (event) => sanitizeSentryEvent(event, secrets),
+  beforeSendTransaction: (event) => sanitizeSentryEvent(event, secrets),
   beforeBreadcrumb(breadcrumb) {
     return breadcrumb.category === "console" ? null : breadcrumb;
   },

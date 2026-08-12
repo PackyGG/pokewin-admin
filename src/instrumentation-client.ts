@@ -3,6 +3,7 @@ import * as Sentry from "@sentry/nextjs";
 import { registerWebappErrorListeners } from "@/lib/errors/report-webapp-error";
 import {
   sanitizeSentryEvent,
+  sentryReplayErrorSampleRate,
   sentryTraceSampleRate,
 } from "@/lib/sentry-config";
 
@@ -11,8 +12,8 @@ import {
  * first App Router transition cannot race a lazy SDK import. With no DSN the
  * SDK remains disabled and sends nothing.
  *
- * Replay is disabled (0 sample) to avoid session-replay payloads / extra
- * weight unless the owner opts in later.
+ * Normal sessions are never recorded. Error replays mask every text/input and
+ * block all media, preserving interaction timing without visible admin data.
  */
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
@@ -27,10 +28,23 @@ Sentry.init({
     "localhost",
     /^https:\/\/(?:fraud\.|packs\.|marketing\.)?packydash\.com(?:\/|$)/,
   ],
-  replaysOnErrorSampleRate: 0,
+  integrations: [
+    Sentry.replayIntegration({
+      maskAllText: true,
+      maskAllInputs: true,
+      blockAllMedia: true,
+    }),
+  ],
+  replaysOnErrorSampleRate: sentryReplayErrorSampleRate(
+    process.env.NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE,
+  ),
   replaysSessionSampleRate: 0,
   sendDefaultPii: false,
-  beforeSend: sanitizeSentryEvent,
+  initialScope: {
+    tags: { "app.component": "admin-dashboard", "app.runtime": "browser" },
+  },
+  beforeSend: (event) => sanitizeSentryEvent(event),
+  beforeSendTransaction: (event) => sanitizeSentryEvent(event),
   beforeBreadcrumb(breadcrumb) {
     return breadcrumb.category === "console" ? null : breadcrumb;
   },

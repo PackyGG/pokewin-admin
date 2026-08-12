@@ -385,5 +385,8 @@ export default sentryEnabled
       tunnelRoute: "/monitoring",
       // Skip source-map upload unless an auth token is present.
       sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+      // Create Cron monitors from the schedules in vercel.json. The span-based
+      // path supports App Router route handlers and reports missed/failed runs.
+      _experimental: { vercelCronsMonitoring: true },
     })
   : nextConfig;

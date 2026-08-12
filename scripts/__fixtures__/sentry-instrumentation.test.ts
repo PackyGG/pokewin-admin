@@ -32,12 +32,18 @@ test("Sentry initializes all Next.js runtimes with privacy and tracing guards", 
 
   assert.match(client, /Sentry\.init\(/);
   assert.doesNotMatch(client, /import\("@sentry\/nextjs"\)/);
-  assert.match(client, /beforeSend: sanitizeSentryEvent/);
+  assert.match(client, /beforeSend: \(event\) => sanitizeSentryEvent\(event\)/);
+  assert.match(client, /beforeSendTransaction:/);
+  assert.match(client, /Sentry\.replayIntegration\(/);
+  assert.match(client, /maskAllText: true/);
+  assert.match(client, /replaysOnErrorSampleRate: sentryReplayErrorSampleRate/);
+  assert.match(client, /replaysSessionSampleRate: 0/);
   assert.match(client, /onRouterTransitionStart = Sentry\.captureRouterTransitionStart/);
-  assert.match(server, /beforeSend: sanitizeSentryEvent/);
-  assert.match(edge, /beforeSend: sanitizeSentryEvent/);
+  assert.match(server, /beforeSendTransaction:/);
+  assert.match(edge, /beforeSendTransaction:/);
   assert.match(instrumentation, /onRequestError = Sentry\.captureRequestError/);
   assert.match(nextConfig, /tunnelRoute: "\/monitoring"/);
+  assert.match(nextConfig, /vercelCronsMonitoring: true/);
   assert.match(nextConfig, /NEXT_PUBLIC_SENTRY_DSN/);
   assert.match(middleware, /monitoring\(\?:\/\|\$\)/);
 });
@@ -55,8 +61,10 @@ test("Sentry sampling and request sanitization behavior stays bounded", () => {
         "const event = m.sanitizeSentryEvent({",
         'request: { url: "https://packydash.com/users?id=secret#tab", headers: { cookie: "secret" }, cookies: { token: "secret" }, data: "secret", query_string: "id=secret", method: "GET" },',
         'user: { id: "secret" },',
-        "});",
-        'console.log(JSON.stringify({ rates: [m.sentryTraceSampleRate(undefined), m.sentryTraceSampleRate("0"), m.sentryTraceSampleRate("1"), m.sentryTraceSampleRate("NaN"), m.sentryTraceSampleRate("2")], event }));',
+        'exception: { values: [{ value: "failed for alice@example.com at https://example.com/a?token=secret", stacktrace: { frames: [{ vars: { secret: true } }] } }] },',
+        'spans: [{ op: "db.query", description: "select * from users", data: { "db.query.text": "secret" } }],',
+        '}, ["secret"]);',
+        'console.log(JSON.stringify({ rates: [m.sentryTraceSampleRate(undefined), m.sentryTraceSampleRate("0"), m.sentryTraceSampleRate("1"), m.sentryTraceSampleRate("NaN"), m.sentryTraceSampleRate("2")], replayRates: [m.sentryReplayErrorSampleRate(undefined), m.sentryReplayErrorSampleRate("0"), m.sentryReplayErrorSampleRate("NaN")], event }));',
       ].join("\n"),
     ],
     { encoding: "utf8" },
@@ -64,7 +72,17 @@ test("Sentry sampling and request sanitization behavior stays bounded", () => {
   const result = JSON.parse(output);
 
   assert.deepEqual(result.rates, [0.1, 0, 1, 0.1, 0.1]);
+  assert.deepEqual(result.replayRates, [1, 0, 1]);
   assert.deepEqual(result.event, {
     request: { url: "https://packydash.com/users", method: "GET" },
+    exception: {
+      values: [
+        {
+          value: "failed for [Filtered email] at https://example.com/a",
+          stacktrace: { frames: [{}] },
+        },
+      ],
+    },
+    spans: [{ op: "db.query" }],
   });
 });
