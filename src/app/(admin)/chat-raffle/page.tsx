@@ -89,18 +89,7 @@ export default async function ChatRafflePage() {
   return (
     <div className="space-y-4">
       <PageHero>
-        <PageHeroIdentity
-          action={
-            <>
-              <RoundFormDialog
-                mode="create"
-                competitionType="raffle"
-                triggerVariant="outline"
-              />
-              <RoundFormDialog mode="create" competitionType="leaderboard" />
-            </>
-          }
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense fallback={<ActiveRoundSkeleton />}>
@@ -199,6 +188,19 @@ async function ActiveRoundSection({
         }
         action={
           <>
+            {competitionType === "leaderboard" && (
+              <>
+                <RoundFormDialog
+                  mode="create"
+                  competitionType="raffle"
+                  triggerVariant="outline"
+                />
+                <RoundFormDialog
+                  mode="create"
+                  competitionType="leaderboard"
+                />
+              </>
+            )}
             {editable && (
               <RoundFormDialog
                 mode="edit"
@@ -326,13 +328,24 @@ async function ActiveRoundSection({
 function NoActiveLeaderboard() {
   return (
     <FadeIn>
-      <div className="rounded-2xl border border-dashed p-4 text-center sm:p-5">
-        <ListOrdered className="mx-auto size-6 text-muted-foreground" />
-        <p className="mt-2 text-sm font-medium">No XP leaderboard is running</p>
-        <p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">
-          Create one above to reward the top XP earners. The all-time Community
-          XP standings remain available below.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed px-4 py-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <ListOrdered className="size-5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium">No XP leaderboard is running</p>
+            <p className="text-xs text-muted-foreground">
+              Reward the top XP earners or create a raffle round.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <RoundFormDialog
+            mode="create"
+            competitionType="raffle"
+            triggerVariant="outline"
+          />
+          <RoundFormDialog mode="create" competitionType="leaderboard" />
+        </div>
       </div>
     </FadeIn>
   );
