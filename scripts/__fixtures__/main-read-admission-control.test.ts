@@ -102,7 +102,7 @@ test("a slow reader delays but does not fail its siblings", async () => {
 test("the mirror pool is admission-controlled at the checkout, not per statement", () => {
   const source = read("src/lib/db.ts");
 
-  assert.match(source, /const MIRROR_POOL_MAX = 2;/);
+  assert.match(source, /const MIRROR_POOL_MAX = \d+;/);
   assert.match(
     source,
     /max: isReadMirror \? MIRROR_POOL_MAX : 3,/,

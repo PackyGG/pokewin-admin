@@ -75,12 +75,13 @@ test("serverless mirror pools preserve shared role connection headroom", () => {
     "utf8",
   );
 
-  // The mirror cap is 2, but it is now a named constant because the read
-  // admission limiter must be sized to EXACTLY the pool's max. A limiter wider
-  // than the pool reintroduces the pool-queue waiting that surfaced as
-  // "Couldn't load this section"; a narrower one throttles below capacity.
-  // Pinning both halves keeps them from drifting apart.
-  assert.match(source, /const MIRROR_POOL_MAX = 2;/);
+  // The cap is a named constant because the read admission limiter must be
+  // sized to EXACTLY the pool's max: wider reintroduces the pool-queue waiting
+  // that surfaced as "Couldn't load this section", narrower throttles below
+  // capacity and blows each leg's own query budget instead. Pin the coupling,
+  // not the number — the number is set from pg_stat_activity evidence and has
+  // already had to move once.
+  assert.match(source, /const MIRROR_POOL_MAX = \d+;/);
   assert.match(source, /max:\s*isReadMirror\s*\?\s*MIRROR_POOL_MAX\s*:\s*3/);
   assert.match(source, /const permits = MIRROR_POOL_MAX;/);
   assert.match(source, /maxUses:\s*isReadMirror\s*\?\s*1\s*:\s*Infinity/);

@@ -10,8 +10,22 @@ import { withMainReadSlot } from "./main-read-limiter";
  * limiter MUST be sized to exactly this number — a limiter larger than the
  * pool reintroduces pool-queue waiting, and a smaller one throttles below
  * capacity.
+ *
+ * Sized from measurement, not caution. The mirror role `fraud_app` has a
+ * 30-session limit shared with the Antifraud service; sampled during live
+ * dashboard traffic it was holding THREE. The old value of 2 was not
+ * defending that limit, it was the bottleneck: one /dashboard render issues
+ * on the order of 70 mirror reads, so at 2 concurrent the tail of the queue
+ * blew each leg's own 15s `safeQuery` budget and the tiles rendered
+ * "Couldn't load this section" — the same symptom the admission limiter was
+ * added to remove, arriving one layer further up.
+ *
+ * 8 is still conservative in aggregate because `maxUses: 1` plus a 1s idle
+ * timeout means a mirror connection is closed the moment its statement ends,
+ * so concurrent sessions track in-flight statements rather than warm
+ * isolates. Raise only with fresh `pg_stat_activity` evidence.
  */
-const MIRROR_POOL_MAX = 2;
+const MIRROR_POOL_MAX = 8;
 
 export type MainDrizzleDb = NodePgDatabase<typeof mainSchema>;
 
