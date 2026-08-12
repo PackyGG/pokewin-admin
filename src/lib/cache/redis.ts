@@ -181,11 +181,31 @@ type StaleCacheEntry<T> = {
 const staleRefreshes = new Map<string, Promise<unknown>>();
 
 /**
+ * How long a caller will wait on a refresh it triggered when a retained value
+ * is already in hand. Past this, the retained value is served and the refresh
+ * keeps running so the NEXT reader gets the new one.
+ *
+ * Waiting out a full refresh is only correct when there is nothing to show. The
+ * dashboard's KPI aggregate takes ~8s when its inner caches are cold, and the
+ * entry is soft-expired for most of the interval between warm crons — so
+ * awaiting it made every reader pay the slow path, and any wrapper timing out
+ * below that cost blanked the tiles even though a perfectly good snapshot was
+ * sitting in Redis.
+ *
+ * Deliberately NOT fire-and-forget: the refresh promise is memoised in
+ * `staleRefreshes`, so if this isolate is frozen before it finishes, the next
+ * request simply starts a new one. Nothing depends on background work
+ * surviving the response.
+ */
+const STALE_REFRESH_GRACE_MS = 1_500;
+
+/**
  * Read-through cache with a last-known-good fallback.
  *
  * Values remain fresh for `freshSeconds` and are retained for
- * `staleSeconds`. Once soft-expired, one caller refreshes the value. If the
- * upstream read fails, the retained value is returned instead of turning a
+ * `staleSeconds`. Once soft-expired, one caller refreshes the value — serving
+ * the retained value if that refresh outruns {@link STALE_REFRESH_GRACE_MS}. If
+ * the upstream read fails, the retained value is returned instead of turning a
  * brief backend/database incident into an empty page.
  */
 export async function cacheGetOrSetStale<T>(
@@ -220,7 +240,7 @@ export async function cacheGetOrSetStale<T>(
   }
 
   const existing = staleRefreshes.get(key) as Promise<T> | undefined;
-  if (existing) return existing;
+  if (existing) return serveWithGrace(existing, retained);
 
   const refresh = (async () => {
     try {
@@ -248,10 +268,41 @@ export async function cacheGetOrSetStale<T>(
   })();
 
   staleRefreshes.set(key, refresh);
+  // The memo entry is cleared by the refresh itself, not by whoever happens to
+  // be awaiting it — a caller that gives up early must still leave the in-flight
+  // refresh discoverable for the readers behind it.
+  void refresh
+    .catch(() => undefined)
+    .finally(() => {
+      if (staleRefreshes.get(key) === refresh) staleRefreshes.delete(key);
+    });
+
+  return serveWithGrace(refresh, retained);
+}
+
+/**
+ * Wait on an in-flight refresh only as long as {@link STALE_REFRESH_GRACE_MS},
+ * and only when there is nothing to serve in the meantime. With a retained
+ * value in hand, a slow refresh must never hold up the reader.
+ */
+async function serveWithGrace<T>(
+  refresh: Promise<T>,
+  retained: StaleCacheEntry<T> | null,
+): Promise<T> {
+  if (!retained) return refresh;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const grace = new Promise<StaleCacheEntry<T>>((resolve) => {
+    timer = setTimeout(() => resolve(retained), STALE_REFRESH_GRACE_MS);
+    timer.unref?.();
+  });
   try {
-    return await refresh;
+    const winner = await Promise.race([
+      refresh.then((value) => ({ value, refreshedAtMs: Date.now() })),
+      grace,
+    ]);
+    return winner.value;
   } finally {
-    staleRefreshes.delete(key);
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

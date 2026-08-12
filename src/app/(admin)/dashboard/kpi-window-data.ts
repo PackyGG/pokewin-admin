@@ -25,10 +25,20 @@ import { safeQuery, withTimeout } from "@/lib/errors/safe-query";
  * outlives the payload budget takes the whole snapshot down with it (see the
  * invariant on `buildResilientKpiWindowPayload`).
  */
-const KPI_LEG_TIMEOUT_MS = 8_000;
+const KPI_LEG_TIMEOUT_MS = 11_000;
 
-/** Outer budget for assembling one window's payload. */
-const KPI_PAYLOAD_TIMEOUT_MS = 12_000;
+/**
+ * Outer budget for assembling one window's payload. Must stay under the
+ * `REWARD_QUERY_TIMEOUT_MS` wrapper the dashboard page puts around
+ * {@link buildKpiWindowPayload}, or the page kills the assembly before the
+ * snapshot can be written.
+ *
+ * Both budgets are sized off a measured cold `getDashboardKpiStats("today")` of
+ * ~8s on the production mirror. A tighter leg budget meant the aggregate never
+ * completed, so a complete snapshot was never stored and every reader — cold or
+ * not — fell through to the empty payload.
+ */
+const KPI_PAYLOAD_TIMEOUT_MS = 13_000;
 
 /**
  * Serializable snapshot of every dashboard KPI box for ONE window

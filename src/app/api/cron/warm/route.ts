@@ -17,6 +17,7 @@ import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
 import { getCountryRestrictions } from "@/lib/queries/geo-blocking";
 import { getFiatConfig } from "@/lib/queries/fiat";
+import { buildKpiWindowPayload } from "@/app/(admin)/dashboard/kpi-window-data";
 
 /**
  * PostgreSQL/cache keep-warm cron. A bare `SELECT 1` leaves the
@@ -97,6 +98,11 @@ export async function GET(request: Request): Promise<Response> {
       ["hubWager", () => getInsightsHubWager()],
       ["dashboardStats30d", () => getDashboardStats("30d")],
       ["dashboardKpiToday", () => getDashboardKpiStats("today")],
+      // Warms the Redis KPI SNAPSHOT the strip actually reads, not just the
+      // aggregate underneath it. Without this the snapshot was only ever
+      // written by a real page load, so the first admin after a soft expiry
+      // paid the whole cold assembly and the tiles blanked when it overran.
+      ["dashboardKpiSnapshotToday", () => buildKpiWindowPayload("today")],
       ["realizedPnl", () => getRealizedPnlSnapshot()],
       ["totalUserCount", () => getTotalUserCount()],
       ["rewardCostsToday", () => getRewardCostsToday()],
