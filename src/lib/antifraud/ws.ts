@@ -110,6 +110,14 @@ export const NOTIFY_SEVERITY_FLOOR: AntifraudSeverity = "high";
 export const SIGNUP_REVIEW_SCORE_FLOOR = 50;
 
 /**
+ * Signals that are useful evidence on an existing case but are too weak to
+ * create an Account Review by themselves.
+ */
+export function isReviewContextOnlySignal(kind: string): boolean {
+  return kind === "dormant_device_switch";
+}
+
+/**
  * High- and critical-risk signup scores are explicit queue contracts aligned
  * with the canonical 50-point review floor.
  */
@@ -117,6 +125,7 @@ export function shouldOpenReviewForSignal(
   signal: Pick<AntifraudSignalEvent, "kind" | "riskScore" | "severity">,
 ): boolean {
   if (isNonActionableRewardEnrollmentSignal(signal.kind)) return false;
+  if (isReviewContextOnlySignal(signal.kind)) return false;
   return (
     signal.kind === "abstract_email_catchall" ||
     signal.kind === "behavioral_rule_match" ||

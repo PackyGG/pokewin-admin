@@ -49,6 +49,24 @@ test("behavioral rule matches always open Account Review", () => {
   );
 });
 
+test("dormant device switches are context-only review evidence", async () => {
+  assert.equal(
+    shouldOpenReviewForSignal({
+      kind: "dormant_device_switch",
+      riskScore: 60,
+      severity: "high",
+    }),
+    false,
+  );
+
+  const ingest = await readFile(
+    new URL("../../src/app/api/antifraud/ingest/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(ingest, /shouldAttachToLiveCase/);
+  assert.match(ingest, /else if \(shouldOpenCase\)/);
+});
+
 test("Fraud review surfaces do not expose escalation controls", async () => {
   const files = await Promise.all(
     [

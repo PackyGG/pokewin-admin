@@ -11,6 +11,7 @@ import { adminDrizzle } from "@/lib/drizzle";
 import {
   parseAntifraudEvent,
   SEVERITY_RANK,
+  isReviewContextOnlySignal,
   shouldOpenReviewForSignal,
   type AntifraudSignalEvent,
 } from "@/lib/antifraud/ws";
@@ -446,13 +447,14 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
   // partial unique index and is reported as a duplicate rather than
   // double-opening a case.
   const shouldOpenCase =
-    Boolean(signal.userId) &&
-    shouldOpenReviewForSignal(signal);
+    Boolean(signal.userId) && shouldOpenReviewForSignal(signal);
+  const shouldAttachToLiveCase =
+    shouldOpenCase || isReviewContextOnlySignal(signal.kind);
 
   let reviewId: string | null = null;
   let opened = false;
 
-  if (shouldOpenCase && signal.userId) {
+  if (shouldAttachToLiveCase && signal.userId) {
     const [live] = await tx
       .select({
         id: antifraud_reviews.id,
@@ -505,7 +507,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
           body: trailEntry,
         });
       }
-    } else {
+    } else if (shouldOpenCase) {
       try {
         const [created] = await tx
           .insert(antifraud_reviews)
