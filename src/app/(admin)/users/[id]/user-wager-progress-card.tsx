@@ -16,21 +16,16 @@
  * or the user has no balances row → render a muted "not available" state
  * instead of crashing the Account tab.
  *
- * House-POV finance colors (CLAUDE.md): the locked debt is user money we owe
- * but is gated → rose. Withdrawable-now / wagered-cleared are neutral state
- * info → blue. Nothing is framed green (no user-POV "available = good").
+ * House-POV finance colors: the locked debt is user money we owe but is gated
+ * → rose. Withdrawable-now / wagered-cleared are neutral state info → blue.
+ * Nothing is framed green (no user-POV "available = good").
  */
 
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
-import {
-  Wallet,
-  Gauge,
-  Lock,
-  AlertTriangle,
-  Target,
-} from "lucide-react";
+import { Wallet, Gauge, Lock, AlertTriangle, Info } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,7 +36,6 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { StatPanel, KpiTile } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
 import {
   setUserWagerRemainingAction,
@@ -80,7 +74,10 @@ export function UserWagerProgressCard({
 
   const handleClearDebt = () => {
     startTransition(async () => {
-      const result = await setUserWagerRemainingAction({ userId, amountUsd: "0" });
+      const result = await setUserWagerRemainingAction({
+        userId,
+        amountUsd: "0",
+      });
       if (result.success) {
         // Re-read the recomputed standing in place — no full-route refresh.
         const fresh = await refreshUserWagerProgressAction(userId);
@@ -138,53 +135,65 @@ export function UserWagerProgressCard({
   const debtExceedsBalance = remainingUsd > availableBalanceUsd + 0.005;
 
   return (
-    <div className="space-y-3">
-      {exempt ? (
-        <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-          <AlertTriangle className="size-4 shrink-0" />
-          User is EXEMPT (0× override) — no wager requirement gates their
-          withdrawals.
+    <div className="space-y-4">
+      <div className="overflow-hidden rounded-xl border bg-card">
+        <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Withdrawal access
+              </span>
+              <Badge
+                variant="outline"
+                className={
+                  exempt
+                    ? "border-amber-500/30 text-amber-600 dark:text-amber-400"
+                    : met
+                      ? "border-blue-500/30 text-blue-600 dark:text-blue-400"
+                      : "border-rose-500/30 text-rose-600 dark:text-rose-400"
+                }
+              >
+                {exempt ? "Exempt" : met ? "Requirement met" : "Wager required"}
+              </Badge>
+            </div>
+            <p className="mt-2 text-2xl font-bold tabular-nums tracking-tight sm:text-3xl">
+              {formatCurrency(withdrawableUsd)}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              available to withdraw from a {formatCurrency(availableBalanceUsd)}{" "}
+              balance
+            </p>
+          </div>
+          {!exempt && remainingUsd > 0 && (
+            <div className="shrink-0 sm:text-right">
+              <p className="text-xs font-medium text-muted-foreground">
+                Still gated
+              </p>
+              <p className="mt-1 text-xl font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+                {formatCurrency(remainingUsd)}
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                weighted wager needed to unlock
+              </p>
+            </div>
+          )}
         </div>
-      ) : met ? (
-        <div className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-          <Lock className="size-4 shrink-0" />
-          Requirement met — the full balance is free to withdraw (no locked
-          debt remaining).
-        </div>
-      ) : null}
 
-      {/* Top KPIs — withdrawable / cleared neutral (blue); locked debt rose. */}
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-        <KpiTile
-          icon={Wallet}
-          label="Withdrawable now"
-          accent="blue"
-          value={formatCurrency(withdrawableUsd)}
-          sub={`of ${formatCurrency(availableBalanceUsd)} balance`}
-        />
-        <KpiTile
-          icon={Lock}
-          label="Locked behind wager"
-          accent="rose"
-          value={exempt ? "$0.00" : formatCurrency(remainingUsd)}
-          sub={exempt ? "exempt" : "must be wagered off"}
-        />
-        <KpiTile
-          icon={Gauge}
-          label="Wagered cleared"
-          accent="blue"
-          value={formatCurrency(completedUsd)}
-          sub="lifetime weighted"
-        />
-      </div>
-
-      {/* Balance composition — withdrawable (blue) vs locked (rose) of the
-          available balance. */}
-      {!exempt && remainingUsd > 0 && (
-        <div className="space-y-1">
+        <div className="border-t bg-muted/20 p-4">
+          <div className="mb-2 flex items-center justify-between gap-3 text-[11px]">
+            <span className="font-medium text-muted-foreground">
+              Current balance access
+            </span>
+            <span className="tabular-nums text-muted-foreground">
+              {Math.round(withdrawablePct)}% withdrawable
+            </span>
+          </div>
           {hasBalance ? (
             <>
-              <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="flex h-2.5 w-full overflow-hidden rounded-full bg-muted"
+                aria-label={`${Math.round(withdrawablePct)}% of the current balance is withdrawable`}
+              >
                 <div
                   className="h-full bg-blue-500 motion-safe:transition-[width] motion-safe:duration-700"
                   style={{ width: `${withdrawablePct}%` }}
@@ -194,48 +203,87 @@ export function UserWagerProgressCard({
                   style={{ width: `${lockedPct}%` }}
                 />
               </div>
-              <p className="text-[11px] tabular-nums text-muted-foreground">
-                {formatCurrency(withdrawableUsd)} withdrawable ·{" "}
-                <span className="text-rose-600 dark:text-rose-400">
-                  {formatCurrency(Math.min(remainingUsd, availableBalanceUsd))}{" "}
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] tabular-nums">
+                <span className="inline-flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
+                  <span className="size-1.5 rounded-full bg-blue-500" />
+                  {formatCurrency(withdrawableUsd)} withdrawable
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
+                  <span className="size-1.5 rounded-full bg-rose-500" />
+                  {formatCurrency(
+                    Math.min(remainingUsd, availableBalanceUsd),
+                  )}{" "}
                   locked
                 </span>
                 {debtExceedsBalance && (
-                  <>
-                    {" "}
-                    · debt {formatCurrency(remainingUsd)} exceeds the balance
-                  </>
+                  <span className="text-muted-foreground">
+                    Debt exceeds balance by{" "}
+                    {formatCurrency(remainingUsd - availableBalanceUsd)}
+                  </span>
                 )}
-              </p>
+              </div>
             </>
           ) : (
-            <p className="text-[11px] text-muted-foreground">
-              No withdrawable balance —{" "}
-              <span className="text-rose-600 dark:text-rose-400">
-                {formatCurrency(remainingUsd)}
-              </span>{" "}
-              still locked behind the wager requirement.
+            <p className="text-xs text-muted-foreground">
+              There is no current balance to withdraw
+              {remainingUsd > 0
+                ? `; ${formatCurrency(remainingUsd)} of wager debt remains.`
+                : "."}
             </p>
           )}
         </div>
-      )}
+      </div>
 
-      {/* Per-source breakdown — informational: lifetime totals, current
-          weights, and the still-unwagered (rose) balance per source. */}
-      <StatPanel title="Per-source breakdown" icon={Target} accent="blue">
-        <div className="overflow-x-auto">
+      <div className="grid grid-cols-2 overflow-hidden rounded-xl border bg-card sm:grid-cols-3">
+        <CompactMetric
+          icon={Wallet}
+          label="Available balance"
+          value={formatCurrency(availableBalanceUsd)}
+        />
+        <CompactMetric
+          icon={Lock}
+          label="Wager debt"
+          value={exempt ? "$0.00" : formatCurrency(remainingUsd)}
+          tone="rose"
+          className="border-l"
+        />
+        <CompactMetric
+          icon={Gauge}
+          label="Lifetime weighted wager"
+          value={formatCurrency(completedUsd)}
+          className="col-span-2 border-t sm:col-span-1 sm:border-l sm:border-t-0"
+        />
+      </div>
+
+      <div className="rounded-xl border bg-card p-4">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold">Source detail</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Lifetime funding and separate bonus-source counters. These do not
+              add up to the wager debt above.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-3 hidden overflow-x-auto sm:block">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b text-[11px] uppercase tracking-wider text-muted-foreground">
                 <th className="py-1.5 pr-2 text-left font-medium">Source</th>
                 <th className="px-2 py-1.5 text-right font-medium">Lifetime</th>
                 <th className="px-2 py-1.5 text-right font-medium">Weight</th>
-                <th className="py-1.5 pl-2 text-right font-medium">Unwagered</th>
+                <th className="py-1.5 pl-2 text-right font-medium">
+                  Unwagered
+                </th>
               </tr>
             </thead>
             <tbody>
               {sources.map((s) => (
-                <tr key={s.key} className="border-b border-border/40 last:border-0">
+                <tr
+                  key={s.key}
+                  className="border-b border-border/40 last:border-0"
+                >
                   <td className="py-1.5 pr-2 text-left">{s.label}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">
                     {formatCurrency(s.lifetimeTotalUsd)}
@@ -274,40 +322,76 @@ export function UserWagerProgressCard({
           </table>
         </div>
 
-        {/* Current per-game wager weights (informational). */}
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-          {gameWeights && (
-            <span className="inline-flex items-center gap-1.5">
-              <Gauge className="size-3.5" />
-              Game weights — packs {formatX(gameWeights.packsBps)} · battles{" "}
-              {formatX(gameWeights.battlesBps)} · upgrader{" "}
-              {formatX(gameWeights.upgraderBps)} · keno{" "}
-              {formatX(gameWeights.kenoBps)}
-            </span>
-          )}
+        <div className="mt-3 divide-y rounded-lg border sm:hidden">
+          {sources.map((source) => (
+            <div key={source.key} className="space-y-2 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium">{source.label}</span>
+                <span className="text-sm font-semibold tabular-nums">
+                  {formatCurrency(source.lifetimeTotalUsd)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                <span>
+                  Current weight{" "}
+                  {source.requirementBps != null
+                    ? formatX(source.requirementBps)
+                    : "—"}
+                </span>
+                <span
+                  className={
+                    source.lockedUsd > 0
+                      ? "tabular-nums text-rose-600 dark:text-rose-400"
+                      : "tabular-nums"
+                  }
+                >
+                  {source.lockedUsd > 0
+                    ? `${formatCurrency(source.lockedUsd)} unwagered`
+                    : "No source funds locked"}
+                </span>
+              </div>
+            </div>
+          ))}
         </div>
 
-        {/* How the gate works + honest note on the two locked counters. */}
-        <p className="mt-3 border-t pt-2 text-[11px] leading-relaxed text-muted-foreground">
-          <span className="font-medium text-foreground">How this works:</span>{" "}
-          Withdrawals are gated by a frozen-rate debt — each deposit/bonus
-          credit adds to it (at the rate in effect then), each real weighted
-          wager burns it down.{" "}
-          <span className="font-medium">Withdrawable now</span> = max(0,
-          available balance − locked debt); the locked debt is read straight
-          from <code className="font-mono">balances.wager_requirement_remaining</code>.
-          The per-source <span className="font-medium">Unwagered</span> column
-          is a separate counter (each bonus source&apos;s still-unspent funds) —
-          it can differ from the locked debt, and the deposit part of the debt
-          has no per-source row.
-          {!backendAvailable &&
-            " The wager-weight backend config wasn't reachable, so the per-source weights are hidden — the gate figures above are still exact (read from the balance columns)."}
-        </p>
-      </StatPanel>
+        {gameWeights && (
+          <div className="mt-4 border-t pt-3">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Current game weights
+            </p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <WeightCell label="Packs" value={formatX(gameWeights.packsBps)} />
+              <WeightCell
+                label="Battles"
+                value={formatX(gameWeights.battlesBps)}
+              />
+              <WeightCell
+                label="Upgrader"
+                value={formatX(gameWeights.upgraderBps)}
+              />
+              <WeightCell label="Keno" value={formatX(gameWeights.kenoBps)} />
+            </div>
+          </div>
+        )}
+
+        <details className="group mt-4 border-t pt-3 text-xs text-muted-foreground">
+          <summary className="flex cursor-pointer list-none items-center gap-2 font-medium text-foreground">
+            <Info className="size-3.5" /> How this is calculated
+          </summary>
+          <p className="mt-2 max-w-4xl leading-relaxed">
+            Credits add debt at the wager rate active when they were issued, and
+            real weighted wagers reduce it. Withdrawable balance is the
+            available balance minus remaining debt. Source-level unwagered funds
+            are separate counters and can differ from this withdrawal gate.
+            {!backendAvailable &&
+              " Current weight settings are unavailable, but the balance and debt figures remain exact."}
+          </p>
+        </details>
+      </div>
 
       {/* Admin controls — only shown to admins (canManage). */}
       {canManage && (
-        <div className="flex flex-wrap gap-2 pt-1">
+        <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
           <Button
             size="sm"
             variant="outline"
@@ -315,14 +399,16 @@ export function UserWagerProgressCard({
           >
             Adjust remaining debt
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={handleClearDebt}
-            disabled={isPending}
-          >
-            {isPending ? "Working…" : "Clear debt"}
-          </Button>
+          {remainingUsd > 0 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleClearDebt}
+              disabled={isPending}
+            >
+              {isPending ? "Working…" : "Clear debt"}
+            </Button>
+          )}
         </div>
       )}
 
@@ -333,6 +419,47 @@ export function UserWagerProgressCard({
         onOpenChange={setAdjustOpen}
         onSaved={setLocalData}
       />
+    </div>
+  );
+}
+
+function CompactMetric({
+  icon: Icon,
+  label,
+  value,
+  tone = "blue",
+  className = "",
+}: {
+  icon: typeof Wallet;
+  label: string;
+  value: string;
+  tone?: "blue" | "rose";
+  className?: string;
+}) {
+  return (
+    <div className={`min-w-0 p-3.5 ${className}`}>
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <Icon
+          className={`size-3.5 ${tone === "rose" ? "text-rose-500" : "text-blue-500"}`}
+        />{" "}
+        {label}
+      </div>
+      <p
+        className={`mt-1.5 truncate text-base font-semibold tabular-nums ${tone === "rose" ? "text-rose-600 dark:text-rose-400" : ""}`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function WeightCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-muted/20 px-3 py-2">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-0.5 text-sm font-semibold tabular-nums">{value}</p>
     </div>
   );
 }
