@@ -11,6 +11,7 @@ import {
   preload as preloadDisposableEmailDomains,
 } from "@visulima/disposable-email-domains";
 import Fastify from "fastify";
+import * as Sentry from "@sentry/node";
 import { z } from "zod";
 
 import { serviceRequestAuthorized } from "./auth.js";
@@ -2333,6 +2334,12 @@ app.setErrorHandler((error, request, reply) => {
     });
   }
   app.log.error({ err: error }, "Unhandled request error");
+  Sentry.withScope((scope) => {
+    scope.setTag("service", "antifraud-monitor");
+    scope.setTag("http.method", request.method);
+    scope.setTag("http.route", request.routeOptions.url ?? "unknown");
+    Sentry.captureException(error);
+  });
   return reply.code(500).send({ error: "internal_error" });
 });
 
@@ -2363,6 +2370,9 @@ app.addHook("onClose", async () => {
   // all — every step above still queries them.
   await teardown("live", () => live.close());
   await teardown("databases", () => closeDatabases(db));
+  await teardown("sentry", async () => {
+    await Sentry.close(2_000);
+  });
 });
 
 let shutdownPromise: Promise<void> | null = null;

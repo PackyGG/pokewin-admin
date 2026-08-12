@@ -14,6 +14,11 @@ export function parseFiatEligibilityGloballyEnabled(
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  SENTRY_DSN: z.string().url().optional(),
+  SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).optional(),
+  SENTRY_RELEASE: z.string().min(1).optional(),
+  RAILWAY_ENVIRONMENT_NAME: z.string().optional(),
+  RAILWAY_GIT_COMMIT_SHA: z.string().optional(),
   // Nothing reads `config.TZ` — the process timezone is pinned by
   // `process.env.TZ ??= "UTC"` in server.ts and by `-c TimeZone=UTC` on both
   // pools. The field stays declared anyway: the audit-contracts test requires
