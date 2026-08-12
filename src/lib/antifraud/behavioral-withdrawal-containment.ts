@@ -2,6 +2,7 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 
+import { createAdminAuditEventDurable } from "@/lib/admin-audit";
 import { getProdPrimaryDrizzleDb } from "@/lib/db";
 
 /**
@@ -94,5 +95,46 @@ export async function applyBehavioralWithdrawalContainment(
       updated_at = NOW()
     RETURNING user_id
   `);
-  return locked.rows.length > 0 ? "locked" : "skipped";
+  if (locked.rows.length === 0) return "skipped";
+
+  await recordBehavioralContainmentAudit(target);
+  return "locked";
+}
+
+/**
+ * ADMIN-side record that an unattended system restricted this account.
+ *
+ * Filed under a dedicated automatic event type, never the staff vocabulary:
+ * `antifraud_withdrawals_locked` is the Fraud workspace's operator trail
+ * ("one row = one staff decision"), and `locked_withdrawals_*_enabled` is read
+ * by the critical-signup watchdog as a terminal staff release. Writing either
+ * from here would present automation as an operator and stand that watchdog
+ * down.
+ *
+ * `createAdminAuditEventDurable` retries, falls back to
+ * `admin_audit_write_failures`, alerts, and never throws — MAIN is already
+ * locked at this point, so a failed mirror must not turn an applied
+ * containment into an outbox failure that retries the whole apply.
+ */
+async function recordBehavioralContainmentAudit(
+  target: BehavioralWithdrawalContainmentTarget,
+): Promise<void> {
+  await createAdminAuditEventDurable({
+    adminUserId: null,
+    eventType: "antifraud_containment_locked",
+    targetUserId: target.userId,
+    // Explicit null: the only address in scope on this path belongs to the
+    // monitor delivering the command, never to the contained account, and an
+    // `ip` column that looks like the user's would misdirect a later review.
+    ip: null,
+    metadata: {
+      source: "antifraud_containment",
+      kind: "behavioral_withdrawal_containment",
+      // The matched policy code and score are carried inside `reason` — the
+      // target exposes no other identifier, and the raw signal stays in
+      // `antifraud_signals`.
+      reason: target.reason,
+      lockedWithdrawals: true,
+    },
+  });
 }

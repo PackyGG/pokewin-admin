@@ -2,6 +2,7 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 
+import { createAdminAuditEventDurable } from "@/lib/admin-audit";
 import { getProdPrimaryDrizzleDb } from "@/lib/db";
 
 /**
@@ -151,5 +152,56 @@ export async function applyEmailDomainContainment(
     await tx.execute(sql`DELETE FROM session WHERE "userId" = ${target.userId}`);
     return "banned";
   });
+
+  // Deliberately after the MAIN transaction commits: the audit mirror is an
+  // ADMIN-DB round trip that retries for seconds on failure, and holding the
+  // contained account's MAIN row locks for that long would put a fraud write
+  // in the way of ordinary traffic.
+  if (contained !== "skipped") {
+    await recordEmailDomainContainmentAudit(target, contained);
+  }
   return contained;
+}
+
+/**
+ * ADMIN-side record that an unattended system restricted this account.
+ *
+ * Filed under a dedicated automatic event type, never the staff vocabulary:
+ * `antifraud_withdrawals_locked` / `account_banned` are the operator trail
+ * ("one row = one staff decision"), and `locked_withdrawals_*_enabled` is read
+ * by the critical-signup watchdog as a terminal staff release. Writing either
+ * from here would present automation as an operator and stand that watchdog
+ * down.
+ *
+ * `createAdminAuditEventDurable` retries, falls back to
+ * `admin_audit_write_failures`, alerts, and never throws — MAIN is already
+ * committed at this point, so a failed mirror must not turn an applied
+ * containment into an outbox failure that retries the whole apply.
+ */
+async function recordEmailDomainContainmentAudit(
+  target: EmailDomainContainmentTarget,
+  contained: "banned" | "locked",
+): Promise<void> {
+  await createAdminAuditEventDurable({
+    adminUserId: null,
+    eventType:
+      contained === "banned"
+        ? "antifraud_containment_banned"
+        : "antifraud_containment_locked",
+    targetUserId: target.userId,
+    // Explicit null: the only address in scope on this path belongs to the
+    // monitor delivering the command, never to the contained account, and an
+    // `ip` column that looks like the user's would misdirect a later review.
+    ip: null,
+    metadata: {
+      source: "antifraud_containment",
+      kind: "fiat_blacklisted_email_domain",
+      // The DOMAIN only — the matched signal, never the address that carried
+      // it. It is already the reason staff read on the account.
+      domain: target.domain,
+      reason: target.reason,
+      banned: contained === "banned",
+      sessionsRevoked: contained === "banned",
+    },
+  });
 }

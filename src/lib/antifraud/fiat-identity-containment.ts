@@ -2,6 +2,7 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 
+import { createAdminAuditEventDurable } from "@/lib/admin-audit";
 import { getProdPrimaryDrizzleDb } from "@/lib/db";
 
 /**
@@ -97,7 +98,7 @@ export async function applyFiatIdentityContainment(
   target: FiatIdentityContainmentTarget,
 ): Promise<FiatIdentityContainmentOutcome> {
   const db = getProdPrimaryDrizzleDb();
-  return db.transaction(async (tx): Promise<FiatIdentityContainmentOutcome> => {
+  const outcome = await db.transaction(async (tx): Promise<FiatIdentityContainmentOutcome> => {
     const locked = target.action === "withdrawals"
       ? await tx.execute<{ user_id: string }>(sql`
       INSERT INTO user_feature_locks (
@@ -194,5 +195,56 @@ export async function applyFiatIdentityContainment(
       await tx.execute(sql`DELETE FROM session WHERE "userId" = ${target.userId}`);
     }
     return { locked: true, banned: banned.rows.length === 1 };
+  });
+
+  // Deliberately after the MAIN transaction commits: the audit mirror is an
+  // ADMIN-DB round trip that retries for seconds on failure, and holding the
+  // contained account's MAIN row locks for that long would put a fraud write
+  // in the way of ordinary checkout traffic.
+  if (outcome.locked) await recordFiatIdentityContainmentAudit(target, outcome);
+  return outcome;
+}
+
+/**
+ * ADMIN-side record that an unattended system restricted this account.
+ *
+ * Filed under a dedicated automatic event type, never the staff vocabulary:
+ * `antifraud_withdrawals_locked` / `account_banned` are the operator trail
+ * ("one row = one staff decision"), and `locked_withdrawals_*_enabled` is read
+ * by the critical-signup watchdog as a terminal staff release. Writing either
+ * from here would present automation as an operator and stand that watchdog
+ * down.
+ *
+ * `createAdminAuditEventDurable` retries, falls back to
+ * `admin_audit_write_failures`, alerts, and never throws — MAIN is already
+ * committed at this point, so a failed mirror must not turn an applied
+ * containment into an outbox failure that retries the whole apply.
+ */
+async function recordFiatIdentityContainmentAudit(
+  target: FiatIdentityContainmentTarget,
+  outcome: FiatIdentityContainmentOutcome,
+): Promise<void> {
+  await createAdminAuditEventDurable({
+    adminUserId: null,
+    eventType: outcome.banned
+      ? "antifraud_containment_banned"
+      : "antifraud_containment_locked",
+    targetUserId: target.userId,
+    // Explicit null: the only address in scope on this path belongs to the
+    // monitor delivering the command, never to the contained account, and an
+    // `ip` column that looks like the user's would misdirect a later review.
+    ip: null,
+    metadata: {
+      source: "antifraud_containment",
+      kind: "fiat_deposit_identity_containment",
+      reasonCodes: target.reasons,
+      reason: target.reason,
+      action: target.action,
+      // Our own deposit-intent id — the signal identifier that ties this row
+      // back to the assessment. No provider payload, card or email data.
+      intentId: target.intentId,
+      banned: outcome.banned,
+      sessionsRevoked: outcome.banned,
+    },
   });
 }

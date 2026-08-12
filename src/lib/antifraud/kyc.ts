@@ -12,11 +12,7 @@ import {
 
 import { getReadDrizzleDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
-import {
-  sumsub_webhook_events,
-  user,
-  user_kyc,
-} from "@/lib/db-schema/main/schema";
+import { user, user_kyc } from "@/lib/db-schema/main/schema";
 import { loadAdminIdentities } from "@/lib/antifraud/admin-identities";
 import {
   refreshKycCountryReviews,
@@ -64,16 +60,6 @@ export type KycAccount = {
   countryReview: KycCountryReview | null;
 };
 
-export type SumsubEventSummary = {
-  digest: string;
-  applicantId: string | null;
-  externalUserId: string | null;
-  eventType: string;
-  providerCreatedAt: Date;
-  receivedAt: Date;
-  processedAt: Date | null;
-};
-
 export type KycDashboardStats = {
   total: number;
   required: number;
@@ -99,7 +85,6 @@ export type KycOperationalConfig = {
 
 export type KycDashboard = {
   accounts: KycAccount[];
-  events: SumsubEventSummary[];
   stats: KycDashboardStats;
   config: KycOperationalConfig;
 };
@@ -363,33 +348,18 @@ async function loadKycStats(): Promise<KycDashboardStats> {
   };
 }
 
-async function listSumsubEvents(): Promise<SumsubEventSummary[]> {
-  const db = await getReadDrizzleDb();
-  const rows = await db
-    .select({
-      digest: sumsub_webhook_events.digest,
-      applicantId: sumsub_webhook_events.applicant_id,
-      externalUserId: sumsub_webhook_events.external_user_id,
-      eventType: sumsub_webhook_events.event_type,
-      providerCreatedAt: sumsub_webhook_events.provider_created_at,
-      receivedAt: sumsub_webhook_events.received_at,
-      processedAt: sumsub_webhook_events.processed_at,
-    })
-    .from(sumsub_webhook_events)
-    .orderBy(desc(sumsub_webhook_events.received_at))
-    .limit(50);
-
-  return rows.map((row) => ({
-    ...row,
-    providerCreatedAt: date(row.providerCreatedAt),
-    receivedAt: date(row.receivedAt),
-    processedAt: nullableDate(row.processedAt),
-  }));
-}
-
 /**
  * Everything the workspace needs from OUR OWN databases — and nothing that
  * leaves the process.
+ *
+ * Exactly TWO MAIN-mirror reads run here, and both are rendered. A third used
+ * to: a 50-row `sumsub_webhook_events` scan returned as `events`, left behind
+ * when the "System details and webhook activity" panel was dropped from the
+ * page. Nothing destructured it, so every render — every tab switch, filter and
+ * search — burned a slot of the small MAIN read pool to build a list no one
+ * saw. Per-account provider evidence comes off `user_kyc`
+ * (`last_webhook_created_at` / `last_webhook_digest`), not off that table; a
+ * webhook-health view, if ever wanted, needs its own bounded read.
  *
  * The Sumsub country-evidence refresh deliberately does NOT run here. It used
  * to be awaited right after this `Promise.all`, so a single out-of-process POST
@@ -402,12 +372,11 @@ export async function getKycDashboard(
   filters: KycDashboardFilters = {},
 ): Promise<KycDashboard> {
   const env = await readDbEnv();
-  const [accounts, stats, events] = await Promise.all([
+  const [accounts, stats] = await Promise.all([
     listKycAccounts(filters),
     loadKycStats(),
-    listSumsubEvents(),
   ]);
-  return { accounts, stats, events, config: integrationConfig(env) };
+  return { accounts, stats, config: integrationConfig(env) };
 }
 
 /**

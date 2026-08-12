@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 
 import { enqueueDiscordEvent } from "@/lib/discord-notifications/router";
 import { logError } from "@/lib/errors/logger";
+import { safeErrorMessage } from "@/lib/errors/safe-error-message";
 import {
   fail,
   ok,
@@ -21,7 +22,9 @@ import { postgresErrorCode } from "@/lib/postgres-errors";
  * `refunds/refund-actions.ts`): only messages we deliberately authored for
  * an operator pass through; everything else collapses to a fallback.
  *
- * Two layers, in order:
+ * Three layers, in order:
+ *  0. safeErrorMessage — collapses driver-shaped errors to a SQLSTATE summary
+ *     and strips email/IP/URL/token/id shapes from everything else.
  *  1. INFRASTRUCTURE_NOISE — a hard denylist. Anything that looks like a
  *     driver / Postgres / network error is replaced even if it happens to
  *     contain an allowlisted word (e.g. a column literally named `reason`).
@@ -72,6 +75,23 @@ export const DEFAULT_ACTION_ERROR =
   "The operation could not be completed. No automatic retry was made.";
 
 /**
+ * The single string both layers classify.
+ *
+ * Layer 0 matters because `DrizzleQueryError.message` is
+ * ``Failed query: <SQL>\nparams: <bound values>`` and none of the
+ * INFRASTRUCTURE_NOISE shapes appear in it — pg's quoted forms live on the
+ * wrapped cause, not the wrapper. So a statement that merely selected a column
+ * named `reason` satisfied OPERATOR_MESSAGES and shipped the SQL plus the
+ * bound email / user id straight to the browser. Collapsing driver-shaped
+ * errors first closes that, and the resulting `SQLSTATE …` summary is then
+ * rejected by the denylist exactly like any other database failure.
+ */
+function classifiableMessage(error: unknown): string {
+  if (!(error instanceof Error)) return "";
+  return safeErrorMessage(error, "");
+}
+
+/**
  * Narrow an unknown thrown value to a message that is safe to send to the
  * browser. `fallback` is what an unrecognised error becomes.
  */
@@ -79,7 +99,7 @@ export function actionErrorMessage(
   error: unknown,
   fallback: string = DEFAULT_ACTION_ERROR,
 ): string {
-  const message = error instanceof Error ? error.message : "";
+  const message = classifiableMessage(error);
   if (!message) return fallback;
   if (INFRASTRUCTURE_NOISE.test(message)) return fallback;
   if (OPERATOR_MESSAGES.some((pattern) => pattern.test(message))) {
@@ -106,9 +126,13 @@ export async function antifraudActionResult<T>(
 }
 
 function isExpectedAntifraudActionError(error: unknown): boolean {
-  if (!(error instanceof Error) || !error.message) return false;
-  if (INFRASTRUCTURE_NOISE.test(error.message)) return false;
-  return OPERATOR_MESSAGES.some((pattern) => pattern.test(error.message));
+  // Must classify the same string actionErrorMessage does, or a driver error
+  // whose SQL happened to contain an allowlisted word counts as "expected" and
+  // never reaches the Discord error queue.
+  const message = classifiableMessage(error);
+  if (!message) return false;
+  if (INFRASTRUCTURE_NOISE.test(message)) return false;
+  return OPERATOR_MESSAGES.some((pattern) => pattern.test(message));
 }
 
 async function reportAntifraudActionError(

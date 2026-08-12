@@ -87,7 +87,12 @@ test("overview metrics use bounded real sources and never equate KYC with fraud"
   assert.match(query, /revalidate: 60/);
   assert.match(query, /getAntifraudMonitorOverview/);
   assert.match(query, /canonical\.lifetimeCents/);
-  assert.match(query, /antifraud-overview-dashboard-v6/);
+  // v7: the counters statement was split away from the lifetime fiat scan, so
+  // the cached return shape changed and the key had to be bumped. The lifetime
+  // scan now has its own key and only runs when the monitor cannot supply the
+  // fiat split.
+  assert.match(query, /antifraud-overview-dashboard-v7/);
+  assert.match(query, /antifraud-overview-mirror-fiat-v1/);
   assert.doesNotMatch(
     query,
     /fraud[\s\S]{0,120}user_kyc\.kyc_required\s*=\s*TRUE/i,

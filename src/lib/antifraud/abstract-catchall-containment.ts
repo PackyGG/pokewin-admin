@@ -3,7 +3,10 @@ import "server-only";
 import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import {
+  createAdminAuditEvent,
+  createAdminAuditEventDurable,
+} from "@/lib/admin-audit";
 import {
   getUserFeatureLocks,
   updateUserRewardLocks,
@@ -196,5 +199,53 @@ export async function applyAbstractCatchallContainment(
       throw new Error("Backend did not confirm the full reward lock");
     }
   }
+
+  await recordCatchallContainmentAudit(target, signalRowId);
   return "locked";
+}
+
+/**
+ * ADMIN-side record that an unattended system restricted this account.
+ *
+ * The snapshot row above is the release path's before-state, written BEFORE
+ * anything is touched — it proves what to restore, not that containment
+ * happened. This row is the success record, written only once every leg
+ * (MAIN + rewards) is confirmed, which is also why a retry after a partial
+ * failure cannot leave a second copy behind.
+ *
+ * Filed under a dedicated automatic event type, never the staff vocabulary:
+ * `antifraud_withdrawals_locked` is the Fraud workspace's operator trail
+ * ("one row = one staff decision"), and `locked_withdrawals_*_enabled` is read
+ * by the critical-signup watchdog as a terminal staff release.
+ *
+ * `createAdminAuditEventDurable` retries, falls back to
+ * `admin_audit_write_failures`, alerts, and never throws — every lock is
+ * already applied at this point, so a failed mirror must not turn an applied
+ * containment into an outbox failure that retries the whole apply.
+ */
+async function recordCatchallContainmentAudit(
+  target: AbstractCatchallContainmentTarget,
+  signalRowId: string | undefined,
+): Promise<void> {
+  await createAdminAuditEventDurable({
+    adminUserId: null,
+    eventType: "antifraud_containment_locked",
+    targetUserId: target.userId,
+    // Explicit null: the only address in scope on this path belongs to the
+    // monitor delivering the command, never to the contained account, and an
+    // `ip` column that looks like the user's would misdirect a later review.
+    ip: null,
+    metadata: {
+      source: "antifraud_containment",
+      kind: "abstract_email_catchall",
+      signalRowId: signalRowId ?? null,
+      // The DOMAIN only — the matched signal, never the address that carried
+      // it. It is already the reason staff read on the account.
+      domain: target.domain,
+      reason: target.reason,
+      lockedFiatDeposits: true,
+      lockedWithdrawals: true,
+      lockedRewardCategories: true,
+    },
+  });
 }

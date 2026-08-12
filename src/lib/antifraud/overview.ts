@@ -69,9 +69,41 @@ export type AntifraudLiveMirrorMetrics = {
   fraudulentFiatCents24h: number;
 };
 
-type MainOverviewRow = {
-  legitimate_fiat_deposit_cents: string;
-  fraudulent_fiat_deposit_cents: string;
+/**
+ * Everything the dashboard needs except the two lifetime/24h fiat pairs.
+ *
+ * Those four numbers are the only ones the monitor's own split overwrites, so
+ * they are deliberately absent from this shape: the merge in
+ * {@link getAntifraudOverviewData} must supply them from exactly one source,
+ * and a missing key is a type error rather than a silent zero.
+ */
+type AntifraudOverviewBase = {
+  metrics: Omit<
+    AntifraudOverviewMetrics,
+    "legitimateFiatDepositCents" | "fraudulentFiatDepositCents"
+  >;
+  live: Omit<
+    AntifraudLiveMirrorMetrics,
+    "legitimateFiatCents24h" | "fraudulentFiatCents24h"
+  >;
+  days: AntifraudOverviewDay[];
+  feed: AntifraudActionFeedItem[];
+};
+
+/** Mirror-computed fiat legs, read only when the monitor cannot supply them. */
+type MirrorFiatTotals = {
+  legitimateLifetimeCents: number;
+  fraudulentLifetimeCents: number;
+  legitimateCents24h: number;
+  fraudulentCents24h: number;
+};
+
+/**
+ * The counters that need no webhook scan at all: seven scalar subqueries over
+ * `user`, `user_kyc` and `user_feature_locks`. They used to ride along on the
+ * lifetime fiat statement and were therefore hostage to its scan.
+ */
+type MainCountersRow = {
   manual_kyc_locks: string;
   system_kyc_locks: string;
   manual_bans: string;
@@ -79,13 +111,19 @@ type MainOverviewRow = {
   auto_lock_reviews_left: string;
   signups_24h: string;
   locks_24h: string;
+};
+
+/** The four fiat legs of the lifetime `classified_paid` statement. */
+type MainFiatTotalsRow = {
+  legitimate_fiat_deposit_cents: string;
+  fraudulent_fiat_deposit_cents: string;
   legitimate_fiat_cents_24h: string;
   fraudulent_fiat_cents_24h: string;
 };
 
 /**
- * Narrow 24-hour leg of {@link MainOverviewRow}. Same four columns, same
- * meaning — only the surrounding scan is bounded.
+ * Narrow 24-hour statement for the monitor console. Same four columns and same
+ * meaning as its dashboard counterparts — only the surrounding scan is bounded.
  */
 type MainLive24hRow = {
   signups_24h: string;
@@ -209,9 +247,9 @@ function normalizeMainFeed(row: MainFeedRow): AntifraudActionFeedItem {
   };
 }
 
-async function computeAntifraudOverviewData(
+async function computeAntifraudOverviewBase(
   env: DbEnv,
-): Promise<AntifraudOverviewData> {
+): Promise<AntifraudOverviewBase> {
   const [flaggedAccounts, unresolvedReviews, caughtRows, recentSignals] =
     await Promise.all([
       adminDrizzle
@@ -273,69 +311,9 @@ async function computeAntifraudOverviewData(
       : sql`FALSE`;
   const db = readDrizzleForEnv(env);
 
-  const [totalsResult, dayResult, feedResult] = await Promise.all([
-    db.execute<MainOverviewRow>(sql`
-      WITH succeeded_events AS (
-        SELECT
-          pwe.id,
-          pwe.received_at,
-          pwe.provider_resource_id,
-          pwe.payload #>> '{data,id}' AS payment_id,
-          pwe.payload #>> '{data,metadata,deposit_intent_id}'
-            AS metadata_intent_id,
-          (pwe.payload #>> '{data,paid_at}')::timestamptz
-            AS provider_paid_at,
-          CASE
-            WHEN pwe.payload #>> '{data,usd_total}'
-              ~ '^[0-9]+([.][0-9]+)?$'
-            THEN (pwe.payload #>> '{data,usd_total}')::numeric
-            ELSE NULL
-          END AS gross_paid_usd
-        FROM payment_webhook_events pwe
-        WHERE pwe.provider = 'whop'
-          AND pwe.event_type = 'payment.succeeded'
-          AND pwe.payload #>> '{data,status}' = 'paid'
-          AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
-          AND NULLIF(pwe.payload #>> '{data,paid_at}', '') IS NOT NULL
-      ),
-      provider_paid AS (
-        SELECT DISTINCT ON (payment_id)
-          payment_id,
-          provider_resource_id,
-          metadata_intent_id,
-          provider_paid_at,
-          gross_paid_usd
-        FROM succeeded_events
-        WHERE provider_paid_at <= CURRENT_TIMESTAMP
-        ORDER BY payment_id, received_at DESC, id DESC
-      ),
-      linked_paid AS (
-        SELECT paid.*, intent.user_id
-        FROM provider_paid paid
-        LEFT JOIN LATERAL (
-          SELECT i.user_id
-          FROM fiat_deposit_intents i
-          WHERE i.provider = 'whop'
-            AND (
-              i.provider_payment_id = paid.payment_id
-              OR i.provider_payment_id = paid.provider_resource_id
-              OR i.id::text = paid.metadata_intent_id
-            )
-          ORDER BY
-            (i.provider_payment_id = paid.payment_id) DESC,
-            (i.id::text = paid.metadata_intent_id) DESC,
-            i.updated_at DESC
-          LIMIT 1
-        ) intent ON TRUE
-      ),
-      classified_paid AS (
-        SELECT
-          linked.*,
-          ${fraudPredicate} AS is_fraud
-        FROM linked_paid linked
-        LEFT JOIN "user" u ON u.id = linked.user_id
-      ),
-      current_locks AS (
+  const [countersResult, dayResult, feedResult] = await Promise.all([
+    db.execute<MainCountersRow>(sql`
+      WITH current_locks AS (
         SELECT u.id
         FROM "user" u
         LEFT JOIN user_feature_locks locks ON locks.user_id = u.id
@@ -362,10 +340,6 @@ async function computeAntifraudOverviewData(
           )
       )
       SELECT
-        COALESCE(SUM(gross_paid_usd) FILTER (WHERE NOT is_fraud), 0)
-          * 100 AS legitimate_fiat_deposit_cents,
-        COALESCE(SUM(gross_paid_usd) FILTER (WHERE is_fraud), 0)
-          * 100 AS fraudulent_fiat_deposit_cents,
         (
           SELECT COUNT(*) FROM user_kyc
           WHERE kyc_required
@@ -403,18 +377,7 @@ async function computeAntifraudOverviewData(
             WHERE locked_withdrawals_at >= now() - interval '24 hours'
               AND locked_withdrawals_at < now()
           ) lock_events
-        ) AS locks_24h,
-        COALESCE(SUM(gross_paid_usd) FILTER (
-          WHERE NOT is_fraud
-            AND provider_paid_at >= now() - interval '24 hours'
-            AND provider_paid_at < now()
-        ), 0) * 100 AS legitimate_fiat_cents_24h,
-        COALESCE(SUM(gross_paid_usd) FILTER (
-          WHERE is_fraud
-            AND provider_paid_at >= now() - interval '24 hours'
-            AND provider_paid_at < now()
-        ), 0) * 100 AS fraudulent_fiat_cents_24h
-      FROM classified_paid
+        ) AS locks_24h
     `),
     db.execute<MainDayRow>(sql`
       WITH days AS (
@@ -621,7 +584,7 @@ async function computeAntifraudOverviewData(
     `),
   ]);
 
-  const totals = totalsResult.rows[0];
+  const counters = countersResult.rows[0];
   const caughtByDay = new Map(
     caughtRows.rows.map((row) => [row.bucket, numeric(row.caught)]),
   );
@@ -674,46 +637,205 @@ async function computeAntifraudOverviewData(
 
   return {
     metrics: {
-      legitimateFiatDepositCents: numeric(
-        totals?.legitimate_fiat_deposit_cents,
-      ),
-      fraudulentFiatDepositCents: numeric(
-        totals?.fraudulent_fiat_deposit_cents,
-      ),
-      manualKycLocks: numeric(totals?.manual_kyc_locks),
-      systemKycLocks: numeric(totals?.system_kyc_locks),
-      manualBans: numeric(totals?.manual_bans),
-      automaticBans: numeric(totals?.automatic_bans),
-      autoLockReviewsLeft: numeric(totals?.auto_lock_reviews_left),
+      manualKycLocks: numeric(counters?.manual_kyc_locks),
+      systemKycLocks: numeric(counters?.system_kyc_locks),
+      manualBans: numeric(counters?.manual_bans),
+      automaticBans: numeric(counters?.automatic_bans),
+      autoLockReviewsLeft: numeric(counters?.auto_lock_reviews_left),
     },
     live: {
-      signups24h: numeric(totals?.signups_24h),
-      locks24h: numeric(totals?.locks_24h),
-      legitimateFiatCents24h: numeric(totals?.legitimate_fiat_cents_24h),
-      fraudulentFiatCents24h: numeric(totals?.fraudulent_fiat_cents_24h),
+      signups24h: numeric(counters?.signups_24h),
+      locks24h: numeric(counters?.locks_24h),
     },
     days: [...daysByKey.values()],
     feed,
   };
 }
 
-const cachedAntifraudOverviewData = unstable_cache(
-  computeAntifraudOverviewData,
-  ["antifraud-overview-dashboard-v6"],
+const cachedAntifraudOverviewBase = unstable_cache(
+  computeAntifraudOverviewBase,
+  ["antifraud-overview-dashboard-v7"],
   {
     revalidate: 60,
     tags: ["antifraud-overview", "fiat-operations"],
   },
 );
 
+/**
+ * The lifetime fiat legs, as their own statement.
+ *
+ * `payment_webhook_events` cannot be bounded here the way its 30-day and 24h
+ * siblings are: "lifetime" means every webhook ever received, so any
+ * `received_at` predicate would move a displayed number. What *can* change is
+ * when it runs — see {@link armMirrorFiatTotals}. The CTE chain, the
+ * `DISTINCT ON` winner selection, the fraud predicate and the `FILTER`
+ * expressions are byte-for-byte the ones this used to share with the counters
+ * statement, so the four numbers are unchanged.
+ */
+async function computeMirrorFiatTotals(
+  env: DbEnv,
+): Promise<MirrorFiatTotals> {
+  const flaggedAccounts = await adminDrizzle
+    .selectDistinct({ userId: antifraud_reviews.target_user_id })
+    .from(antifraud_reviews)
+    .where(eq(antifraud_reviews.status, "flagged"));
+  const fraudPredicate = fraudulentAccountSql(
+    flaggedAccounts.map((account) => account.userId),
+  );
+  const db = readDrizzleForEnv(env);
+
+  const result = await db.execute<MainFiatTotalsRow>(sql`
+    WITH succeeded_events AS (
+      SELECT
+        pwe.id,
+        pwe.received_at,
+        pwe.provider_resource_id,
+        pwe.payload #>> '{data,id}' AS payment_id,
+        pwe.payload #>> '{data,metadata,deposit_intent_id}'
+          AS metadata_intent_id,
+        (pwe.payload #>> '{data,paid_at}')::timestamptz
+          AS provider_paid_at,
+        CASE
+          WHEN pwe.payload #>> '{data,usd_total}'
+            ~ '^[0-9]+([.][0-9]+)?$'
+          THEN (pwe.payload #>> '{data,usd_total}')::numeric
+          ELSE NULL
+        END AS gross_paid_usd
+      FROM payment_webhook_events pwe
+      WHERE pwe.provider = 'whop'
+        AND pwe.event_type = 'payment.succeeded'
+        AND pwe.payload #>> '{data,status}' = 'paid'
+        AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
+        AND NULLIF(pwe.payload #>> '{data,paid_at}', '') IS NOT NULL
+    ),
+    provider_paid AS (
+      SELECT DISTINCT ON (payment_id)
+        payment_id,
+        provider_resource_id,
+        metadata_intent_id,
+        provider_paid_at,
+        gross_paid_usd
+      FROM succeeded_events
+      WHERE provider_paid_at <= CURRENT_TIMESTAMP
+      ORDER BY payment_id, received_at DESC, id DESC
+    ),
+    linked_paid AS (
+      SELECT paid.*, intent.user_id
+      FROM provider_paid paid
+      LEFT JOIN LATERAL (
+        SELECT i.user_id
+        FROM fiat_deposit_intents i
+        WHERE i.provider = 'whop'
+          AND (
+            i.provider_payment_id = paid.payment_id
+            OR i.provider_payment_id = paid.provider_resource_id
+            OR i.id::text = paid.metadata_intent_id
+          )
+        ORDER BY
+          (i.provider_payment_id = paid.payment_id) DESC,
+          (i.id::text = paid.metadata_intent_id) DESC,
+          i.updated_at DESC
+        LIMIT 1
+      ) intent ON TRUE
+    ),
+    classified_paid AS (
+      SELECT
+        linked.*,
+        ${fraudPredicate} AS is_fraud
+      FROM linked_paid linked
+      LEFT JOIN "user" u ON u.id = linked.user_id
+    )
+    SELECT
+      COALESCE(SUM(gross_paid_usd) FILTER (WHERE NOT is_fraud), 0)
+        * 100 AS legitimate_fiat_deposit_cents,
+      COALESCE(SUM(gross_paid_usd) FILTER (WHERE is_fraud), 0)
+        * 100 AS fraudulent_fiat_deposit_cents,
+      COALESCE(SUM(gross_paid_usd) FILTER (
+        WHERE NOT is_fraud
+          AND provider_paid_at >= now() - interval '24 hours'
+          AND provider_paid_at < now()
+      ), 0) * 100 AS legitimate_fiat_cents_24h,
+      COALESCE(SUM(gross_paid_usd) FILTER (
+        WHERE is_fraud
+          AND provider_paid_at >= now() - interval '24 hours'
+          AND provider_paid_at < now()
+      ), 0) * 100 AS fraudulent_fiat_cents_24h
+    FROM classified_paid
+  `);
+
+  const row = result.rows[0];
+  return {
+    legitimateLifetimeCents: numeric(row?.legitimate_fiat_deposit_cents),
+    fraudulentLifetimeCents: numeric(row?.fraudulent_fiat_deposit_cents),
+    legitimateCents24h: numeric(row?.legitimate_fiat_cents_24h),
+    fraudulentCents24h: numeric(row?.fraudulent_fiat_cents_24h),
+  };
+}
+
+const cachedMirrorFiatTotals = unstable_cache(
+  computeMirrorFiatTotals,
+  ["antifraud-overview-mirror-fiat-v1"],
+  {
+    revalidate: 60,
+    tags: ["antifraud-overview", "fiat-operations"],
+  },
+);
+
+/**
+ * How long the merge waits for the monitor before starting the scan anyway.
+ *
+ * A healthy monitor answers in well under a second. Its own upstream timeout
+ * is 8s and the page's `safeQuery` budget is 10s, so simply chaining the scan
+ * behind a *failing* monitor would push the dashboard past that budget and
+ * blank every KPI. Arming at the grace deadline keeps the degraded path at
+ * roughly its current latency while the healthy path never touches the scan.
+ */
+const MIRROR_FIAT_GRACE_MS = 1_500;
+
+type ArmedMirrorFiatTotals = {
+  /** Starts the scan if the grace timer has not already, then resolves it. */
+  read: () => Promise<MirrorFiatTotals>;
+  /** Disarms the grace timer; a no-op once it has fired. */
+  release: () => void;
+};
+
+function armMirrorFiatTotals(env: DbEnv): ArmedMirrorFiatTotals {
+  let started: Promise<MirrorFiatTotals> | null = null;
+  const start = (): Promise<MirrorFiatTotals> => {
+    if (!started) {
+      started =
+        env === "prod"
+          ? cachedMirrorFiatTotals(env)
+          : computeMirrorFiatTotals(env);
+      // A speculative start that nobody ends up reading must not surface as an
+      // unhandled rejection. `read()` awaits the same promise and still throws.
+      void started.catch(() => {});
+    }
+    return started;
+  };
+  const timer = setTimeout(start, MIRROR_FIAT_GRACE_MS);
+  return {
+    read: start,
+    release: () => clearTimeout(timer),
+  };
+}
+
 export async function getAntifraudOverviewData(): Promise<AntifraudOverviewData> {
   const env = await readDbEnv();
-  const [overview, monitor] = await Promise.all([
+  // Armed before the awaits below so a slow monitor cannot stack the scan's
+  // latency on top of its own.
+  const mirrorFiat = armMirrorFiatTotals(env);
+  const [base, monitor] = await Promise.all([
     env === "prod"
-      ? cachedAntifraudOverviewData(env)
-      : computeAntifraudOverviewData(env),
+      ? cachedAntifraudOverviewBase(env)
+      : computeAntifraudOverviewBase(env),
     getAntifraudMonitorOverview(),
   ]);
+  // Past this point nothing is waiting on the monitor any more, so the grace
+  // timer has done its job either way: it has already armed the scan for a slow
+  // monitor, and clearing it here keeps a fast one from ever starting it.
+  mirrorFiat.release();
+
   const split = monitor.data?.fiat;
   if (split) {
     // Both legs come from the same assessment scope, so the KPI adds up and
@@ -722,24 +844,42 @@ export async function getAntifraudOverviewData(): Promise<AntifraudOverviewData>
     // the difference used to clamp "legitimate" to zero.
     const splitByDay = new Map(split.days.map((day) => [day.date, day]));
     return {
-      ...overview,
       metrics: {
-        ...overview.metrics,
+        ...base.metrics,
         legitimateFiatDepositCents: split.legitimateLifetimeCents,
         fraudulentFiatDepositCents: split.fraudulentLifetimeCents,
       },
       live: {
-        ...overview.live,
+        ...base.live,
         legitimateFiatCents24h: split.legitimateLast24HoursCents,
         fraudulentFiatCents24h: split.fraudulentLast24HoursCents,
       },
-      days: overview.days.map((day) => ({
+      days: base.days.map((day) => ({
         ...day,
         legitimateFiatCents: splitByDay.get(day.date)?.legitimateCents ?? 0,
         fraudulentFiatCents: splitByDay.get(day.date)?.fraudulentCents ?? 0,
       })),
+      feed: base.feed,
     };
   }
+
+  // No split: the mirror's own lifetime and 24h legs are the fallback source,
+  // so the scan is genuinely needed and has to be read.
+  const mirror = await mirrorFiat.read();
+  const overview: AntifraudOverviewData = {
+    metrics: {
+      ...base.metrics,
+      legitimateFiatDepositCents: mirror.legitimateLifetimeCents,
+      fraudulentFiatDepositCents: mirror.fraudulentLifetimeCents,
+    },
+    live: {
+      ...base.live,
+      legitimateFiatCents24h: mirror.legitimateCents24h,
+      fraudulentFiatCents24h: mirror.fraudulentCents24h,
+    },
+    days: base.days,
+    feed: base.feed,
+  };
 
   const canonical = monitor.data?.fraudulentFiat;
   if (!canonical) return overview;
@@ -797,7 +937,7 @@ export async function getAntifraudOverviewData(): Promise<AntifraudOverviewData>
  * snapshot request; in prod the 60s revalidation still put a console load
  * behind the heaviest chain in the sub-app.
  *
- * A clean extraction from `computeAntifraudOverviewData` is not possible: its
+ * A clean extraction from `computeMirrorFiatTotals` is not possible: its
  * lifetime and 24h columns are one statement over one `classified_paid` CTE,
  * and the 24h figures are `FILTER` clauses on that same aggregate. So this is
  * a deliberately separate, narrow statement. It reproduces the original

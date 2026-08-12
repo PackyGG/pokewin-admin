@@ -11,6 +11,23 @@ const OUTAGE_THRESHOLD = 3;
 const ALERT_COOLDOWN_MS = 30 * 60_000;
 
 /**
+ * Wall-clock window stamped into every alert dedupe key.
+ *
+ * Dedupe keys are enforced forever by a unique index on
+ * `discord_notification_jobs (guild_id, event_key, dedupe_key, channel_id)`,
+ * nothing prunes those rows, and a deduped enqueue still answers 200 — so a
+ * colliding key drops the alert while the monitor records a successful send.
+ * The episode counters below restart at 0 with the process, so every redeploy
+ * replayed `webapp_outage_1_1` and the next real outage was swallowed silently.
+ * The window is derived from the clock instead, so it survives a restart, and
+ * because it advances with the alert cooldown any suppression it does cause is
+ * time-bounded rather than permanent.
+ */
+function alertWindow(now: number): number {
+  return Math.floor(now / ALERT_COOLDOWN_MS);
+}
+
+/**
  * Webapp health probe + outage alerting.
  *
  * The alert goes out as an `antifraud.error.webapp` event on the Discord bot's
@@ -28,7 +45,8 @@ export class DashboardOpsTick {
   private lastAlertAt = 0;
   private outageOpen = false;
   private lastCheckedAt: string | null = null;
-  /** Bumped per outage episode so a later outage is never deduped away. */
+  /** Separates concurrent episodes inside one window; restart safety is the
+   * window's job, not this counter's. */
   private episode = 0;
   private episodeAlerts = 0;
 
@@ -149,16 +167,17 @@ export class DashboardOpsTick {
       this.healthFailures = 0;
       this.outageOpen = false;
       if (wasOutage) {
+        const dedupeKey = `webapp_recovered_${alertWindow(Date.now())}_${this.episode}`;
         const sent = await this.sendAlert(
           correlationId,
-          `webapp_recovered_${this.episode}`,
+          dedupeKey,
           "✅ Antifraud webapp recovered",
           "The Railway probe can reach the antifraud webapp again.",
           0x57f287,
         );
         if (!sent) {
           this.log.warn(
-            { correlationId, episode: this.episode },
+            { correlationId, episode: this.episode, dedupeKey },
             "Antifraud webapp recovery alert was not delivered",
           );
         }
@@ -179,20 +198,31 @@ export class DashboardOpsTick {
           this.episodeAlerts = 0;
         }
         this.episodeAlerts += 1;
+        const dedupeKey = `webapp_outage_${alertWindow(now)}_${this.episode}_${this.episodeAlerts}`;
         const sent = await this.sendAlert(
           correlationId,
-          `webapp_outage_${this.episode}_${this.episodeAlerts}`,
+          dedupeKey,
           "🚨 Antifraud webapp outage",
           "The Railway probe cannot reach the antifraud webapp. Investigate Vercel and webapp runtime health.",
           0xed4245,
         );
-        if (sent) this.lastAlertAt = now;
-        else {
+        if (sent) {
+          this.lastAlertAt = now;
+          // A dedupe collision downstream is indistinguishable from a real send
+          // (the enqueue answers 200 either way), so record the key we claimed
+          // to have sent: this line with no Discord message is the only signal
+          // that the alert was dropped at the job table.
+          this.log.info(
+            { correlationId, episode: this.episode, dedupeKey },
+            "Antifraud webapp outage alert dispatched",
+          );
+        } else {
           this.log.error(
             {
               correlationId,
               episode: this.episode,
               failures: this.healthFailures,
+              dedupeKey,
             },
             "Antifraud webapp outage alert was not delivered; retrying next tick",
           );

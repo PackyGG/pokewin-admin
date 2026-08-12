@@ -408,6 +408,21 @@ export async function persistRuleMatch(
 
 /** Grace period for a poller tick during process shutdown. */
 const TICK_WATCHDOG_INTERVALS = 10;
+/**
+ * Absolute ceiling on that grace period. `POLL_INTERVAL_MS` is operator-tunable
+ * up to 60s, which would derive a 600s shutdown budget and guarantee the 25s
+ * shutdown watchdog in server.ts fires `process.exit(1)` — turning every clean
+ * deploy into a counted failed restart under the ON_FAILURE policy. At the
+ * shipped intervals (500-1000ms) the derived budget is already at or below this
+ * ceiling, so nothing changes for the current configuration.
+ */
+const MAX_TICK_DRAIN_MS = 10_000;
+/**
+ * Advisory key electing the single poll-loop leader across replicas. Must stay
+ * distinct from the ingest-delivery lease (841_772_993) and the migration lock
+ * (841_772_991), which run against the same database.
+ */
+const POLLER_LEADER_LOCK = 841_772_992;
 /** `rule_definitions` is re-read at most this often instead of per event. */
 const RULES_CACHE_TTL_MS = 30_000;
 /**
@@ -561,7 +576,10 @@ export class MonitorEngine {
   }
 
   private watchdogBudgetMs(): number {
-    return this.config.POLL_INTERVAL_MS * TICK_WATCHDOG_INTERVALS;
+    return Math.min(
+      this.config.POLL_INTERVAL_MS * TICK_WATCHDOG_INTERVALS,
+      MAX_TICK_DRAIN_MS,
+    );
   }
 
   /** Redacts configured secrets so raw provider errors never reach the logs. */
@@ -662,15 +680,26 @@ export class MonitorEngine {
     this.tickFailureRecorded = false;
     this.health.tickStarted();
     let lockClient: pg.PoolClient | null = null;
-    let leader = false;
+    let leaseOpen = false;
     try {
       lockClient = await this.db.antifraud.connect();
+      // The leader lease must be transaction-scoped, exactly like the ingest
+      // delivery lease. A SESSION advisory lock survives an interrupted
+      // cleanup while the pg Pool keeps that physical connection alive: the
+      // next checkout of any connection then sees the lock as held, and the
+      // poller stands by forever instead of polling — the whole service goes
+      // quiet with a green /health until the connection is recycled.
+      // PostgreSQL drops a transaction lock on COMMIT, ROLLBACK, connection
+      // loss and process exit, so a dead holder can never keep leadership. The
+      // lease connection stays checked out for the whole tick either way, so
+      // this costs no extra pool slot.
+      await lockClient.query("BEGIN");
+      leaseOpen = true;
       const lock = await lockClient.query<{ acquired: boolean }>(
-        "SELECT pg_try_advisory_lock($1) AS acquired",
-        [841_772_992],
+        "SELECT pg_try_advisory_xact_lock($1) AS acquired",
+        [POLLER_LEADER_LOCK],
       );
-      leader = lock.rows[0]?.acquired === true;
-      if (!leader) {
+      if (lock.rows[0]?.acquired !== true) {
         this.health.standby();
         return;
       }
@@ -767,17 +796,26 @@ export class MonitorEngine {
     } catch (error) {
       this.recordTickFailure("lease", error);
     } finally {
-      if (leader && lockClient) {
-        await lockClient
-          .query("SELECT pg_advisory_unlock($1)", [841_772_992])
-          .catch((error) =>
+      // ROLLBACK, never COMMIT: the lease transaction writes nothing, and it
+      // has to close on the throwing path too. Runs for standby ticks as well,
+      // otherwise the BEGIN above would return an open transaction to the pool.
+      let leaseClosed = true;
+      if (lockClient && leaseOpen) {
+        leaseClosed = await lockClient
+          .query("ROLLBACK")
+          .then(() => true)
+          .catch((error: unknown) => {
             this.log.error(
               { err: this.safeError(error) },
-              "Failed to release poller leader lock",
-            ),
-          );
+              "Failed to release the poller leader lease",
+            );
+            return false;
+          });
       }
-      lockClient?.release();
+      // Destroy rather than recycle a connection whose lease transaction could
+      // not be closed: handing it back would give the next checkout a
+      // connection still inside a transaction — and still holding the lock.
+      lockClient?.release(leaseClosed ? undefined : true);
       this.running = false;
     }
   }

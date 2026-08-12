@@ -2314,9 +2314,19 @@ app.addHook("onClose", async () => {
       app.log.error({ err: error, step }, "Antifraud shutdown step failed");
     });
   };
-  await teardown("ingest_delivery", () => ingestDelivery.stop());
-  await teardown("engine", () => engine.stop());
-  await teardown("network_risk", () => networkRisk.stop());
+  // Serialized, these three drains summed their individual budgets and the
+  // total sat right under the 25 second watchdog below, which exits(1) into an
+  // ON_FAILURE restart policy — a clean deploy would be counted as a crash.
+  // They share no state: each only clears its own timer and awaits its own
+  // in-flight promise, and all three still hold open database pools.
+  await Promise.all([
+    teardown("ingest_delivery", () => ingestDelivery.stop()),
+    teardown("engine", () => engine.stop()),
+    teardown("network_risk", () => networkRisk.stop()),
+  ]);
+  // Strictly after the engine: an in-flight tick still publishes to the live
+  // bus, and closing it early would drop those broadcasts. Databases last of
+  // all — every step above still queries them.
   await teardown("live", () => live.close());
   await teardown("databases", () => closeDatabases(db));
 });
