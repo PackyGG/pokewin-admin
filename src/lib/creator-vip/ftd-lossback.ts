@@ -7,6 +7,10 @@ import { creator_reward_claims } from "@/lib/db-schema/admin/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { postgresTimestamp } from "@/lib/postgres-runtime";
+import {
+  FTD_MAX_ACCOUNT_AGE_DAYS,
+  isFtdAccountAgeEligible,
+} from "./ftd-account-age";
 
 import {
   BASIS_HOLDING_STATUSES,
@@ -27,7 +31,11 @@ import {
  *     exactly one first deposit, so a player whose first was below the floor
  *     is permanently ineligible — they cannot "retry" with a bigger one.
  *
- *  3. A SECOND DEPOSIT CLOSES THE WINDOW. This is the judgement call in the
+ *  3. The FIRST deposit must land while the account is no more than four
+ *     weeks old. Eligibility is frozen at deposit time, so review delays do
+ *     not age an otherwise valid player out of the reward.
+ *
+ *  4. A SECOND DEPOSIT CLOSES THE WINDOW. This is the judgement call in the
  *     spec. Once fresh money is on the account there is no honest way to say
  *     which deposit a later loss came from, and the alternative — keep paying
  *     against the first deposit forever — is exactly the "deposit $50, don't
@@ -41,7 +49,7 @@ import {
  *     would need the inventory value as it stood at that instant, which is not
  *     reconstructable from the ledger — and guessing it would overpay.
  *
- *  4. ONCE, EVER. Enforced by the same claim rows every other reward uses.
+ *  5. ONCE, EVER. Enforced by the same claim rows every other reward uses.
  *
  * ── HOW "LOST" IS MEASURED ────────────────────────────────────────────────
  *     lost = firstDeposit − whatTheyStillHold      (clamped to [0, deposit])
@@ -283,6 +291,8 @@ export async function computeFtdLossback(
     min_deposit_usd: unknown;
   },
   userId: string,
+  /** Account creation is immutable; the first deposit must land by day 28. */
+  accountCreatedAt: Date,
   /**
    * Per-user facts already loaded by the caller. Passing them is what stops
    * a player with N programs paying for N deposit lookups and N P&L reads —
@@ -384,6 +394,15 @@ export async function computeFtdLossback(
       firstDepositUsd: first.amountUsd,
       firstDepositAt: first.at.toISOString(),
       blockedReason: `First deposit was $${first.amountUsd.toFixed(2)} — below the $${minDeposit.toFixed(2)} minimum.`,
+    };
+  }
+
+  if (!isFtdAccountAgeEligible(accountCreatedAt, first.at)) {
+    return {
+      ...EMPTY,
+      firstDepositUsd: first.amountUsd,
+      firstDepositAt: first.at.toISOString(),
+      blockedReason: `Account was older than ${FTD_MAX_ACCOUNT_AGE_DAYS} days when the first deposit landed.`,
     };
   }
 

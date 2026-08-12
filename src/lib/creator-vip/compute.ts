@@ -172,6 +172,7 @@ async function isVipNow(userId: string): Promise<boolean> {
 async function userStanding(userId: string): Promise<{
   banned: boolean;
   locked: boolean;
+  createdAt: Date;
   currentCode: string | null;
   codeExpiresAt: Date | null;
 } | null> {
@@ -179,6 +180,7 @@ async function userStanding(userId: string): Promise<{
     .select({
       is_banned: mainUsers.is_banned,
       is_locked: mainUsers.is_locked,
+      created_at: mainUsers.created_at,
       affiliate_code: mainUsers.affiliate_code,
       affiliate_code_expires_at: mainUsers.affiliate_code_expires_at,
     })
@@ -190,6 +192,7 @@ async function userStanding(userId: string): Promise<{
   return {
     banned: row.is_banned,
     locked: row.is_locked,
+    createdAt: new Date(row.created_at),
     currentCode: row.affiliate_code ? row.affiliate_code.toUpperCase() : null,
     codeExpiresAt: row.affiliate_code_expires_at
       ? new Date(row.affiliate_code_expires_at)
@@ -1057,6 +1060,7 @@ export async function computeLossbackEntitlement(
   const ftd = await computeFtdLossback(
     program,
     userId,
+    standing.createdAt,
     facts,
     await programWindows(program),
     batch,
