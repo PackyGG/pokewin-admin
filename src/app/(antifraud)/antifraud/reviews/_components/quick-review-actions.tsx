@@ -105,6 +105,8 @@ export function QuickReviewActions({
         reviewId,
         expectedStatus: status,
         idempotencyKey: crypto.randomUUID(),
+      }).then((result) => {
+        if (!result.success) throw new Error(result.error);
       }),
     );
   }, [dismissal, reviewId, status, terminal]);
@@ -159,11 +161,15 @@ function PostponeButton({
     startTransition(async () => {
       try {
         idempotencyKey.current ??= crypto.randomUUID();
-        await postponeReview({
+        const result = await postponeReview({
           reviewId,
           expectedStatus: status,
           idempotencyKey: idempotencyKey.current,
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
         onActionCompleted?.();
         toast.success("Review postponed for 2 hours");
         if (!onActionCompleted) router.refresh();

@@ -47,12 +47,16 @@ export function AnalysisRuleEditor({
         }
         startTransition(async () => {
           try {
-            await setAntifraudAnalysisRule({
+            const result = await setAntifraudAnalysisRule({
               key: rule.key,
               enabled,
               points: nextPoints,
               threshold: nextThreshold,
             });
+            if (!result.success) {
+              toast.error(result.error);
+              return;
+            }
             toast.success(`${rule.name} saved`);
             router.refresh();
           } catch (error) {

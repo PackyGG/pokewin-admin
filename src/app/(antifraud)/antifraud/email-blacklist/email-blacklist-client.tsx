@@ -71,11 +71,16 @@ export function EmailBlacklistClient({
     setPendingDomain(null);
     startTransition(async () => {
       try {
-        const saved = await addFiatEmailDomain({
+        const result = await addFiatEmailDomain({
           domain: submittedDomain,
           confirmed: true,
           idempotencyKey: crypto.randomUUID(),
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        const saved = result.data;
         setRules((current) => [
           saved,
           ...current.filter((rule) => rule.id !== saved.id),
@@ -105,7 +110,7 @@ export function EmailBlacklistClient({
     setToggleReason("");
     startTransition(async () => {
       try {
-        const saved = await setFiatEmailDomainState({
+        const result = await setFiatEmailDomainState({
           id: rule.id,
           enabled: !rule.enabled,
           reason: updateReason.trim(),
@@ -113,6 +118,11 @@ export function EmailBlacklistClient({
           confirmed: true,
           idempotencyKey: crypto.randomUUID(),
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        const saved = result.data;
         setRules((current) =>
           current.map((entry) => (entry.id === saved.id ? saved : entry)),
         );

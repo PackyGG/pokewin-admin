@@ -10,6 +10,8 @@ import {
   type FiatEmailDomainRule,
 } from "@/lib/antifraud/fiat-email-domains-api";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { antifraudActionResult } from "@/lib/antifraud/action-error-message";
+import { fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 
 const createSchema = z.object({
   domain: z.string().trim().min(1).max(253),
@@ -35,10 +37,12 @@ function revalidateBlacklistSurfaces(): void {
 
 export async function addFiatEmailDomain(
   input: unknown,
-): Promise<FiatEmailDomainRule> {
+): Promise<ServerActionResult<FiatEmailDomainRule>> {
   const session = await requireAntifraudAccess();
   const parsed = createSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+
+  return antifraudActionResult("antifraud.emailBlacklist.add", "The domain could not be added.", async () => {
 
   const saved = await createFiatEmailDomain({
     domain: parsed.data.domain,
@@ -63,14 +67,17 @@ export async function addFiatEmailDomain(
   }
   revalidateBlacklistSurfaces();
   return saved;
+  });
 }
 
 export async function setFiatEmailDomainState(
   input: unknown,
-): Promise<FiatEmailDomainRule> {
+): Promise<ServerActionResult<FiatEmailDomainRule>> {
   const session = await requireAntifraudAccess();
   const parsed = updateSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+
+  return antifraudActionResult("antifraud.emailBlacklist.update", "The blacklist rule could not be changed.", async () => {
 
   const saved = await updateFiatEmailDomain({
     id: parsed.data.id,
@@ -98,4 +105,5 @@ export async function setFiatEmailDomainState(
   }
   revalidateBlacklistSurfaces();
   return saved;
+  });
 }

@@ -64,11 +64,15 @@ export function ScoreWeightEditor({
         }
         setSaving(true);
         try {
-          await setAntifraudScoreWeight({
+          const result = await setAntifraudScoreWeight({
             key: weightKey,
             points: next,
             idempotencyKey: crypto.randomUUID(),
           });
+          if (!result.success) {
+            toast.error(result.error);
+            return;
+          }
           toast.success(`${label} set to ${next > 0 ? "+" : ""}${next}`);
           setEditing(false);
           router.refresh();

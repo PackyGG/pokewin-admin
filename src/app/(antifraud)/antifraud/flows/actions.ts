@@ -10,6 +10,8 @@ import {
   type AntifraudBehaviorRule,
 } from "@/lib/antifraud/monitor-api";
 import { requireAntifraudManager } from "@/lib/require-antifraud-access";
+import { antifraudActionResult } from "@/lib/antifraud/action-error-message";
+import { fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 
 const flowSchema = z.object({
   id: z.string().uuid().optional(),
@@ -26,10 +28,11 @@ const flowSchema = z.object({
 
 export async function saveAntifraudFlow(
   input: unknown,
-): Promise<AntifraudBehaviorRule> {
+): Promise<ServerActionResult<AntifraudBehaviorRule>> {
   const session = await requireAntifraudManager();
   const parsed = flowSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.flows.save", "The flow could not be saved.", async () => {
   const { id, ...data } = parsed.data;
   const mutation = {
     ...data,
@@ -58,4 +61,5 @@ export async function saveAntifraudFlow(
   revalidatePath("/antifraud/settings");
   revalidatePath("/antifraud/monitor");
   return saved;
+  });
 }

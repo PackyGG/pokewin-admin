@@ -143,10 +143,12 @@ function FailureAction({
           credential,
           idempotencyKey: crypto.randomUUID(),
         };
-        if (resolving) {
-          await resolveSignupFailure({ ...common, confirmation });
-        } else {
-          await retrySignupFailure(common);
+        const result = resolving
+          ? await resolveSignupFailure({ ...common, confirmation })
+          : await retrySignupFailure(common);
+        if (!result.success) {
+          toast.error(result.error);
+          return;
         }
         setReason("");
         setConfirmation("");

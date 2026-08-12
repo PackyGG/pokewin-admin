@@ -16,6 +16,8 @@ import { requireCapability } from "@/lib/require-capability";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
 import { blockKnownUserIdentifiers } from "@/lib/antifraud/user-identifier-blocking";
+import { antifraudActionResult } from "@/lib/antifraud/action-error-message";
+import { fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 
 const schema = z.object({
   userId: z.string().trim().min(1).max(100),
@@ -26,10 +28,11 @@ const schema = z.object({
   idempotencyKey: z.string().uuid(),
 });
 
-export async function mutateBannedUser(input: unknown): Promise<void> {
+export async function mutateBannedUser(input: unknown): Promise<ServerActionResult> {
   const session = await requireAntifraudAccess();
   const parsed = schema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.bannedUsers.mutate", "The account action could not be completed.", async () => {
   // Same capability every other ban path requires (/users actions, antifraud
   // review quick actions) — antifraud page access alone is not enough.
   await requireCapability(
@@ -147,4 +150,5 @@ export async function mutateBannedUser(input: unknown): Promise<void> {
     });
     throw error;
   }
+  });
 }

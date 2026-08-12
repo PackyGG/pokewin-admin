@@ -42,7 +42,7 @@ export function AccountBanAction({
   function submit() {
     startTransition(async () => {
       try {
-        await mutateBannedUser({
+        const result = await mutateBannedUser({
           userId,
           action,
           reason: reason.trim(),
@@ -50,6 +50,10 @@ export function AccountBanAction({
           confirmed: true,
           idempotencyKey: crypto.randomUUID(),
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
         setReason("");
         setCredential("");
         toast.success(isBan ? "Account banned." : "Account unbanned.");

@@ -62,7 +62,12 @@ export function IdentifierBlocklistClient({ kind, initialRules }: {
     setPendingValue(null);
     startTransition(async () => {
       try {
-        const saved = await addIdentifierBlocklistRule({ kind, value: submitted, matchMode: isIp ? matchMode : "exact", confirmed: true, idempotencyKey: crypto.randomUUID() });
+        const result = await addIdentifierBlocklistRule({ kind, value: submitted, matchMode: isIp ? matchMode : "exact", confirmed: true, idempotencyKey: crypto.randomUUID() });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        const saved = result.data;
         saveLocal(saved);
         setValue("");
         toast.success(`${saved.value} is now blocked.`);
@@ -82,7 +87,12 @@ export function IdentifierBlocklistClient({ kind, initialRules }: {
     setPendingToggle(null);
     startTransition(async () => {
       try {
-        const saved = await setIdentifierBlocklistRuleState({ kind, id: rule.id, enabled: !rule.enabled, effect: rule.effect, confirmed: true, idempotencyKey: crypto.randomUUID() });
+        const result = await setIdentifierBlocklistRuleState({ kind, id: rule.id, enabled: !rule.enabled, effect: rule.effect, confirmed: true, idempotencyKey: crypto.randomUUID() });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        const saved = result.data;
         saveLocal(saved);
         toast.success(saved.enabled ? "Rule reactivated." : "Rule disabled.");
       } catch (error) {
@@ -106,7 +116,12 @@ export function IdentifierBlocklistClient({ kind, initialRules }: {
     setPendingMove(null);
     startTransition(async () => {
       try {
-        const saved = await setIdentifierBlocklistRuleEffect({ kind, id: rule.id, enabled: rule.enabled, effect, confirmed: true, idempotencyKey: crypto.randomUUID() });
+        const result = await setIdentifierBlocklistRuleEffect({ kind, id: rule.id, enabled: rule.enabled, effect, confirmed: true, idempotencyKey: crypto.randomUUID() });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        const saved = result.data;
         saveLocal(saved);
         toast.success(effect === "known_vpn" ? "IP moved to Known VPN." : "Hard blocking restored.");
       } catch (error) {

@@ -178,12 +178,17 @@ export function FlowBuilder({
     }
     startTransition(async () => {
       try {
-        const saved = await saveAntifraudFlow({
+        const result = await saveAntifraudFlow({
           ...draft,
           sequence: draft.sequence.map((step) => step.key),
           id: selectedId === "new" ? undefined : selectedId,
           idempotencyKey: crypto.randomUUID(),
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        const saved = result.data;
         setRules((current) => {
           const exists = current.some((rule) => rule.id === saved.id);
           return exists

@@ -75,10 +75,15 @@ export function OpenCaseDialog({
         targetUsername: targetUsername.trim(),
         reason: reason.trim(),
       });
-      if (!result.ok) {
-        const conflictReviewId = result.conflictReviewId;
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      const outcome = result.data;
+      if (!outcome.ok) {
+        const conflictReviewId = outcome.conflictReviewId;
         toast.error(
-          result.message,
+          outcome.message,
           conflictReviewId
             ? {
                 action: {
@@ -100,7 +105,7 @@ export function OpenCaseDialog({
       reset();
       router.push(
         hrefForCurrentHost(
-          `/antifraud/reviews?review=${encodeURIComponent(result.id)}`,
+          `/antifraud/reviews?review=${encodeURIComponent(outcome.id)}`,
         ),
       );
     } catch (err) {

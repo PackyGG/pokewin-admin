@@ -10,6 +10,8 @@ import {
 } from "@/lib/antifraud/signup-failures-api";
 import { require2FA } from "@/lib/require-2fa";
 import { requireAntifraudManager } from "@/lib/require-antifraud-access";
+import { antifraudActionResult } from "@/lib/antifraud/action-error-message";
+import { fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 
 const baseSchema = z.object({
   userId: z.string().trim().min(1).max(200),
@@ -21,12 +23,13 @@ const baseSchema = z.object({
 const retrySchema = baseSchema;
 const resolveSchema = baseSchema.extend({ confirmation: z.literal("RESOLVE") });
 
-export async function retrySignupFailure(input: unknown): Promise<void> {
+export async function retrySignupFailure(input: unknown): Promise<ServerActionResult> {
   const session = await requireAntifraudManager(
     "Only owners and admins can retry failed signup assessments.",
   );
   const parsed = retrySchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.signupFailures.retry", "The signup retry could not be queued.", async () => {
   await require2FA(session.userId, parsed.data.credential);
 
   const saved = await retrySignupIngestionFailure({
@@ -46,14 +49,16 @@ export async function retrySignupFailure(input: unknown): Promise<void> {
     });
   }
   revalidateHealth();
+  });
 }
 
-export async function resolveSignupFailure(input: unknown): Promise<void> {
+export async function resolveSignupFailure(input: unknown): Promise<ServerActionResult> {
   const session = await requireAntifraudManager(
     "Only owners and admins can resolve failed signup assessments.",
   );
   const parsed = resolveSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.signupFailures.resolve", "The signup failure could not be resolved.", async () => {
   await require2FA(session.userId, parsed.data.credential);
 
   const saved = await resolveSignupIngestionFailure({
@@ -73,6 +78,7 @@ export async function resolveSignupFailure(input: unknown): Promise<void> {
     });
   }
   revalidateHealth();
+  });
 }
 
 function revalidateHealth(): void {

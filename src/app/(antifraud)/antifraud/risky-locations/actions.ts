@@ -10,6 +10,8 @@ import {
   type RiskyLocation,
 } from "@/lib/antifraud/risky-locations-api";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { antifraudActionResult } from "@/lib/antifraud/action-error-message";
+import { fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 
 const baseSchema = z.object({
   countryCode: z
@@ -25,10 +27,12 @@ const baseSchema = z.object({
 const CREATE_REASON = "Added from the risky locations page";
 const UPDATE_REASON = "Updated from the risky locations page";
 
-export async function addRiskyLocation(input: unknown): Promise<RiskyLocation> {
+export async function addRiskyLocation(input: unknown): Promise<ServerActionResult<RiskyLocation>> {
   const session = await requireAntifraudAccess();
   const parsed = baseSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+
+  return antifraudActionResult("antifraud.riskyLocations.add", "The risky location could not be added.", async () => {
 
   const saved = await createRiskyLocation({
     countryCode: parsed.data.countryCode,
@@ -55,13 +59,16 @@ export async function addRiskyLocation(input: unknown): Promise<RiskyLocation> {
   }
   revalidatePath("/antifraud/risky-locations");
   return saved;
+  });
 }
 const updateSchema = baseSchema.extend({ enabled: z.boolean() });
 
-export async function setRiskyLocation(input: unknown): Promise<RiskyLocation> {
+export async function setRiskyLocation(input: unknown): Promise<ServerActionResult<RiskyLocation>> {
   const session = await requireAntifraudAccess();
   const parsed = updateSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+
+  return antifraudActionResult("antifraud.riskyLocations.update", "The risky location could not be updated.", async () => {
 
   const saved = await updateRiskyLocation({
     countryCode: parsed.data.countryCode,
@@ -90,4 +97,5 @@ export async function setRiskyLocation(input: unknown): Promise<RiskyLocation> {
   }
   revalidatePath("/antifraud/risky-locations");
   return saved;
+  });
 }

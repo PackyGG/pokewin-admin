@@ -8,8 +8,11 @@ import {
   createIdentifierBlocklistRule,
   identifierBlocklistKindSchema,
   updateIdentifierBlocklistRule,
+  type IdentifierBlocklistRule,
 } from "@/lib/antifraud/identifier-blocklists-api";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { antifraudActionResult } from "@/lib/antifraud/action-error-message";
+import { fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 
 const commonSchema = z.object({
   kind: identifierBlocklistKindSchema,
@@ -38,10 +41,11 @@ function revalidate(kind: "ip" | "fingerprint") {
   );
 }
 
-export async function addIdentifierBlocklistRule(input: unknown) {
+export async function addIdentifierBlocklistRule(input: unknown): Promise<ServerActionResult<IdentifierBlocklistRule>> {
   const session = await requireAntifraudAccess();
   const parsed = createSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.identifierBlocklist.add", "The rule could not be added.", async () => {
   const saved = await createIdentifierBlocklistRule({
     ...parsed.data,
     reason: AUTOMATIC_REASON,
@@ -65,13 +69,15 @@ export async function addIdentifierBlocklistRule(input: unknown) {
   }
   revalidate(saved.kind);
   return saved;
+  });
 }
 
-export async function setIdentifierBlocklistRuleEffect(input: unknown) {
+export async function setIdentifierBlocklistRuleEffect(input: unknown): Promise<ServerActionResult<IdentifierBlocklistRule>> {
   const session = await requireAntifraudAccess();
   const parsed = updateSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
-  if (parsed.data.kind !== "ip") throw new Error("Only IP rules can be known VPNs.");
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  if (parsed.data.kind !== "ip") return fail("Only IP rules can be known VPNs.");
+  return antifraudActionResult("antifraud.identifierBlocklist.effect", "The policy could not be changed.", async () => {
   const saved = await updateIdentifierBlocklistRule({
     ...parsed.data,
     reason: AUTOMATIC_REASON,
@@ -99,12 +105,14 @@ export async function setIdentifierBlocklistRuleEffect(input: unknown) {
   }
   revalidate(saved.kind);
   return saved;
+  });
 }
 
-export async function setIdentifierBlocklistRuleState(input: unknown) {
+export async function setIdentifierBlocklistRuleState(input: unknown): Promise<ServerActionResult<IdentifierBlocklistRule>> {
   const session = await requireAntifraudAccess();
   const parsed = updateSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.identifierBlocklist.state", "The rule could not be changed.", async () => {
   const saved = await updateIdentifierBlocklistRule({
     ...parsed.data,
     reason: AUTOMATIC_REASON,
@@ -129,4 +137,5 @@ export async function setIdentifierBlocklistRuleState(input: unknown) {
   }
   revalidate(saved.kind);
   return saved;
+  });
 }

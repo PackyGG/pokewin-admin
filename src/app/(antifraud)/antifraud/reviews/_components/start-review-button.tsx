@@ -41,11 +41,15 @@ export function StartReviewButton({
         startTransition(async () => {
           try {
             idempotencyKey.current ??= crypto.randomUUID();
-            await startReview({
+            const result = await startReview({
               reviewId,
               expectedStatus: "open",
               idempotencyKey: idempotencyKey.current,
             });
+            if (!result.success) {
+              toast.error(result.error);
+              return;
+            }
             router.refresh();
           } catch (error) {
             toast.error(

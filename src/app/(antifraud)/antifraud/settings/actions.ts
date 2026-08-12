@@ -7,6 +7,8 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { updateAntifraudScoreWeight } from "@/lib/antifraud/monitor-api";
 import { updateAnalysisRule } from "@/lib/antifraud/network-api";
 import { requireAntifraudManager } from "@/lib/require-antifraud-access";
+import { antifraudActionResult } from "@/lib/antifraud/action-error-message";
+import { fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 
 const updateSchema = z.object({
   key: z.string().trim().min(1).max(100),
@@ -14,10 +16,12 @@ const updateSchema = z.object({
   idempotencyKey: z.string().uuid(),
 });
 
-export async function setAntifraudScoreWeight(input: unknown): Promise<void> {
+export async function setAntifraudScoreWeight(input: unknown): Promise<ServerActionResult> {
   const session = await requireAntifraudManager();
   const parsed = updateSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+
+  return antifraudActionResult("antifraud.settings.scoreWeight", "Could not save the score weight.", async () => {
 
   await updateAntifraudScoreWeight({
     ...parsed.data,
@@ -34,6 +38,7 @@ export async function setAntifraudScoreWeight(input: unknown): Promise<void> {
     },
   });
   revalidatePath("/antifraud/settings");
+  });
 }
 
 const analysisRuleSchema = z.object({
@@ -43,10 +48,11 @@ const analysisRuleSchema = z.object({
   threshold: z.number().min(0).max(1_000_000),
 });
 
-export async function setAntifraudAnalysisRule(input: unknown): Promise<void> {
+export async function setAntifraudAnalysisRule(input: unknown): Promise<ServerActionResult> {
   const session = await requireAntifraudManager();
   const parsed = analysisRuleSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.settings.analysisRule", "The rule could not be saved.", async () => {
   await updateAnalysisRule({
     ...parsed.data,
     actorId: session.userId,
@@ -58,4 +64,5 @@ export async function setAntifraudAnalysisRule(input: unknown): Promise<void> {
     metadata: parsed.data,
   });
   revalidatePath("/antifraud/settings");
+  });
 }

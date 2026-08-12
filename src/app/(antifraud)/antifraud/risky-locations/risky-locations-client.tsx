@@ -105,12 +105,17 @@ export function RiskyLocationsClient({
     setPendingCountry(null);
     startTransition(async () => {
       try {
-        const saved = await addRiskyLocation({
+        const result = await addRiskyLocation({
           countryCode,
           monitorDurationMinutes: MONITOR_DURATION_MINUTES,
           riskWeight: DEFAULT_RISK_WEIGHT,
           idempotencyKey: crypto.randomUUID(),
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        const saved = result.data;
         setLocations((current) => [
           ...current.filter(
             (location) => location.countryCode !== saved.countryCode,
@@ -146,13 +151,18 @@ export function RiskyLocationsClient({
     setPendingSave(null);
     startTransition(async () => {
       try {
-        const saved = await setRiskyLocation({
+        const result = await setRiskyLocation({
           countryCode: location.countryCode,
           enabled,
           monitorDurationMinutes: MONITOR_DURATION_MINUTES,
           riskWeight: selectedWeight,
           idempotencyKey: crypto.randomUUID(),
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        const saved = result.data;
         setLocations((current) =>
           current.map((entry) =>
             entry.countryCode === saved.countryCode ? saved : entry,

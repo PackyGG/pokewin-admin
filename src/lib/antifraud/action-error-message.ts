@@ -69,3 +69,23 @@ export function actionErrorMessage(
   }
   return fallback;
 }
+
+/** Run a client-triggered Fraud mutation without throwing across Next's boundary. */
+export async function antifraudActionResult<T>(
+  area: string,
+  fallback: string,
+  run: () => Promise<T>,
+): Promise<ServerActionResult<T>> {
+  try {
+    return ok(await run());
+  } catch (error) {
+    logError(area, "antifraud action failed", error);
+    return fail(actionErrorMessage(error, fallback));
+  }
+}
+import { logError } from "@/lib/errors/logger";
+import {
+  fail,
+  ok,
+  type ServerActionResult,
+} from "@/lib/errors/server-action-result";

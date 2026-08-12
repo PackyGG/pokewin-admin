@@ -53,6 +53,7 @@ import {
 } from "@/lib/queries/user-fingerprint-alts";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { promoteConfirmedCatchallDomainsForReview } from "@/lib/antifraud/catchall-domain-promotion";
+import { antifraudActionResult } from "@/lib/antifraud/action-error-message";
 
 /**
  * Account-review mutations.
@@ -140,10 +141,11 @@ async function findLiveReview(
 }
 
 /** Manually open a case on an account. */
-export async function openReview(input: unknown): Promise<OpenReviewResult> {
+export async function openReview(input: unknown): Promise<ServerActionResult<OpenReviewResult>> {
   const session = await requireAntifraudAccess();
   const parsed = openReviewSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.reviews.open", "The review could not be opened.", async () => {
   const { targetUserId, targetUsername, reason } = parsed.data;
 
   type OpenOutcome =
@@ -210,6 +212,7 @@ export async function openReview(input: unknown): Promise<OpenReviewResult> {
   revalidatePath("/antifraud/reviews");
   revalidatePath("/antifraud");
   return { ok: true, id: outcome.id };
+  });
 }
 
 /** Verdict statuses: they stamp a resolver and REQUIRE a written conclusion. */
@@ -808,13 +811,14 @@ export type QuickReviewAccountActionResult = {
 const linkedAccountsSchema = z.object({ reviewId: uuid });
 
 /** Lazy identity-cluster lookup for the review dialog. */
-export async function fetchReviewLinkedAccounts(input: unknown): Promise<{
+export async function fetchReviewLinkedAccounts(input: unknown): Promise<ServerActionResult<{
   accounts: FingerprintAltAccount[];
   canMassBan: boolean;
-}> {
+}>> {
   const session = await requireAntifraudAccess();
   const parsed = linkedAccountsSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.reviews.linkedAccounts", "Linked accounts could not be loaded.", async () => {
   const [review] = await adminDrizzle.select({
     targetUserId: antifraud_reviews.target_user_id,
   }).from(antifraud_reviews).where(
@@ -827,6 +831,7 @@ export async function fetchReviewLinkedAccounts(input: unknown): Promise<{
     accounts: await getFingerprintAltAccounts(review.targetUserId),
     canMassBan: Boolean(session.isOwner) || roles.has("admin"),
   };
+  });
 }
 
 const massBanLinkedAccountsSchema = z.object({
@@ -850,11 +855,12 @@ export type MassBanLinkedAccountsResult = {
  */
 export async function massBanReviewLinkedAccounts(
   input: unknown,
-): Promise<MassBanLinkedAccountsResult> {
+): Promise<ServerActionResult<MassBanLinkedAccountsResult>> {
   const session = await requireAntifraudManager();
-  await requireCapability(session, "__can_ban_users", "mass ban linked users");
   const parsed = massBanLinkedAccountsSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.reviews.massBanLinked", "The linked accounts could not be banned.", async () => {
+  await requireCapability(session, "__can_ban_users", "mass ban linked users");
   await require2FA(session.userId, parsed.data.credential);
 
   const replay = await adminDrizzle.execute<{
@@ -939,6 +945,7 @@ export async function massBanReviewLinkedAccounts(
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${parsed.data.reviewId}`);
   return { bannedCount: result.length, bannedUserIds: result };
+  });
 }
 
 const QUICK_ACTION_SAFE_ERROR = [
@@ -1380,10 +1387,11 @@ const startReviewSchema = z.object({
  * the same key also retries the linked monitor transition after an upstream
  * timeout, without writing a second assignment or status note.
  */
-export async function startReview(input: unknown): Promise<void> {
+export async function startReview(input: unknown): Promise<ServerActionResult> {
   const session = await requireAntifraudAccess();
   const parsed = startReviewSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.reviews.start", "The review could not be opened.", async () => {
   const { reviewId, expectedStatus, idempotencyKey } = parsed.data;
 
   const outcome = await adminDrizzle.transaction(async (tx) => {
@@ -1472,6 +1480,7 @@ export async function startReview(input: unknown): Promise<void> {
   }
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${reviewId}`);
+  });
 }
 
 /** Put a case in someone's queue (or take it yourself, or clear it). */
@@ -1646,10 +1655,11 @@ const postponeSchema = z.object({
 });
 
 /** Hide a live case from active queues and schedule its reminder for 2 hours. */
-export async function postponeReview(input: unknown): Promise<void> {
+export async function postponeReview(input: unknown): Promise<ServerActionResult> {
   const session = await requireAntifraudAccess();
   const parsed = postponeSchema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) return fail(parsed.error.issues[0].message);
+  return antifraudActionResult("antifraud.reviews.postpone", "The review could not be postponed.", async () => {
   const { reviewId, expectedStatus, idempotencyKey } = parsed.data;
 
   await adminDrizzle.transaction(async (tx) => {
@@ -1750,6 +1760,7 @@ export async function postponeReview(input: unknown): Promise<void> {
 
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${reviewId}`);
+  });
 }
 
 /** Append an analyst note to a case. */

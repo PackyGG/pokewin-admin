@@ -55,8 +55,13 @@ export function LinkedAccountsDialog({ reviewId }: { reviewId: string }) {
     startLoading(async () => {
       try {
         const result = await fetchReviewLinkedAccounts({ reviewId });
-        setAccounts(result.accounts);
-        setCanMassBan(result.canMassBan);
+        if (!result.success) {
+          setAccounts([]);
+          toast.error(result.error);
+          return;
+        }
+        setAccounts(result.data.accounts);
+        setCanMassBan(result.data.canMassBan);
         setSelected(new Set());
       } catch (error) {
         setAccounts([]);
@@ -91,7 +96,12 @@ export function LinkedAccountsDialog({ reviewId }: { reviewId: string }) {
           credential,
           idempotencyKey: idempotencyKey.current,
         });
-        const banned = new Set(result.bannedUserIds);
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        const outcome = result.data;
+        const banned = new Set(outcome.bannedUserIds);
         setAccounts((current) =>
           (current ?? []).map((account) =>
             banned.has(account.id)
@@ -108,7 +118,7 @@ export function LinkedAccountsDialog({ reviewId }: { reviewId: string }) {
         setCredential("");
         setConfirm("");
         idempotencyKey.current = null;
-        toast.success(`Banned ${result.bannedCount} linked account${result.bannedCount === 1 ? "" : "s"}.`);
+        toast.success(`Banned ${outcome.bannedCount} linked account${outcome.bannedCount === 1 ? "" : "s"}.`);
       } catch (error) {
         toast.error(clientActionError(error, "The linked accounts could not be banned"));
       }
