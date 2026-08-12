@@ -9,6 +9,7 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import {
   createRefundBatch,
@@ -187,7 +188,7 @@ export function RefundsPanel({
       }
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Refund processing stopped.",
+        clientActionError(error, "Refund processing stopped."),
       );
     } finally {
       setWorking(false);
@@ -217,9 +218,7 @@ export function RefundsPanel({
       await runBatch(created.batchId, created);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Could not create refund batch.",
+        clientActionError(error, "Could not create refund batch."),
       );
       setWorking(false);
     }
@@ -261,9 +260,7 @@ export function RefundsPanel({
       }
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Could not recover the refunded accounts.",
+        clientActionError(error, "Could not recover the refunded accounts."),
       );
     } finally {
       setWorking(false);

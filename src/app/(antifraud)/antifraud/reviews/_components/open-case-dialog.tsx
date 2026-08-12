@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -103,7 +104,7 @@ export function OpenCaseDialog({
         ),
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not open the case");
+      toast.error(clientActionError(err, "Could not open the case"));
     } finally {
       setLoading(false);
     }

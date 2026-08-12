@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { BadgeCheck, Ban, Clock3, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { StepUpField } from "@/components/step-up-field";
 import {
@@ -168,7 +169,7 @@ function PostponeButton({
         if (!onActionCompleted) router.refresh();
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "The action failed",
+          clientActionError(error, "The action failed"),
         );
       }
     });
@@ -246,7 +247,7 @@ function RequireKycButton({
         if (!onActionCompleted) router.refresh();
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "The action failed",
+          clientActionError(error, "The action failed"),
         );
       }
     });
@@ -397,7 +398,7 @@ function QuickActionButton({
         if (!onActionCompleted) router.refresh();
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "The action failed",
+          clientActionError(error, "The action failed"),
         );
       }
     });

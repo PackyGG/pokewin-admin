@@ -4,6 +4,7 @@ import { useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { Button } from "@/components/ui/button";
 import { startReview } from "../actions";
@@ -48,7 +49,7 @@ export function StartReviewButton({
             router.refresh();
           } catch (error) {
             toast.error(
-              error instanceof Error ? error.message : "Review could not be opened",
+              clientActionError(error, "Review could not be opened"),
             );
           }
         });

@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Check, Pencil, X } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -72,7 +73,7 @@ export function ScoreWeightEditor({
           setEditing(false);
           router.refresh();
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : "Could not save");
+          toast.error(clientActionError(error, "Could not save"));
         } finally {
           setSaving(false);
         }

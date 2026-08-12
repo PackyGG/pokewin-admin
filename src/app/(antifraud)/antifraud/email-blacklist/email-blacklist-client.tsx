@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Ban, Loader2, MailWarning, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { EmptyState } from "@/components/empty-state";
 import { SectionHeading } from "@/components/modern-panels";
@@ -84,7 +85,7 @@ export function EmailBlacklistClient({
         router.refresh();
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "The domain could not be added.",
+          clientActionError(error, "The domain could not be added."),
         );
       }
     });
@@ -123,9 +124,7 @@ export function EmailBlacklistClient({
         router.refresh();
       } catch (error) {
         toast.error(
-          error instanceof Error
-            ? error.message
-            : "The blacklist rule could not be changed.",
+          clientActionError(error, "The blacklist rule could not be changed."),
         );
       }
     });

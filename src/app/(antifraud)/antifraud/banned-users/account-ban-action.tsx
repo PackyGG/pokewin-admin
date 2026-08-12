@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { clientActionError } from "@/lib/errors/client-action-error";
 import { mutateBannedUser } from "./actions";
 
 export function AccountBanAction({
@@ -54,7 +55,7 @@ export function AccountBanAction({
         toast.success(isBan ? "Account banned." : "Account unbanned.");
         router.refresh();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "The action failed.");
+        toast.error(clientActionError(error, "The action failed."));
       }
     });
   }

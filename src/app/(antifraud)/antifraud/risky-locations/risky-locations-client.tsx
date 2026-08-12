@@ -10,6 +10,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { EmptyState } from "@/components/empty-state";
 import { SectionHeading } from "@/components/modern-panels";
@@ -126,9 +127,7 @@ export function RiskyLocationsClient({
         );
       } catch (error) {
         toast.error(
-          error instanceof Error
-            ? error.message
-            : "The risky location could not be added.",
+          clientActionError(error, "The risky location could not be added."),
         );
       }
     });
@@ -170,9 +169,7 @@ export function RiskyLocationsClient({
         );
       } catch (error) {
         toast.error(
-          error instanceof Error
-            ? error.message
-            : "The risky location could not be updated.",
+          clientActionError(error, "The risky location could not be updated."),
         );
       }
     });

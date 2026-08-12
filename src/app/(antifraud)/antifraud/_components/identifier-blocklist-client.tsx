@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Ban, Fingerprint, Loader2, Network, ShieldAlert, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { EmptyState } from "@/components/empty-state";
 import { SectionHeading } from "@/components/modern-panels";
@@ -66,7 +67,7 @@ export function IdentifierBlocklistClient({ kind, initialRules }: {
         setValue("");
         toast.success(`${saved.value} is now blocked.`);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "The rule could not be added.");
+        toast.error(clientActionError(error, "The rule could not be added."));
       }
     });
   }
@@ -85,7 +86,7 @@ export function IdentifierBlocklistClient({ kind, initialRules }: {
         saveLocal(saved);
         toast.success(saved.enabled ? "Rule reactivated." : "Rule disabled.");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "The rule could not be changed.");
+        toast.error(clientActionError(error, "The rule could not be changed."));
       }
     });
   }
@@ -109,7 +110,7 @@ export function IdentifierBlocklistClient({ kind, initialRules }: {
         saveLocal(saved);
         toast.success(effect === "known_vpn" ? "IP moved to Known VPN." : "Hard blocking restored.");
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "The policy could not be changed.");
+        toast.error(clientActionError(error, "The policy could not be changed."));
       }
     });
   }

@@ -11,6 +11,7 @@ import {
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { HostLink } from "@/components/host-link";
 import { Button } from "@/components/ui/button";
@@ -99,9 +100,7 @@ export function ReviewCaseDialog({
       .then(() => toast.success("Review postponed for 2 hours"))
       .catch((error) =>
         toast.error(
-          error instanceof Error
-            ? error.message
-            : "The review could not be postponed",
+          clientActionError(error, "The review could not be postponed"),
         ),
       )
       .finally(leaveQueueCase);

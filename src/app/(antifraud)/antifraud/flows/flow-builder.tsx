@@ -18,6 +18,7 @@ import {
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { SectionHeading } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
@@ -195,7 +196,7 @@ export function FlowBuilder({
         router.refresh();
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "The flow could not be saved",
+          clientActionError(error, "The flow could not be saved"),
         );
       }
     });

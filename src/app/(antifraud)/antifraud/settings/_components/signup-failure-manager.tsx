@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { AlertTriangle, Loader2, RotateCcw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { StepUpField } from "@/components/step-up-field";
 import {
@@ -154,7 +155,7 @@ function FailureAction({
           resolving ? "Signup failure resolved." : "Signup queued for retry.",
         );
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "The action failed.");
+        toast.error(clientActionError(error, "The action failed."));
       }
     });
   }

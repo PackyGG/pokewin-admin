@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { Fingerprint, Loader2, Network, UsersRound } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { HostLink } from "@/components/host-link";
 import { StepUpField } from "@/components/step-up-field";
@@ -59,7 +60,7 @@ export function LinkedAccountsDialog({ reviewId }: { reviewId: string }) {
         setSelected(new Set());
       } catch (error) {
         setAccounts([]);
-        toast.error(error instanceof Error ? error.message : "Linked accounts could not be loaded");
+        toast.error(clientActionError(error, "Linked accounts could not be loaded"));
       }
     });
   }
@@ -109,7 +110,7 @@ export function LinkedAccountsDialog({ reviewId }: { reviewId: string }) {
         idempotencyKey.current = null;
         toast.success(`Banned ${result.bannedCount} linked account${result.bannedCount === 1 ? "" : "s"}.`);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "The linked accounts could not be banned");
+        toast.error(clientActionError(error, "The linked accounts could not be banned"));
       }
     });
   }

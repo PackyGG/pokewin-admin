@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Save } from "lucide-react";
 import { toast } from "sonner";
+import { clientActionError } from "@/lib/errors/client-action-error";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,7 +57,7 @@ export function AnalysisRuleEditor({
             router.refresh();
           } catch (error) {
             toast.error(
-              error instanceof Error ? error.message : "Rule could not be saved",
+              clientActionError(error, "Rule could not be saved"),
             );
           }
         });
