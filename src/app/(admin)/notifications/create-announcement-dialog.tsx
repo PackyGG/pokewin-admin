@@ -63,14 +63,18 @@ import {
   validateAnnouncementPayload,
   type AnnouncementPayloadDraft,
 } from "@/lib/announcement-payload";
+import { previewNotificationText } from "@/lib/user-notification-templates";
 import { createAnnouncementAction } from "./actions";
 import {
   searchAnnouncementPromoCodes,
   type AnnouncementPackOption,
   type AnnouncementPromoOption,
 } from "./composer-actions";
-import { NotificationPackPicker } from "./notification-pack-picker";
 import { NotificationPreview } from "./notification-preview";
+import {
+  MAX_NOTIFICATION_PACKS,
+  PackNotificationComposer,
+} from "./pack-notification-composer";
 import type {
   AnnouncementAudienceRole,
   AnnouncementCreateCategory,
@@ -116,8 +120,6 @@ const TEMPLATE_TYPES: Record<Template, string> = {
 };
 
 const CUSTOM_PAGE = "__custom__";
-const MAX_ANNOUNCEMENT_PACKS = 3;
-
 type AutoKey = "title" | "body" | "url" | "imageUrl" | "ctaLabel";
 
 export function CreateAnnouncementDialog({
@@ -237,83 +239,24 @@ export function CreateAnnouncementDialog({
   }
 
   function applyPacks(nextPacks: AnnouncementPackOption[]) {
-    const next = nextPacks.slice(0, MAX_ANNOUNCEMENT_PACKS);
-    setPacks(next);
-    if (next.length === 0) {
-      setTitle("");
-      setBody("");
-      setPayload((cur) => ({
-        ...cur,
-        url: "",
-        imageUrl: "",
-        ctaLabel: "",
-      }));
-      autoFilled.current = {
-        ...autoFilled.current,
-        title: "",
-        body: "",
-        url: "",
-        imageUrl: "",
-        ctaLabel: "",
-      };
-      return;
-    }
-
-    if (next.length === 1) {
-      const pack = next[0];
-      const nextImage =
-        pack.imageUrl && isImageKitUrl(pack.imageUrl) ? pack.imageUrl : "";
-      setTitle(pack.name);
-      setBody(`${formatCurrency(pack.priceUsd)} per open`);
-      setPayload((cur) => ({
-        ...cur,
-        url: packUrl(pack.slug),
-        ctaLabel: "Open now",
-        imageUrl: nextImage,
-      }));
-      autoFilled.current = {
-        ...autoFilled.current,
-        title: pack.name,
-        body: `${formatCurrency(pack.priceUsd)} per open`,
-        url: packUrl(pack.slug),
-        ctaLabel: "Open now",
-        imageUrl: nextImage,
-      };
-      return;
-    }
-
-    const lowestPrice = Math.min(...next.map((pack) => pack.priceUsd));
-    setTitle("Fresh packs just dropped");
-    setBody(`Starting at ${formatCurrency(lowestPrice)} per open`);
-    setPayload((cur) => ({
-      ...cur,
-      url: mainSiteUrl("/games/packs?sort=newest"),
-      imageUrl: "",
-      ctaLabel: "View new packs",
-    }));
-    autoFilled.current = {
-      ...autoFilled.current,
-      title: "Fresh packs just dropped",
-      body: `Starting at ${formatCurrency(lowestPrice)} per open`,
-      url: mainSiteUrl("/games/packs?sort=newest"),
-      imageUrl: "",
-      ctaLabel: "View new packs",
-    };
+    setPacks(nextPacks.slice(0, MAX_NOTIFICATION_PACKS));
   }
 
   function payloadForTemplate(): AnnouncementPayloadDraft {
+    if (template === "pack") {
+      return {
+        ...EMPTY_PAYLOAD_DRAFT,
+        url: packs.length > 1 ? mainSiteUrl("/games/packs?sort=newest") : "",
+        packs: packs.map((pack) => ({
+          name: pack.name,
+          priceUsd: pack.priceUsd,
+          url: packUrl(pack.slug),
+          imageUrl: pack.imageUrl,
+        })),
+      };
+    }
     return {
       ...payload,
-      ...(template === "pack"
-        ? {
-            packs: packs.map((pack) => ({
-              name: pack.name,
-              priceUsd: pack.priceUsd,
-              url: packUrl(pack.slug),
-              imageUrl: pack.imageUrl,
-            })),
-          }
-        : {}),
       ...(template === "promo"
         ? {
             promoCode: manualCode,
@@ -396,10 +339,6 @@ export function CreateAnnouncementDialog({
   }
 
   function handleSubmit() {
-    if (!title.trim()) {
-      toast.error("Title is required");
-      return;
-    }
     if (!everyoneAudience && audienceRoles.size === 0) {
       toast.error("Pick at least one audience role, or choose Everyone");
       return;
@@ -418,6 +357,17 @@ export function CreateAnnouncementDialog({
       toast.error(check.error);
       return;
     }
+    const packPreview = previewNotificationText(
+      TEMPLATE_TYPES.pack,
+      check.payload,
+    );
+    const submissionTitle =
+      template === "pack" ? packPreview.title : title.trim();
+    const submissionBody = template === "pack" ? packPreview.body : body.trim();
+    if (!submissionTitle) {
+      toast.error("Title is required");
+      return;
+    }
     const endsAtIso = endsAt ? toValidIso(endsAt) : null;
     if (endsAt && !endsAtIso) {
       toast.error("Enter a valid end date");
@@ -426,8 +376,8 @@ export function CreateAnnouncementDialog({
     startTransition(async () => {
       try {
         const result = await createAnnouncementAction({
-          title: title.trim(),
-          body: body.trim() || null,
+          title: submissionTitle,
+          body: submissionBody || null,
           category,
           type,
           audienceRoles: everyoneAudience ? null : [...audienceRoles],
@@ -461,16 +411,11 @@ export function CreateAnnouncementDialog({
   }
 
   const imageInvalid =
-    payload.imageUrl.trim() !== "" && !isImageKitUrl(payload.imageUrl.trim());
-  // A pack announcement fills link, image and button from the pack itself, so
-  // the whole section is noise there — it collapses to a one-line escape hatch.
-  // The exceptions force it open: a bad image blocks Publish, and a pack with
-  // no image is the one case where there IS something to do by hand.
+    template !== "pack" &&
+    payload.imageUrl.trim() !== "" &&
+    !isImageKitUrl(payload.imageUrl.trim());
   const packAutoFilled = template === "pack";
-  const linkExpanded =
-    linkOpen ||
-    imageInvalid ||
-    (packAutoFilled && packs.some((pack) => !pack.imageUrl));
+  const linkExpanded = linkOpen || imageInvalid;
   const filledParts = [
     payload.imageUrl.trim() ? "Image" : null,
     payload.url.trim() ? "Link" : null,
@@ -516,75 +461,12 @@ export function CreateAnnouncementDialog({
           </Tabs>
 
           {template === "pack" && (
-            <div className="space-y-1.5 rounded-md border p-3">
-              <Label className="text-xs text-muted-foreground">Pack</Label>
-              <NotificationPackPicker
-                selectedValues={packs}
-                onSelectionChange={applyPacks}
-                maxSelected={MAX_ANNOUNCEMENT_PACKS}
-                scope="announcement"
-                placeholder="Select up to three packs…"
-                disabled={isPending}
-              />
-              {packs.length > 0 ? (
-                packs.every((pack) => pack.imageUrl) ? (
-                  <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
-                    Pack artwork, prices, links, and button are added
-                    automatically in newest-first order.
-                  </p>
-                ) : (
-                  <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                    One or more packs have no artwork. They will still render
-                    with their names, prices, and links.
-                  </p>
-                )
-              ) : (
-                <p className="text-[11px] text-muted-foreground">
-                  Pick up to three packs. The newest selected pack is shown
-                  first.
-                </p>
-              )}
-              {packs.length > 0 && (
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {packs.map((pack) => (
-                    <div
-                      key={pack.id}
-                      className="relative rounded-md border bg-background p-2"
-                    >
-                      {pack.imageUrl && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={pack.imageUrl}
-                          alt=""
-                          className="mb-2 h-16 w-full object-contain"
-                        />
-                      )}
-                      <p className="truncate pr-5 text-xs font-medium">
-                        {pack.name}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        {formatCurrency(pack.priceUsd)} per open
-                      </p>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="absolute right-1 top-1"
-                        aria-label={`Remove ${pack.name}`}
-                        disabled={isPending}
-                        onClick={() =>
-                          applyPacks(
-                            packs.filter((item) => item.id !== pack.id),
-                          )
-                        }
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <PackNotificationComposer
+              packs={packs}
+              scope="announcement"
+              disabled={isPending}
+              onChange={applyPacks}
+            />
           )}
 
           {template === "page" && (
@@ -808,6 +690,7 @@ export function CreateAnnouncementDialog({
                     ? composedPayloadCheck.payload
                     : undefined
                 }
+                showHeading={false}
               />
               {!composedPayloadCheck.ok && (
                 <p className="text-xs text-rose-600 dark:text-rose-400">
@@ -940,7 +823,14 @@ export function CreateAnnouncementDialog({
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={isPending || uploading || !title.trim() || imageInvalid}
+            disabled={
+              isPending ||
+              uploading ||
+              imageInvalid ||
+              (template === "pack"
+                ? packs.length === 0 || !composedPayloadCheck.ok
+                : !title.trim())
+            }
             className="w-full sm:w-auto"
           >
             {isPending ? "Publishing..." : "Publish"}

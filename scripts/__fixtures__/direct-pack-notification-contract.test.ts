@@ -111,6 +111,9 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
   const picker = source(
     "src/app/(admin)/notifications/notification-pack-picker.tsx",
   );
+  const packComposer = source(
+    "src/app/(admin)/notifications/pack-notification-composer.tsx",
+  );
 
   assert.match(
     actions,
@@ -137,11 +140,12 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
     form,
     /pack_release:\$\{packs[\s\S]*\.map\(\(pack\) => pack\.id\)/,
   );
-  assert.match(form, /MAX_NOTIFICATION_PACKS = 3/);
   assert.match(form, /\/games\/packs\?sort=newest/);
   assert.match(form, /scope=\"direct\"/);
-  assert.match(form, /selectedValues=\{packs\}/);
-  assert.match(form, /onSelectionChange=\{(?:applyPacks|onChange)\}/);
+  assert.match(form, /<PackNotificationComposer/);
+  assert.match(packComposer, /MAX_NOTIFICATION_PACKS = 3/);
+  assert.match(packComposer, /selectedValues=\{packs\}/);
+  assert.match(packComposer, /onSelectionChange=\{onChange\}/);
   assert.match(picker, /selected\.length >= maxSelected/);
   assert.match(picker, /Select up to \{maxSelected\} packs/);
   assert.match(picker, /Search packs by name or slug/);
@@ -151,16 +155,17 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
   const announcement = source(
     "src/app/(admin)/notifications/create-announcement-dialog.tsx",
   );
-  assert.match(announcement, /MAX_ANNOUNCEMENT_PACKS = 3/);
-  assert.match(announcement, /selectedValues=\{packs\}/);
-  assert.match(announcement, /onSelectionChange=\{applyPacks\}/);
+  assert.match(announcement, /<PackNotificationComposer/);
+  assert.match(announcement, /scope=\"announcement\"/);
   assert.match(announcement, /<NotificationPreview/);
   assert.match(announcement, /type=\{TEMPLATE_TYPES\.pack\}/);
   assert.match(announcement, /composedPayloadCheck\.payload/);
   assert.match(announcement, /composedPayloadCheck\.error/);
+  assert.match(announcement, /showHeading=\{false\}/);
   assert.match(announcement, /!packAutoFilled/);
   assert.match(announcement, /next === "pack"[\s\S]*TEMPLATE_TYPES\.pack/);
   assert.match(announcement, /template !== "pack"/);
+  assert.doesNotMatch(announcement, /<Label[^>]*>Pack<\/Label>/);
   assert.match(
     announcement,
     /\{packAutoFilled \? \([\s\S]{0,200}<NotificationPreview[\s\S]*?\) : \(\s*<AnnouncementPreview/,

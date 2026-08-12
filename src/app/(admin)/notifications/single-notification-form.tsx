@@ -2,13 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
-import {
-  CircleAlert,
-  Info,
-  Send,
-  UserX,
-  X,
-} from "lucide-react";
+import { CircleAlert, Info, Send, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,15 +22,13 @@ import {
 import { sendDirectNotificationAction } from "./direct-actions";
 import { NotificationUserPicker } from "./notification-user-picker";
 import { NotificationPreview } from "./notification-preview";
-import { NotificationPackPicker } from "./notification-pack-picker";
 import type { AnnouncementPackOption } from "./composer-actions";
 import type { DbEnv } from "@/lib/db-env";
 import { mainSiteUrl, packUrl } from "@/lib/utils/main-site";
-import { formatCurrency } from "@/lib/utils/format";
+import { PackNotificationComposer } from "./pack-notification-composer";
 
 export type SingleNotificationMode = "message" | "pack" | "challenge";
 type ChallengeGame = "keno" | "upgrader" | "pack";
-const MAX_NOTIFICATION_PACKS = 3;
 
 type Sent =
   | { kind: "ok"; message: string }
@@ -221,8 +213,9 @@ export function SingleNotificationForm({
             />
           )}
           {mode === "pack" && (
-            <PackFields
+            <PackNotificationComposer
               packs={packs}
+              scope="direct"
               disabled={isPending}
               onChange={setPacks}
             />
@@ -254,7 +247,11 @@ export function SingleNotificationForm({
               {payloadCheck.error}
             </p>
           )}
-          <Button onClick={handleSend} disabled={blocked} className="w-full gap-2">
+          <Button
+            onClick={handleSend}
+            disabled={blocked}
+            className="w-full gap-2"
+          >
             <Send className="size-4" />
             {isPending ? "Sending…" : `Send to ${userLabel ?? "user"}`}
           </Button>
@@ -317,64 +314,6 @@ function MessageFields({
   );
 }
 
-function PackFields({
-  packs,
-  disabled,
-  onChange,
-}: {
-  packs: AnnouncementPackOption[];
-  disabled: boolean;
-  onChange: (packs: AnnouncementPackOption[]) => void;
-}) {
-  return (
-    <div className="space-y-3">
-      <NotificationPackPicker
-        selectedValues={packs}
-        onSelectionChange={onChange}
-        maxSelected={MAX_NOTIFICATION_PACKS}
-        scope="direct"
-        placeholder="Select up to three packs…"
-        disabled={disabled}
-      />
-      {packs.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          Pack names, prices, images, and links are added automatically.
-        </p>
-      ) : (
-        <div className="grid gap-2 sm:grid-cols-3">
-          {packs.map((pack) => (
-            <div key={pack.id} className="relative rounded-md border bg-background p-2">
-              {pack.imageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={pack.imageUrl}
-                  alt=""
-                  className="mb-2 h-16 w-full object-contain"
-                />
-              ) : null}
-              <p className="truncate pr-5 text-xs font-medium">{pack.name}</p>
-              <p className="text-[11px] text-muted-foreground">
-                {formatCurrency(pack.priceUsd)} per open
-              </p>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className="absolute right-1 top-1"
-                aria-label={`Remove ${pack.name}`}
-                disabled={disabled}
-                onClick={() => onChange(packs.filter((item) => item.id !== pack.id))}
-              >
-                <X className="size-3.5" />
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ChallengeFields({
   game,
   name,
@@ -399,7 +338,10 @@ function ChallengeFields({
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label>Game</Label>
-          <Select value={game} onValueChange={(value) => onGameChange(value as ChallengeGame)}>
+          <Select
+            value={game}
+            onValueChange={(value) => onGameChange(value as ChallengeGame)}
+          >
             <SelectTrigger className="w-full" disabled={disabled}>
               <SelectValue />
             </SelectTrigger>
@@ -490,7 +432,9 @@ function ResultCallout({ sent }: { sent: Sent }) {
     return (
       <div className="flex gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3">
         <Info className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-        <p className="text-xs text-emerald-700 dark:text-emerald-300">{sent.message}</p>
+        <p className="text-xs text-emerald-700 dark:text-emerald-300">
+          {sent.message}
+        </p>
       </div>
     );
   }
@@ -498,7 +442,9 @@ function ResultCallout({ sent }: { sent: Sent }) {
     return (
       <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
         <UserX className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-        <p className="text-xs text-amber-700 dark:text-amber-300">{sent.message}</p>
+        <p className="text-xs text-amber-700 dark:text-amber-300">
+          {sent.message}
+        </p>
       </div>
     );
   }
