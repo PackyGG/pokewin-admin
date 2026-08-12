@@ -71,6 +71,7 @@ import {
  */
 
 type PrizeDraft = { amountUsd: string; label: string };
+type LeaderboardDurationDays = 7 | 14;
 
 /** ISO instant → the `datetime-local` input's value, in the viewer's zone. */
 function toLocalInputValue(iso?: string): string {
@@ -226,6 +227,7 @@ export function RoundFormDialog({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [name, setName] = useState(round?.name ?? "");
+  const [durationDays, setDurationDays] = useState<LeaderboardDurationDays>(7);
   const [startsAt, setStartsAt] = useState(toLocalInputValue(round?.startsAt));
   const [endsAt, setEndsAt] = useState(
     toLocalInputValue(
@@ -244,8 +246,14 @@ export function RoundFormDialog({
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    const startsIso = fromLocalInputValue(startsAt);
-    const endsIso = fromLocalInputValue(endsAt);
+    const immediateLeaderboard = isLeaderboard && mode === "create";
+    const now = new Date();
+    const startsIso = immediateLeaderboard
+      ? now.toISOString()
+      : fromLocalInputValue(startsAt);
+    const endsIso = immediateLeaderboard
+      ? new Date(now.getTime() + durationDays * 86_400_000).toISOString()
+      : fromLocalInputValue(endsAt);
     if (!startsIso || !endsIso) {
       toast.error("Pick a valid start and end time.");
       return;
@@ -267,6 +275,7 @@ export function RoundFormDialog({
       name: name.trim(),
       startsAt: startsIso,
       endsAt: endsIso,
+      durationDays: immediateLeaderboard ? durationDays : undefined,
       scoring,
       prizes: parsedPrizes,
     };
@@ -330,7 +339,11 @@ export function RoundFormDialog({
             icon={CalendarClock}
             title="Round"
             action={
-              windowSpan && (
+              isLeaderboard && mode === "create" ? (
+                <span className="rounded-full border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  {durationDays === 7 ? "1 week" : "2 weeks"}
+                </span>
+              ) : windowSpan && (
                 <span
                   className={cn(
                     "rounded-full border px-2 py-0.5 text-[10px] font-medium tabular-nums",
@@ -355,37 +368,60 @@ export function RoundFormDialog({
               className="font-medium"
             />
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="round-start" className="text-xs">
-                  Starts
-                </Label>
-                <Input
-                  id="round-start"
-                  type="datetime-local"
-                  value={startsAt}
-                  onChange={(e) => setStartsAt(e.target.value)}
-                  required
-                  className="h-9"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="round-end" className="text-xs">
-                  Ends
-                </Label>
-                <Input
-                  id="round-end"
-                  type="datetime-local"
-                  value={endsAt}
-                  onChange={(e) => setEndsAt(e.target.value)}
-                  required
-                  className="h-9"
-                />
-              </div>
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              Your local timezone. Only Community XP earned inside the window counts.
-            </p>
+            {isLeaderboard && mode === "create" ? (
+              <>
+                <div className="grid grid-cols-2 gap-2" role="group" aria-label="Leaderboard duration">
+                  {([7, 14] as const).map((days) => (
+                    <Button
+                      key={days}
+                      type="button"
+                      variant={durationDays === days ? "default" : "outline"}
+                      onClick={() => setDurationDays(days)}
+                      className="h-11"
+                    >
+                      {days === 7 ? "1 week" : "2 weeks"}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Starts immediately when created. Only Community XP earned during the selected duration counts.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="round-start" className="text-xs">
+                      Starts
+                    </Label>
+                    <Input
+                      id="round-start"
+                      type="datetime-local"
+                      value={startsAt}
+                      onChange={(e) => setStartsAt(e.target.value)}
+                      required
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="round-end" className="text-xs">
+                      Ends
+                    </Label>
+                    <Input
+                      id="round-end"
+                      type="datetime-local"
+                      value={endsAt}
+                      onChange={(e) => setEndsAt(e.target.value)}
+                      required
+                      className="h-9"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Your local timezone. Only Community XP earned inside the window counts.
+                </p>
+              </>
+            )}
           </FormSection>
 
           {/* ─── Prizes ─────────────────────────────────────────── */}

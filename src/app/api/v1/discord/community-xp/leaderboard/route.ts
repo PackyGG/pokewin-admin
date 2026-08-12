@@ -2,13 +2,10 @@ import { z } from "zod";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 import {
   communityXpForLevel,
-  getCommunityXpLeaderboard,
 } from "@/lib/discord-community-xp";
 import {
   getActiveChatRaffleRound,
-  getChatRaffleRounds,
   getRoundAdjustmentTotals,
-  getRoundEntries,
 } from "@/lib/chat-raffle/rounds";
 import { getChatRaffleStandings } from "@/lib/chat-raffle/standings";
 
@@ -19,45 +16,11 @@ export const POST = withApiKey({ scopes: ["discord:community-xp"] }, async (requ
   const body = Body.safeParse(await request.json().catch(() => ({})));
   if (!body.success) return apiError(400, "invalid_request", "Invalid community XP leaderboard request.");
 
-  let competition = await getActiveChatRaffleRound("leaderboard");
-  if (!competition) {
-    const latestFinalized = (await getChatRaffleRounds(50, "leaderboard"))
-      .find((round) => round.status === "drawn");
-    if (latestFinalized) {
-      competition = latestFinalized;
-      const entries = await getRoundEntries(competition.id, body.data.limit);
-      return {
-        competition: competitionPayload(competition),
-        profiles: entries.flatMap((entry) => {
-          if (
-            !entry.discordUserId
-            || entry.communityTotalXp === null
-            || entry.communityLevel === null
-            || entry.discordXp === null
-            || entry.siteChatXp === null
-            || entry.discordMessageCount === null
-            || entry.siteChatMessageCount === null
-          ) return [];
-          return [{
-            discordUserId: entry.discordUserId,
-            totalXp: entry.communityTotalXp,
-            discordXp: entry.discordXp,
-            siteChatXp: entry.siteChatXp,
-            countedMessages: entry.messageCount,
-            level: entry.communityLevel,
-            currentLevelXp: communityXpForLevel(entry.communityLevel),
-            nextLevelXp: communityXpForLevel(entry.communityLevel + 1),
-            rank: entry.position,
-            competitionXp: entry.tickets,
-            discordMessageCount: entry.discordMessageCount,
-            siteChatMessageCount: entry.siteChatMessageCount,
-          }];
-        }),
-      };
-    }
+  const competition = await getActiveChatRaffleRound("leaderboard");
+  if (!competition || competition.phase !== "running") {
     return {
       competition: null,
-      profiles: await getCommunityXpLeaderboard(body.data.limit),
+      profiles: [],
     };
   }
 

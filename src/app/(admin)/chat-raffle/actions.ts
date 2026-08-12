@@ -90,6 +90,7 @@ const roundInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   startsAt: z.string().datetime(),
   endsAt: z.string().datetime(),
+  durationDays: z.union([z.literal(7), z.literal(14)]).optional(),
   scoring: chatRaffleScoringSchema,
   prizes: z.array(prizeInputSchema).min(1).max(CHAT_RAFFLE_MAX_PRIZES),
 });
@@ -128,6 +129,7 @@ export async function createChatRaffleRound(input: {
   name: string;
   startsAt: string;
   endsAt: string;
+  durationDays?: 7 | 14;
   scoring: z.infer<typeof chatRaffleScoringSchema>;
   prizes: { position: number; amountUsd: number; label?: string }[];
 }): Promise<ActionResult<{ roundId: string }>> {
@@ -139,8 +141,15 @@ export async function createChatRaffleRound(input: {
   }
   const data = parsed.data;
 
-  const startsAt = new Date(data.startsAt);
-  const endsAt = new Date(data.endsAt);
+  if (data.competitionType === "leaderboard" && !data.durationDays) {
+    return { success: false, error: "Choose a 1-week or 2-week leaderboard" };
+  }
+  const startsAt = data.competitionType === "leaderboard"
+    ? new Date()
+    : new Date(data.startsAt);
+  const endsAt = data.competitionType === "leaderboard"
+    ? new Date(startsAt.getTime() + data.durationDays! * MS_PER_DAY)
+    : new Date(data.endsAt);
   const windowCheck = validateWindow(startsAt, endsAt);
   if (!windowCheck.ok) return { success: false, error: windowCheck.error };
   const places = validatePrizePositions(data.prizes);
@@ -177,8 +186,9 @@ export async function createChatRaffleRound(input: {
       roundId: round.id,
       name: data.name,
       competitionType: data.competitionType,
-      startsAt: data.startsAt,
-      endsAt: data.endsAt,
+      startsAt: startsAt.toISOString(),
+      endsAt: endsAt.toISOString(),
+      durationDays: data.durationDays,
       prizePoolUsd: data.prizes.reduce((sum, p) => sum + p.amountUsd, 0),
     },
   });

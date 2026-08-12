@@ -19,7 +19,6 @@ import { FadeIn } from "@/components/fade-in";
 import {
   KpiTile,
   PageHero,
-  PageHeroIdentity,
   SectionHeading,
 } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
@@ -83,7 +82,9 @@ export default async function ChatRafflePage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
+        <SectionHeading
+          icon={Trophy}
+          title="Chat Raffle & XP Leaderboard"
           action={
             <>
               <RoundFormDialog
@@ -328,11 +329,6 @@ async function NoActiveRound({
 
   return (
     <FadeIn className="space-y-6">
-      <SectionHeading
-        icon={ListOrdered}
-        title="No XP leaderboard running"
-      />
-
       <div className="rounded-2xl border border-dashed p-6 text-center">
         <ListOrdered className="mx-auto size-6 text-muted-foreground" />
         <p className="mt-2 text-sm font-medium">

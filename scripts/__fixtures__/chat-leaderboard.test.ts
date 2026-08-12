@@ -25,10 +25,12 @@ test("XP leaderboard ranks by XP, then earliest score, with distinct winners", (
 });
 
 test("chat leaderboard is persisted, finalized by rank, and exposed on the page", async () => {
-  const [migration, actions, page, standings] = await Promise.all([
+  const [migration, actions, page, dialogs, apiRoute, standings] = await Promise.all([
     readFile("drizzle/admin/migrations/20260812_chat_competition_leaderboards.sql", "utf8"),
     readFile("src/app/(admin)/chat-raffle/actions.ts", "utf8"),
     readFile("src/app/(admin)/chat-raffle/page.tsx", "utf8"),
+    readFile("src/app/(admin)/chat-raffle/chat-raffle-dialogs.tsx", "utf8"),
+    readFile("src/app/api/v1/discord/community-xp/leaderboard/route.ts", "utf8"),
     readFile("src/lib/chat-raffle/standings.ts", "utf8"),
   ]);
 
@@ -40,7 +42,15 @@ test("chat leaderboard is persisted, finalized by rank, and exposed on the page"
   assert.match(page, /competitionType="leaderboard"/);
   assert.doesNotMatch(page, /CompetitionNavigation/);
   assert.doesNotMatch(page, /No round running/);
+  assert.doesNotMatch(page, /No XP leaderboard running/);
+  assert.match(page, /Chat Raffle & XP Leaderboard/);
   assert.equal(page.match(/mode="create" competitionType="leaderboard"/g)?.length, 1);
   assert.match(page, /FinalizeLeaderboardButton/);
+  assert.match(dialogs, /\(\[7, 14\] as const\)/);
+  assert.match(dialogs, /Starts immediately when created/);
+  assert.match(actions, /data\.durationDays! \* MS_PER_DAY/);
+  assert.match(apiRoute, /competition\.phase !== "running"/);
+  assert.match(apiRoute, /competition: null,[\s\S]*profiles: \[\]/);
+  assert.doesNotMatch(apiRoute, /latestFinalized|getCommunityXpLeaderboard/);
   assert.match(standings, /max\(event\.occurred_at\) AS score_reached_at/);
 });
