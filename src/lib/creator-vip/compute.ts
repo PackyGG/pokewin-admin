@@ -314,7 +314,9 @@ type WagerPositionRow = {
  * 0.5x. We never read or expose the raw amount here. A missing frozen weight
  * is zero, not 1x: wager weighting predates Creator Rewards, so NULL means a
  * producer failed to freeze the weight and must fail closed rather than
- * silently over-crediting a player.
+ * silently over-crediting a player. Battle double-down sessions are excluded
+ * explicitly: they are not eligible Creator Rewards wager, even if a future
+ * producer starts populating a weighted amount for another purpose.
  *
  * KNOWN LIMIT: a player who switches codes and then generates NO activity
  * under the new one leaves no trace, so nothing is detectable and their run
@@ -370,6 +372,12 @@ function wagerPositionSql(
          AND acu.usage_type::text = 'wager'
          AND UPPER(acu.code) = ANY(${pgArrayParam(upper)}::text[])
          AND acu.created_at >= ${since}::timestamp
+         AND NOT EXISTS (
+           SELECT 1
+             FROM game_sessions gs
+            WHERE gs.id = acu.game_session_id
+              AND gs.game_type::text = 'battle_double_down'
+         )
          AND EXISTS (
            SELECT 1
              FROM unnest(${pgArrayParam(starts)}::timestamp[], ${pgArrayParam(ends)}::timestamp[]) AS w(s, e)

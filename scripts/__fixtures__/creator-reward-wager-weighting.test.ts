@@ -25,6 +25,12 @@ test("creator rewards use the wager's frozen leaderboard weight", () => {
     "creator rewards must never read or expose the original unweighted wager",
   );
 
+  assert.match(
+    wagerQuery,
+    /NOT EXISTS\s*\([\s\S]*?FROM game_sessions gs[\s\S]*?gs\.id = acu\.game_session_id[\s\S]*?gs\.game_type::text = 'battle_double_down'[\s\S]*?\)/,
+    "battle double-down sessions must remain excluded even if they gain a weighted amount",
+  );
+
   const effectiveAlias = effectiveWager[1];
   const summedEffectiveWager = new RegExp(
     `SUM\\(live\\.${effectiveAlias}(?:::\\w+)?\\)`,
