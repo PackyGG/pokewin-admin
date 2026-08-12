@@ -13,6 +13,7 @@ import {
   REWARD_QUERY_TIMEOUT_MS,
   safeQuery,
   withTimeout,
+  type SafeQueryResult,
 } from "@/lib/errors/safe-query";
 import { runWithConcurrency } from "@/lib/promise-pool";
 import { blacklistNotInClause } from "./_blacklist";
@@ -35,6 +36,24 @@ import {
 import { WAGER_LEG_FILTER } from "@/lib/metrics/gaming-sql";
 
 const LIFETIME_LOOKBACK_DAYS = 365;
+
+/**
+ * Wall-clock bound for the WHOLE six-leg trend computation.
+ *
+ * This MUST stay above `REWARD_QUERY_TIMEOUT_MS` (the per-leg cap applied by
+ * each `safeQuery` below). It previously sat at 10s — BELOW the 15s per-leg
+ * cap — which silently disabled the per-leg degradation this module is built
+ * around: a single leg that ran 10–15s tripped the outer race before its own
+ * `safeQuery` could degrade it, so `fetchTrendSeriesPg` never returned at all
+ * and every chart fell back to "Live data is temporarily unavailable"
+ * (including the Wager-attribution tile) even though five legs had succeeded.
+ *
+ * The legs run at concurrency 2, so the theoretical worst case is
+ * ceil(6 / 2) * 15s = 45s. We deliberately do NOT wait that long: the sink
+ * below publishes each leg as it settles, so when this bound fires we serve
+ * the legs that finished instead of blanking the whole grid.
+ */
+const TREND_SNAPSHOT_TIMEOUT_MS = 25_000;
 
 export type DashboardTrendSeries = {
   dailyWagers: {
@@ -136,10 +155,119 @@ function mergeLedgerRows(
   };
 }
 
+/**
+ * Mutable per-leg result slots. Each leg writes its own slot the moment it
+ * settles, so a caller that gives up waiting (see `TREND_SNAPSHOT_TIMEOUT_MS`)
+ * can still build a snapshot from the legs that DID finish. A `null` slot is
+ * simply an unavailable series — exactly the same shape a failed leg produces.
+ */
+type TrendLegSlots = {
+  ledger: SafeQueryResult<LedgerBucketRow[]> | null;
+  upgrader: SafeQueryResult<UpgraderBucketRow[]> | null;
+  doubleDown: SafeQueryResult<DoubleDownBucketRow[]> | null;
+  signups: SafeQueryResult<CountBucketRow[]> | null;
+  attribution: SafeQueryResult<AttributionBucketRow[]> | null;
+  ftds: SafeQueryResult<FtdBucketRow[]> | null;
+  upgraderProbeOk: boolean;
+  doubleDownProbeOk: boolean;
+};
+
+function emptyTrendLegSlots(): TrendLegSlots {
+  return {
+    ledger: null,
+    upgrader: null,
+    doubleDown: null,
+    signups: null,
+    attribution: null,
+    ftds: null,
+    upgraderProbeOk: false,
+    doubleDownProbeOk: false,
+  };
+}
+
+/**
+ * Build a snapshot from whatever legs have settled so far. Identical output to
+ * the previous all-at-once construction when every slot is filled; a missing
+ * slot degrades exactly like a failed leg (empty padded series + availability
+ * false), which is the behaviour the dashboard tiles already handle.
+ */
+function buildTrendSnapshot(
+  slots: TrendLegSlots,
+  period: DashboardPeriod,
+): DashboardTrendSeries {
+  const ledgerMerged = mergeLedgerRows(
+    slots.ledger?.data ?? [],
+    slots.upgrader?.data ?? [],
+    slots.doubleDown?.data ?? [],
+    period,
+  );
+
+  const dailySignups = padDashboardCountSeries(
+    (slots.signups?.data ?? []).map((r) => ({
+      date: bucketKey(r.bucket, period),
+      count: Number(r.value),
+    })),
+    period,
+  );
+
+  const dailyWagerAttribution = padDashboardAttributionSeries(
+    (slots.attribution?.data ?? []).map((r) => ({
+      date: bucketKey(r.bucket, period),
+      organic: Number(r.organic),
+      creatorCoded: Number(r.creator_attributed),
+    })),
+    period,
+  );
+
+  const dailyFtds = padDashboardFtdSeries(
+    (slots.ftds?.data ?? []).map((r) => {
+      const count = Number(r.count);
+      const total = Number(r.total);
+      return {
+        date: bucketKey(r.bucket, period),
+        count,
+        total,
+        avg: count > 0 ? total / count : 0,
+      };
+    }),
+    period,
+  );
+
+  const nowIso = new Date().toISOString();
+  const ledgerOk = slots.ledger?.error === null;
+  return {
+    ...ledgerMerged,
+    dailySignups,
+    dailyFtds,
+    dailyWagerAttribution,
+    chartHourlyBuckets: dashboardChartHourlyBuckets(period),
+    capturedAtIso: nowIso,
+    servedAtIso: nowIso,
+    availability: {
+      wagers:
+        ledgerOk &&
+        slots.upgraderProbeOk &&
+        slots.upgrader?.error === null &&
+        slots.doubleDownProbeOk &&
+        slots.doubleDown?.error === null,
+      deposits: ledgerOk,
+      signups: slots.signups?.error === null,
+      ftds: slots.ftds?.error === null,
+      activeDepositors: ledgerOk,
+      wagerAttribution: slots.attribution?.error === null,
+    },
+  };
+}
+
+export function isCompleteTrendSnapshot(snapshot: DashboardTrendSeries): boolean {
+  return Object.values(snapshot.availability).every(Boolean);
+}
+
 async function fetchTrendSeriesPg(
   period: DashboardPeriod,
   blacklistIdNotIn: string,
   env: DbEnv,
+  slots: TrendLegSlots = emptyTrendLegSlots(),
 ): Promise<DashboardTrendSeries> {
   const db = readDrizzleForEnv(env);
   const now = new Date();
@@ -175,6 +303,8 @@ async function fetchTrendSeriesPg(
   ]);
   const hasUpgrader = upgProbe.data[0]?.exists != null;
   const hasDoubleDown = ddProbe.data[0]?.exists != null;
+  slots.upgraderProbeOk = upgProbe.error === null;
+  slots.doubleDownProbeOk = ddProbe.error === null;
   const attributionUpgraderUnion = hasUpgrader
     ? `UNION ALL
        SELECT ug.user_id, ug.bet_amount::numeric AS amount, ug.created_at
@@ -189,14 +319,7 @@ async function fetchTrendSeriesPg(
        WHERE o.result IS NOT NULL AND o.resolved_at >= $1`
     : "";
 
-  const [
-    ledgerResult,
-    upgraderResult,
-    doubleDownResult,
-    signupResult,
-    attributionResult,
-    ftdResult,
-  ] = await runWithConcurrency([
+  await runWithConcurrency([
     // CUSTOMER scope on BOTH legs = `CUSTOMER_EXCLUDED_ROLES`
     // (`src/lib/metrics/scope.ts`): admin + support + creator, plus the
     // blacklist. This leg used to stop at ('admin','support') while the
@@ -246,7 +369,7 @@ async function fetchTrendSeriesPg(
       [],
       "dashboard.trends.ledger",
       REWARD_QUERY_TIMEOUT_MS,
-    ),
+    ).then((r) => (slots.ledger = r)),
 
     () => safeQuery(
       () => hasUpgrader
@@ -265,7 +388,7 @@ async function fetchTrendSeriesPg(
       [],
       "dashboard.trends.upgrader",
       REWARD_QUERY_TIMEOUT_MS,
-    ),
+    ).then((r) => (slots.upgrader = r)),
 
     () => safeQuery(
       () => hasDoubleDown
@@ -285,7 +408,7 @@ async function fetchTrendSeriesPg(
       [],
       "dashboard.trends.doubleDown",
       REWARD_QUERY_TIMEOUT_MS,
-    ),
+    ).then((r) => (slots.doubleDown = r)),
 
     // Bot-prevention drop (`is_locked = true` with `locked_reason = 'bot prevention'`):
     // the signup pipeline locks automated registrations server-side. Jun 11 had
@@ -303,7 +426,7 @@ async function fetchTrendSeriesPg(
       [],
       "dashboard.trends.signups",
       REWARD_QUERY_TIMEOUT_MS,
-    ),
+    ).then((r) => (slots.signups = r)),
 
     () => safeQuery(
       () => queryRows<AttributionBucketRow[]>(db, `
@@ -335,7 +458,7 @@ async function fetchTrendSeriesPg(
       [],
       "dashboard.trends.attribution",
       REWARD_QUERY_TIMEOUT_MS,
-    ),
+    ).then((r) => (slots.attribution = r)),
 
     () => safeQuery(
       () => queryRows<FtdBucketRow[]>(db, `
@@ -365,85 +488,21 @@ async function fetchTrendSeriesPg(
       [],
       "dashboard.trends.ftds",
       REWARD_QUERY_TIMEOUT_MS,
-    ),
+    ).then((r) => (slots.ftds = r)),
   ] as const, 2);
 
-  const ledgerRows = ledgerResult.data;
-  const upgraderRows = upgraderResult.data;
-  const doubleDownRows = doubleDownResult.data;
-  const signupRows = signupResult.data;
-  const attributionRows = attributionResult.data;
-  const ftdRows = ftdResult.data;
-
-  const ledgerMerged = mergeLedgerRows(
-    ledgerRows,
-    upgraderRows,
-    doubleDownRows,
-    period,
-  );
-
-  const dailySignups = padDashboardCountSeries(
-    signupRows.map((r) => ({
-      date: bucketKey(r.bucket, period),
-      count: Number(r.value),
-    })),
-    period,
-  );
-
-  const dailyWagerAttribution = padDashboardAttributionSeries(
-    attributionRows.map((r) => ({
-      date: bucketKey(r.bucket, period),
-      organic: Number(r.organic),
-      creatorCoded: Number(r.creator_attributed),
-    })),
-    period,
-  );
-
-  const dailyFtds = padDashboardFtdSeries(
-    ftdRows.map((r) => {
-      const count = Number(r.count);
-      const total = Number(r.total);
-      return {
-        date: bucketKey(r.bucket, period),
-        count,
-        total,
-        avg: count > 0 ? total / count : 0,
-      };
-    }),
-    period,
-  );
-
-  return {
-    ...ledgerMerged,
-    dailySignups,
-    dailyFtds,
-    dailyWagerAttribution,
-    chartHourlyBuckets: dashboardChartHourlyBuckets(period),
-    capturedAtIso: new Date().toISOString(),
-    servedAtIso: new Date().toISOString(),
-    availability: {
-      wagers:
-        ledgerResult.error === null &&
-        upgProbe.error === null &&
-        upgraderResult.error === null &&
-        ddProbe.error === null &&
-        doubleDownResult.error === null,
-      deposits: ledgerResult.error === null,
-      signups: signupResult.error === null,
-      ftds: ftdResult.error === null,
-      activeDepositors: ledgerResult.error === null,
-      wagerAttribution: attributionResult.error === null,
-    },
-  };
+  return buildTrendSnapshot(slots, period);
 }
+
 
 /** Uncached PostgreSQL computation wrapped by cachedDashboardTrendSeries. */
 async function fetchDashboardTrendSeriesInner(
   period: DashboardPeriod,
   blacklistIdNotIn: string,
   env: DbEnv,
+  slots?: TrendLegSlots,
 ): Promise<DashboardTrendSeries> {
-  return fetchTrendSeriesPg(period, blacklistIdNotIn, env);
+  return fetchTrendSeriesPg(period, blacklistIdNotIn, env, slots);
 }
 
 export function emptyDashboardTrendSeries(
@@ -480,7 +539,10 @@ export async function getDashboardTrendSeries(
     return fetchDashboardTrendSeriesInner(period, blacklistIdNotIn, env);
   }
 
-  let partial: DashboardTrendSeries | null = null;
+  // Legs publish into `slots` as they settle, so this stays populated even when
+  // the outer race below gives up — that is what keeps a single slow leg from
+  // blanking all six charts.
+  const slots = emptyTrendLegSlots();
   try {
     const key = buildCacheKey("dashboard-trends-v5-all-games-attribution", [
       env,
@@ -492,24 +554,33 @@ export async function getDashboardTrendSeries(
       60,
       24 * 60 * 60,
       async () => {
-        partial = await withTimeout(
+        const result = await withTimeout(
           () =>
             fetchDashboardTrendSeriesInner(
               period,
               blacklistIdNotIn,
               env,
+              slots,
             ),
-          10_000,
+          TREND_SNAPSHOT_TIMEOUT_MS,
         );
-        if (Object.values(partial.availability).some((available) => !available)) {
+        // Only a COMPLETE snapshot earns a cache entry: caching a degraded one
+        // would pin a half-empty grid for the full 60s fresh window and hide a
+        // recovery. `cacheGetOrSetStale` serves the last good retained value
+        // when this throws, so a degraded refresh never blanks a healthy cache.
+        if (!isCompleteTrendSnapshot(result)) {
           throw new Error("dashboard trend snapshot was incomplete");
         }
-        return partial;
+        return result;
       },
     );
     return { ...snapshot, servedAtIso: new Date().toISOString() };
   } catch {
-    return partial ?? emptyDashboardTrendSeries(period);
+    // Serve whatever legs finished. Previously this returned the all-false
+    // empty snapshot whenever the outer timeout fired (the assignment never
+    // ran), which is what surfaced "Live data is temporarily unavailable" on
+    // every tile — Wager attribution included — despite most legs succeeding.
+    return buildTrendSnapshot(slots, period);
   }
 }
 
