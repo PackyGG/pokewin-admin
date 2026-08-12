@@ -3,8 +3,38 @@
 Admin dashboard for packy.gg. Next.js 15 (App Router) · TypeScript (strict) ·
 PostgreSQL + Drizzle ORM · Tailwind + shadcn/ui.
 
-See `CLAUDE.md` for the binding working rules and `ONBOARDING.md` for
-architecture/domain context.
+Codex contributors must read `AGENTS.md` and `.codex/RULES.md` first. See
+`ONBOARDING.md` for architecture/domain context.
+
+## New-device setup
+
+Prerequisites: Git, Node.js 24 (the production runtime), npm, GitHub access to
+`PackyGG/pokewin-admin`, and access to the `packy-gg1` Vercel team.
+
+```bash
+git clone https://github.com/PackyGG/pokewin-admin.git
+cd pokewin-admin
+nvm install
+nvm use
+npm ci
+
+# Restore the existing Vercel project link and local development variables.
+npx vercel link --scope packy-gg1 --project packy-admin-dashboard
+npx vercel env pull .env --environment=development
+
+npm run typecheck
+npm run lint
+npm run dev
+```
+
+`.env` and `.vercel/` are intentionally local and gitignored. Never commit
+downloaded credentials. If the development environment does not contain the
+integration you need, request the specific variable from an owner rather than
+copying production secrets into source control.
+
+The default branch is `main`; normal GitHub pushes deploy the Admin app through
+the existing Vercel integration. Database permissions and deployment rules are
+defined in `.codex/rules/DATABASE.md` and `.codex/rules/INFRA.md`.
 
 ## Scripts
 
