@@ -282,8 +282,10 @@ export class IngestDelivery {
       // predicate — an event whose match row is missing entirely still has to
       // be delivered, which an inner join would silently drop. The added
       // `source_event_id` equality is what makes the join an index probe on the
-      // unique key; the concatenation predicate stays as an exact-semantics
-      // filter on top of it.
+      // unique key. Source event IDs can themselves contain colons (for
+      // example `signup:<user-id>`), so remove only the delivery prefix rather
+      // than using split_part(..., 2), which truncates those IDs to `signup`.
+      // The concatenation predicate stays as an exact-semantics filter on top.
       const blacklistContainment = await client.query<RiskEventRow>(
         `
           SELECT
@@ -294,7 +296,9 @@ export class IngestDelivery {
           FROM risk_events re
           JOIN subjects s ON s.user_id = re.user_id
           LEFT JOIN fiat_email_domain_matches match ON
-            match.source_event_id = split_part(re.source_ref, ':', 2)
+            match.source_event_id = substring(
+              re.source_ref FROM position(':' IN re.source_ref) + 1
+            )
             AND (
               re.source_ref = 'blacklisted-signup:' || match.source_event_id
               OR re.source_ref =

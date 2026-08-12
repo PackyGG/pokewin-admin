@@ -239,6 +239,14 @@ test("successful containment delivery confirms the lock without mirror lag", asy
   );
   assert.equal(
     fixture.queries.some((sql) =>
+      sql.includes("match.source_event_id = substring(") &&
+      sql.includes("position(':' IN re.source_ref) + 1") &&
+      !sql.includes("split_part(re.source_ref, ':', 2)")
+    ),
+    true,
+  );
+  assert.equal(
+    fixture.queries.some((sql) =>
       sql.includes("UPDATE risk_events") &&
       sql.includes("dashboard_delivered_at")
     ),
