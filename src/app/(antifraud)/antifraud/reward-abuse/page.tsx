@@ -81,6 +81,29 @@ function Metric({ label, value, note }: { label: string; value: string; note?: s
   return <div className="rounded-lg border bg-muted/20 p-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 font-semibold tabular-nums">{value}</p>{note && <p className="mt-1 text-xs text-muted-foreground">{note}</p>}</div>;
 }
 
+function DepositsMetric({ recent, lifetime, rainRatio }: {
+  recent: number;
+  lifetime: number;
+  rainRatio: number;
+}) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Deposits</p>
+      <div className="mt-2 grid grid-cols-2 divide-x">
+        <div className="pr-3">
+          <p className="text-[10px] text-muted-foreground">30 days</p>
+          <p className="font-semibold tabular-nums">{usd(recent)}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{rainRatio}% of net Rain</p>
+        </div>
+        <div className="pl-3">
+          <p className="text-[10px] text-muted-foreground">All time</p>
+          <p className="font-semibold tabular-nums">{usd(lifetime)}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReviewCard({ review }: { review: RewardAbuseReview }) {
   const m = review.metrics;
   return (
@@ -99,7 +122,7 @@ function ReviewCard({ review }: { review: RewardAbuseReview }) {
       <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
         <Metric label="Rain entries" value={m.entries.toLocaleString()} note={`${m.entryDays} active days`} />
         <Metric label="Net Rain retained" value={usd(m.netRainUsd)} note={`${usd(m.rainUsd)} won · ${usd(m.rainTipsUsd)} tipped`} />
-        <Metric label="Deposits · 30d" value={usd(m.deposits30dUsd)} note={`${Math.round((m.deposits30dUsd / Math.max(m.netRainUsd, .01)) * 100)}% of net Rain`} />
+        <DepositsMetric recent={m.deposits30dUsd} lifetime={m.lifetimeDepositsUsd} rainRatio={Math.round((m.deposits30dUsd / Math.max(m.netRainUsd, .01)) * 100)} />
         <Metric label="Real-money play" value={usd(m.wagerUsd)} note={`${m.games} paid game sessions`} />
         <Metric label="Pack pattern" value={`${Math.round(m.packGameRatio * 100)}%`} note={`${m.packGames} pack sessions`} />
         <Metric label="Bonus-funded packs" value={`${Math.round(m.bonusFundedPackRatio * 100)}%`} note="Inference; general bonus pool" />
