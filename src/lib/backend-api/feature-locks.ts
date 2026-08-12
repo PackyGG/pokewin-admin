@@ -56,6 +56,19 @@ const FeatureLocksResponseSchema = z.object({
   data: UserFeatureLocksSchema,
 });
 
+const ConfirmRainAbuseResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    user_id: z.string().min(1),
+    locked_reward_categories: z.array(RewardLockCategorySchema),
+    requested_usd: z.number().nonnegative(),
+    removed_usd: z.number().nonnegative(),
+    balance_before_usd: z.number().nonnegative(),
+    balance_after_usd: z.number().nonnegative(),
+    ledger_transaction_id: z.string().uuid(),
+  }),
+});
+
 const FiatAutoApprovalResponseSchema = z.object({
   success: z.literal(true),
   data: z.object({
@@ -113,6 +126,25 @@ export const updateUserRewardLocks = (
       adminUserId ? { headers: { "x-admin-user-id": adminUserId } } : {},
     )
     .then((response) => parseFeatureLocks(response, userId));
+
+export const confirmRainRewardAbuse = (
+  userId: string,
+  input: { reviewId: string; maxRainAmountUsd: number; reason: string },
+  adminUserId: string,
+) =>
+  backendApi
+    .post<unknown>(
+      `/admin/users/${encodeURIComponent(userId)}/reward-abuse/rain-confirm`,
+      input,
+      { headers: { "x-admin-user-id": adminUserId } },
+    )
+    .then((response) => {
+      const parsed = ConfirmRainAbuseResponseSchema.safeParse(response);
+      if (!parsed.success || parsed.data.data.user_id !== userId) {
+        throw new Error("Backend returned an invalid Rain-abuse confirmation response");
+      }
+      return parsed.data.data;
+    });
 
 export const updateUserFiatDepositAutoApproval = (
   userId: string,

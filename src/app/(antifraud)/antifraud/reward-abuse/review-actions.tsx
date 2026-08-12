@@ -37,7 +37,7 @@ function DecisionDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             {confirming
-              ? "This staff decision adds only the Rain reward lock, blocking future joins and tips. Any active rain already joined still settles normally."
+              ? "This disables future Rain joins and tips and removes remaining Rain-attributable bonus funds from the available balance. The balance can never go below $0. Any active rain already joined still settles normally."
               : "The account will remain unchanged and will not be detected again for 30 days."}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -62,7 +62,7 @@ function DecisionDialog({
                 }
                 toast.success(
                   confirming
-                    ? "Abuse confirmed and Rain rewards disabled"
+                    ? `Abuse confirmed, Rain disabled, and $${result.rainFundsRemovedUsd.toFixed(2)} removed`
                     : "Finding dismissed — no account changes made",
                 );
                 setOpen(false);

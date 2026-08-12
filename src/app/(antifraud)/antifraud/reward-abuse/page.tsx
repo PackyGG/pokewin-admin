@@ -135,7 +135,7 @@ function ReviewCard({ review }: { review: RewardAbuseReview }) {
           </div>
           <p className="text-xs text-muted-foreground">Detected {formatRelative(review.lastDetectedAt)} · window ended {formatDateTime(review.windowEndedAt)}</p>
         </div>
-        {review.status === "pending" ? <RewardAbuseReviewActions reviewId={review.id} /> : <div className="max-w-md text-sm"><p className="font-medium">{review.reviewReason}</p><p className="text-xs text-muted-foreground">{review.reviewerUsername ?? "Staff"} · {review.reviewedAt ? formatDateTime(review.reviewedAt) : ""}{review.rainLockApplied ? " · Rain disabled" : " · No account change"}</p></div>}
+        {review.status === "pending" ? <RewardAbuseReviewActions reviewId={review.id} /> : <div className="max-w-md text-sm"><p className="font-medium">{review.reviewReason}</p><p className="text-xs text-muted-foreground">{review.reviewerUsername ?? "Staff"} · {review.reviewedAt ? formatDateTime(review.reviewedAt) : ""}{review.rainLockApplied ? ` · Rain disabled · ${usd(review.rainFundsRemovedUsd)} removed` : " · No account change"}</p></div>}
       </div>
       <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
         <Metric label="Rain entries" value={m.entries.toLocaleString()} note={`${m.entryDays} active days`} />

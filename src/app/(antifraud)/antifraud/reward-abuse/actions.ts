@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { getUserFeatureLocks, updateUserRewardLocks } from "@/lib/backend-api/feature-locks";
+import { confirmRainRewardAbuse } from "@/lib/backend-api/feature-locks";
 import { reward_abuse_reviews } from "@/lib/db-schema/admin/schema";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { requireCapability } from "@/lib/require-capability";
@@ -18,7 +18,7 @@ const DecisionSchema = z.object({
 });
 
 export type RewardAbuseDecisionResult =
-  | { ok: true; status: "confirmed" | "dismissed"; rainLocked: boolean }
+  | { ok: true; status: "confirmed" | "dismissed"; rainLocked: boolean; rainFundsRemovedUsd: number }
   | { ok: false; message: string };
 
 export async function decideRewardAbuseReview(
@@ -35,18 +35,21 @@ export async function decideRewardAbuseReview(
     userId: reward_abuse_reviews.target_user_id,
     status: reward_abuse_reviews.status,
     rainLockApplied: reward_abuse_reviews.rain_lock_applied,
+    metrics: reward_abuse_reviews.metrics,
   }).from(reward_abuse_reviews).where(eq(reward_abuse_reviews.id, reviewId)).limit(1);
   if (!review) return { ok: false, message: "Review not found" };
 
   const targetStatus = decision === "confirm" ? "confirmed" : "dismissed";
   if (review.status !== "pending") {
     if (review.status === targetStatus) {
-      return { ok: true, status: targetStatus, rainLocked: review.rainLockApplied };
+      return { ok: true, status: targetStatus, rainLocked: review.rainLockApplied, rainFundsRemovedUsd: 0 };
     }
     return { ok: false, message: "Another staff member already decided this review." };
   }
 
   let rainLocked = false;
+  let rainFundsRemovedUsd = 0;
+  let rainForfeitLedgerTxId: string | null = null;
   if (decision === "confirm") {
     await requireCapability(
       session,
@@ -54,15 +57,19 @@ export async function decideRewardAbuseReview(
       "disable Rain rewards after confirming abuse",
     );
     try {
-      const current = await getUserFeatureLocks(review.userId);
-      const categories = [...new Set([...current.locked_reward_categories, "rain" as const])];
-      const updated = await updateUserRewardLocks(
+      const metrics = review.metrics as { netRainUsd?: unknown };
+      const maxRainAmountUsd = Number(metrics?.netRainUsd);
+      if (!Number.isFinite(maxRainAmountUsd) || maxRainAmountUsd < 0) {
+        throw new Error("Review has invalid Rain evidence");
+      }
+      const updated = await confirmRainRewardAbuse(
         review.userId,
-        categories,
+        { reviewId, maxRainAmountUsd, reason },
         session.userId,
-        `Confirmed rain reward abuse: ${reason}`,
       );
       rainLocked = updated.locked_reward_categories.includes("rain");
+      rainFundsRemovedUsd = updated.removed_usd;
+      rainForfeitLedgerTxId = updated.ledger_transaction_id;
       if (!rainLocked) throw new Error("Backend did not confirm the Rain lock");
     } catch (error) {
       console.error("[reward-abuse] Rain lock failed", error);
@@ -79,6 +86,8 @@ export async function decideRewardAbuseReview(
     review_reason: reason,
     reviewed_at: sql`now()`,
     rain_lock_applied: rainLocked,
+    rain_funds_removed_usd: String(rainFundsRemovedUsd),
+    rain_forfeit_ledger_tx_id: rainForfeitLedgerTxId,
     updated_at: sql`now()`,
   }).where(and(
     eq(reward_abuse_reviews.id, reviewId),
@@ -94,9 +103,15 @@ export async function decideRewardAbuseReview(
       ? "reward_abuse_confirmed_rain_locked"
       : "reward_abuse_dismissed",
     targetUserId: review.userId,
-    metadata: { reviewId, reason, rainLocked },
+    metadata: {
+      reviewId,
+      reason,
+      rainLocked,
+      rainFundsRemovedUsd,
+      rainForfeitLedgerTxId,
+    },
   });
   revalidatePath("/antifraud/reward-abuse");
   revalidateTag(`users-detail-${review.userId}`);
-  return { ok: true, status: targetStatus, rainLocked };
+  return { ok: true, status: targetStatus, rainLocked, rainFundsRemovedUsd };
 }

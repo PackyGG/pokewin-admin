@@ -1789,6 +1789,8 @@ export const reward_abuse_reviews = pgTable("reward_abuse_reviews", {
 	review_reason: text(),
 	reviewed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 	rain_lock_applied: boolean().default(false).notNull(),
+	rain_funds_removed_usd: numeric({ precision: 20, scale: 2 }).default('0').notNull(),
+	rain_forfeit_ledger_tx_id: uuid(),
 	discord_alerted_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),

@@ -52,6 +52,7 @@ export type RewardAbuseReview = {
   reviewReason: string | null;
   reviewerUsername: string | null;
   rainLockApplied: boolean;
+  rainFundsRemovedUsd: number;
 };
 
 type CandidateRow = {
@@ -472,6 +473,7 @@ type ReviewRow = {
   review_reason: string | null;
   reviewer_username: string | null;
   rain_lock_applied: boolean;
+  rain_funds_removed_usd: string;
 };
 
 function mapReview(row: ReviewRow): RewardAbuseReview {
@@ -483,6 +485,7 @@ function mapReview(row: ReviewRow): RewardAbuseReview {
     firstDetectedAt: row.first_detected_at, lastDetectedAt: row.last_detected_at,
     reviewedAt: row.reviewed_at, reviewReason: row.review_reason,
     reviewerUsername: row.reviewer_username, rainLockApplied: row.rain_lock_applied,
+    rainFundsRemovedUsd: money(row.rain_funds_removed_usd),
   };
 }
 
@@ -497,7 +500,7 @@ export async function listRewardAbuseReviews(input: {
       review.window_started_at::text, review.window_ended_at::text,
       review.first_detected_at::text, review.last_detected_at::text,
       review.reviewed_at::text, review.review_reason, reviewer.username AS reviewer_username,
-      review.rain_lock_applied
+      review.rain_lock_applied, review.rain_funds_removed_usd::text
     FROM reward_abuse_reviews review
     LEFT JOIN admin_users reviewer ON reviewer.id = review.reviewed_by
     WHERE review.status = ${input.status}

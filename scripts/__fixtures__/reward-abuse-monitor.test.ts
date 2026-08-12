@@ -25,8 +25,14 @@ test("only a confirmed manual decision adds the Rain reward lock", async () => {
   const action = await readFile(actionPath, "utf8");
   assert.match(action, /decision === "confirm"/);
   assert.match(action, /requireCapability[\s\S]*__can_toggle_feature_locks/);
-  assert.match(action, /new Set\(\[\.\.\.current\.locked_reward_categories, "rain" as const\]\)/);
+  assert.match(action, /confirmRainRewardAbuse/);
   assert.match(action, /WHERE status = 'pending'|eq\(reward_abuse_reviews\.status, "pending"\)/);
+});
+
+test("confirmation caps Rain forfeiture in the authoritative backend", async () => {
+  const client = await readFile("src/lib/backend-api/feature-locks.ts", "utf8");
+  assert.match(client, /reward-abuse\/rain-confirm/);
+  assert.match(client, /removed_usd/);
 });
 
 test("dismissed findings have a 30-day detector cooldown", async () => {
