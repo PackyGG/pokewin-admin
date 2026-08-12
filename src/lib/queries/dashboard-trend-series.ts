@@ -16,7 +16,6 @@ import {
   withTimeout,
   type SafeQueryResult,
 } from "@/lib/errors/safe-query";
-import { runWithConcurrency } from "@/lib/promise-pool";
 import { blacklistNotInClause } from "./_blacklist";
 import { type DashboardPeriod } from "./dashboard-period";
 import {
@@ -39,7 +38,7 @@ import { WAGER_LEG_FILTER } from "@/lib/metrics/gaming-sql";
 const LIFETIME_LOOKBACK_DAYS = 365;
 
 /**
- * Wall-clock bound for the WHOLE six-leg trend computation.
+ * Wall-clock bound for the whole two-leg trend computation.
  *
  * This MUST stay above `REWARD_QUERY_TIMEOUT_MS` (the per-leg cap applied by
  * each `safeQuery` below). It previously sat at 10s — BELOW the 15s per-leg
@@ -49,10 +48,9 @@ const LIFETIME_LOOKBACK_DAYS = 365;
  * and every chart fell back to "Live data is temporarily unavailable"
  * (including the Wager-attribution tile) even though five legs had succeeded.
  *
- * The legs run at concurrency 2, so the theoretical worst case is
- * ceil(6 / 2) * 15s = 45s. We deliberately do NOT wait that long: the sink
- * below publishes each leg as it settles, so when this bound fires we serve
- * the legs that finished instead of blanking the whole grid.
+ * Both consolidated legs run concurrently. We deliberately keep a larger
+ * outer budget than either leg's query budget so `safeQuery` can publish the
+ * successful group when the other group fails or times out.
  */
 const TREND_SNAPSHOT_TIMEOUT_MS = 25_000;
 
@@ -69,7 +67,11 @@ export type DashboardTrendSeries = {
   dailySignups: { date: string; count: number }[];
   dailyFtds: { date: string; count: number; total: number; avg: number }[];
   dailyActiveDepositors: { date: string; count: number }[];
-  dailyWagerAttribution: { date: string; organic: number; creatorCoded: number }[];
+  dailyWagerAttribution: {
+    date: string;
+    organic: number;
+    creatorCoded: number;
+  }[];
   chartHourlyBuckets: boolean;
   capturedAtIso: string;
   servedAtIso: string;
@@ -83,48 +85,37 @@ export type DashboardTrendSeries = {
   };
 };
 
-type LedgerBucketRow = {
+type MoneyBucketRow = {
   bucket: Date | string;
   packs: string;
   battles: string;
   keno: string;
+  upgrader: string;
+  double_down: string;
   deposits: string;
   active_depositors: string;
-};
-
-type CountBucketRow = { bucket: Date | string; value: string };
-type UpgraderBucketRow = { bucket: Date | string; upgrader: string };
-type DoubleDownBucketRow = { bucket: Date | string; double_down: string };
-type AttributionBucketRow = {
-  bucket: Date | string;
   organic: string;
   creator_attributed: string;
 };
-type FtdBucketRow = { bucket: Date | string; count: string; total: string };
+
+type AcquisitionBucketRow = {
+  kind: "signup" | "ftd";
+  bucket: Date | string;
+  count: string;
+  total: string;
+};
 
 function bucketKey(d: Date | string, period: DashboardPeriod): string {
   return dashboardChartDateLabel(new Date(d), period);
 }
 
 function mergeLedgerRows(
-  rows: LedgerBucketRow[],
-  upgraderRows: UpgraderBucketRow[],
-  doubleDownRows: DoubleDownBucketRow[],
+  rows: MoneyBucketRow[],
   period: DashboardPeriod,
 ): Pick<
   DashboardTrendSeries,
   "dailyWagers" | "dailyDeposits" | "dailyActiveDepositors"
 > {
-  const upgraderByBucket = new Map(
-    upgraderRows.map((r) => [bucketKey(r.bucket, period), Number(r.upgrader)]),
-  );
-  const doubleDownByBucket = new Map(
-    doubleDownRows.map((r) => [
-      bucketKey(r.bucket, period),
-      Number(r.double_down),
-    ]),
-  );
-
   const wagerRows = rows.map((d) => {
     const date = bucketKey(d.bucket, period);
     return {
@@ -132,8 +123,8 @@ function mergeLedgerRows(
       packs: Number(d.packs),
       battles: Number(d.battles),
       keno: Number(d.keno),
-      upgrader: upgraderByBucket.get(date) ?? 0,
-      doubleDown: doubleDownByBucket.get(date) ?? 0,
+      upgrader: Number(d.upgrader),
+      doubleDown: Number(d.double_down),
     };
   });
 
@@ -157,62 +148,48 @@ function mergeLedgerRows(
 }
 
 /**
- * Mutable per-leg result slots. Each leg writes its own slot the moment it
+ * Mutable per-group result slots. Each query writes its own slot the moment it
  * settles, so a caller that gives up waiting (see `TREND_SNAPSHOT_TIMEOUT_MS`)
  * can still build a snapshot from the legs that DID finish. A `null` slot is
  * simply an unavailable series — exactly the same shape a failed leg produces.
  */
 type TrendLegSlots = {
-  ledger: SafeQueryResult<LedgerBucketRow[]> | null;
-  upgrader: SafeQueryResult<UpgraderBucketRow[]> | null;
-  doubleDown: SafeQueryResult<DoubleDownBucketRow[]> | null;
-  signups: SafeQueryResult<CountBucketRow[]> | null;
-  attribution: SafeQueryResult<AttributionBucketRow[]> | null;
-  ftds: SafeQueryResult<FtdBucketRow[]> | null;
-  upgraderProbeOk: boolean;
-  doubleDownProbeOk: boolean;
+  money: SafeQueryResult<MoneyBucketRow[]> | null;
+  acquisition: SafeQueryResult<AcquisitionBucketRow[]> | null;
+  schemaProbeOk: boolean;
 };
 
 function emptyTrendLegSlots(): TrendLegSlots {
   return {
-    ledger: null,
-    upgrader: null,
-    doubleDown: null,
-    signups: null,
-    attribution: null,
-    ftds: null,
-    upgraderProbeOk: false,
-    doubleDownProbeOk: false,
+    money: null,
+    acquisition: null,
+    schemaProbeOk: false,
   };
 }
 
 /**
- * Build a snapshot from whatever legs have settled so far. Identical output to
- * the previous all-at-once construction when every slot is filled; a missing
- * slot degrades exactly like a failed leg (empty padded series + availability
- * false), which is the behaviour the dashboard tiles already handle.
+ * Build a snapshot from whichever consolidated query groups have settled.
  */
 function buildTrendSnapshot(
   slots: TrendLegSlots,
   period: DashboardPeriod,
 ): DashboardTrendSeries {
-  const ledgerMerged = mergeLedgerRows(
-    slots.ledger?.data ?? [],
-    slots.upgrader?.data ?? [],
-    slots.doubleDown?.data ?? [],
-    period,
-  );
+  const ledgerMerged = mergeLedgerRows(slots.money?.data ?? [], period);
+
+  const acquisitionRows = slots.acquisition?.data ?? [];
 
   const dailySignups = padDashboardCountSeries(
-    (slots.signups?.data ?? []).map((r) => ({
-      date: bucketKey(r.bucket, period),
-      count: Number(r.value),
-    })),
+    acquisitionRows
+      .filter((r) => r.kind === "signup")
+      .map((r) => ({
+        date: bucketKey(r.bucket, period),
+        count: Number(r.count),
+      })),
     period,
   );
 
   const dailyWagerAttribution = padDashboardAttributionSeries(
-    (slots.attribution?.data ?? []).map((r) => ({
+    (slots.money?.data ?? []).map((r) => ({
       date: bucketKey(r.bucket, period),
       organic: Number(r.organic),
       creatorCoded: Number(r.creator_attributed),
@@ -221,21 +198,24 @@ function buildTrendSnapshot(
   );
 
   const dailyFtds = padDashboardFtdSeries(
-    (slots.ftds?.data ?? []).map((r) => {
-      const count = Number(r.count);
-      const total = Number(r.total);
-      return {
-        date: bucketKey(r.bucket, period),
-        count,
-        total,
-        avg: count > 0 ? total / count : 0,
-      };
-    }),
+    acquisitionRows
+      .filter((r) => r.kind === "ftd")
+      .map((r) => {
+        const count = Number(r.count);
+        const total = Number(r.total);
+        return {
+          date: bucketKey(r.bucket, period),
+          count,
+          total,
+          avg: count > 0 ? total / count : 0,
+        };
+      }),
     period,
   );
 
   const nowIso = new Date().toISOString();
-  const ledgerOk = slots.ledger?.error === null;
+  const moneyOk = slots.money?.error === null;
+  const acquisitionOk = slots.acquisition?.error === null;
   return {
     ...ledgerMerged,
     dailySignups,
@@ -245,22 +225,19 @@ function buildTrendSnapshot(
     capturedAtIso: nowIso,
     servedAtIso: nowIso,
     availability: {
-      wagers:
-        ledgerOk &&
-        slots.upgraderProbeOk &&
-        slots.upgrader?.error === null &&
-        slots.doubleDownProbeOk &&
-        slots.doubleDown?.error === null,
-      deposits: ledgerOk,
-      signups: slots.signups?.error === null,
-      ftds: slots.ftds?.error === null,
-      activeDepositors: ledgerOk,
-      wagerAttribution: slots.attribution?.error === null,
+      wagers: moneyOk && slots.schemaProbeOk,
+      deposits: moneyOk,
+      signups: acquisitionOk,
+      ftds: acquisitionOk,
+      activeDepositors: moneyOk,
+      wagerAttribution: moneyOk && slots.schemaProbeOk,
     },
   };
 }
 
-export function isCompleteTrendSnapshot(snapshot: DashboardTrendSeries): boolean {
+export function isCompleteTrendSnapshot(
+  snapshot: DashboardTrendSeries,
+): boolean {
   return Object.values(snapshot.availability).every(Boolean);
 }
 
@@ -274,172 +251,60 @@ async function fetchTrendSeriesPg(
   const now = new Date();
   const cutoff = dashboardChartCutoff(period, now, LIFETIME_LOOKBACK_DAYS);
   const cutoffBind = cutoff.toISOString();
-  const bucketLedger = dashboardChartBucketExpr("created_at", period);
-  const bucketUpg = dashboardChartBucketExpr("upgrader_games.created_at", period);
-  const bucketDd = dashboardChartBucketExpr("o.resolved_at", period);
+  const bucketEvent = dashboardChartBucketExpr("e.created_at", period);
   const bucketUser = dashboardChartBucketExpr("created_at", period);
   const bucketFtd = dashboardChartBucketExpr("fd.created_at", period);
 
-  const [upgProbe, ddProbe] = await Promise.all([
-    safeQuery(
-      () =>
-        queryRows<{ exists: string | null }[]>(
-          db,
-          `SELECT to_regclass('public.upgrader_games')::text AS exists`,
-        ),
-      [],
-      "dashboard.trends.upgraderProbe",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () =>
-        queryRows<{ exists: string | null }[]>(
-          db,
-          `SELECT to_regclass('public.battle_double_down_offers')::text AS exists`,
-        ),
-      [],
-      "dashboard.trends.doubleDownProbe",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-  ]);
-  const hasUpgrader = upgProbe.data[0]?.exists != null;
-  const hasDoubleDown = ddProbe.data[0]?.exists != null;
-  slots.upgraderProbeOk = upgProbe.error === null;
-  slots.doubleDownProbeOk = ddProbe.error === null;
-  const attributionUpgraderUnion = hasUpgrader
+  // One catalog round trip replaces the former pair of probes. Optional game
+  // tables differ between local/dev snapshots, so their SQL arms remain
+  // conditional without making the common production path pay two checkouts.
+  const schemaProbe = await safeQuery(
+    () =>
+      queryRows<
+        {
+          upgrader: string | null;
+          double_down: string | null;
+        }[]
+      >(
+        db,
+        `
+      SELECT to_regclass('public.upgrader_games')::text AS upgrader,
+             to_regclass('public.battle_double_down_offers')::text AS double_down`,
+      ),
+    [],
+    "dashboard.trends.schemaProbe",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const hasUpgrader = schemaProbe.data[0]?.upgrader != null;
+  const hasDoubleDown = schemaProbe.data[0]?.double_down != null;
+  slots.schemaProbeOk = schemaProbe.error === null;
+
+  const upgraderUnion = hasUpgrader
     ? `UNION ALL
-       SELECT ug.user_id, ug.bet_amount::numeric AS amount, ug.created_at
+       SELECT ug.user_id, 'upgrader'::text AS type,
+              ug.bet_amount::numeric AS amount, ug.created_at
        FROM upgrader_games ug
        WHERE ug.created_at >= $1`
     : "";
-  const attributionDoubleDownUnion = hasDoubleDown
+  const doubleDownUnion = hasDoubleDown
     ? `UNION ALL
-       SELECT o.user_id, o.won_amount_usd::numeric AS amount,
+       SELECT o.user_id, 'double_down'::text AS type,
+              o.won_amount_usd::numeric AS amount,
               o.resolved_at AS created_at
        FROM battle_double_down_offers o
        WHERE o.result IS NOT NULL AND o.resolved_at >= $1`
     : "";
 
-  await runWithConcurrency([
-    // CUSTOMER scope on BOTH legs = `CUSTOMER_EXCLUDED_ROLES`
-    // (`src/lib/metrics/scope.ts`): admin + support + creator, plus the
-    // blacklist. This leg used to stop at ('admin','support') while the
-    // attribution leg below already dropped creators, so on /dashboard
-    // `organic + creatorCoded` did NOT add up to `packs + battles` and
-    // neither reconciled with the Total Wager KPI. Creators are dropped
-    // WHOLESALE from customer analytics (house-funded "for content" play is
-    // not customer revenue), so the wager/deposit legs must match.
-    () => safeQuery(
-      () => queryRows<LedgerBucketRow[]>(db, `
-      WITH events AS (
-        SELECT user_id, type::text AS type, amount::numeric AS amount, created_at
-        FROM ledger_transactions
-        WHERE type::text IN ('pack_opening','battle_bet','battle_sponsorship','keno_bet','deposit')
-          AND status = 'completed'
-          AND created_at >= $1
-          AND ${WAGER_LEG_FILTER}
-          AND user_id IN (
-            SELECT id FROM "user"
-            WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
-          )
-        UNION ALL
-        SELECT i.user_id, 'deposit_refund'::text AS type,
-               -${fiatRefundCreditUsdSql("i")} AS amount,
-               ${fiatRefundAttributionTimestampSql("i")} AS created_at
-        FROM fiat_deposit_intents i
-        WHERE i.status IN ('partially_refunded', 'refunded')
-          AND ${fiatRefundAttributionTimestampSql("i")} >= $1
-          AND i.user_id IN (
-            SELECT id FROM "user"
-            WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
-          )
-      )
-      SELECT ${bucketLedger} AS bucket,
-             COALESCE(SUM(CASE WHEN type::text = 'pack_opening'
-                               THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS packs,
-             COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship')
-                               THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battles,
-             COALESCE(SUM(CASE WHEN type::text = 'keno_bet'
-                               THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS keno,
-             COALESCE(SUM(CASE WHEN type::text IN ('deposit','deposit_refund')
-                               THEN amount::numeric ELSE 0 END), 0)::text AS deposits,
-             COUNT(DISTINCT CASE WHEN type::text = 'deposit' THEN user_id END)::text AS active_depositors
-        FROM events
-       GROUP BY 1
-       ORDER BY 1`, cutoffBind),
-      [],
-      "dashboard.trends.ledger",
-      REWARD_QUERY_TIMEOUT_MS,
-    ).then((r) => (slots.ledger = r)),
-
-    () => safeQuery(
-      () => hasUpgrader
-        ? queryRows<UpgraderBucketRow[]>(db, `
-          SELECT ${bucketUpg} AS bucket,
-                 COALESCE(SUM(bet_amount::numeric), 0)::text AS upgrader
-            FROM upgrader_games
-           WHERE created_at >= $1
-             AND user_id IN (
-               SELECT id FROM "user"
-               WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
-             )
-           GROUP BY 1
-           ORDER BY 1`, cutoffBind)
-        : Promise.resolve([] as UpgraderBucketRow[]),
-      [],
-      "dashboard.trends.upgrader",
-      REWARD_QUERY_TIMEOUT_MS,
-    ).then((r) => (slots.upgrader = r)),
-
-    () => safeQuery(
-      () => hasDoubleDown
-        ? queryRows<DoubleDownBucketRow[]>(db, `
-          SELECT ${bucketDd} AS bucket,
-                 COALESCE(SUM(o.won_amount_usd::numeric), 0)::text AS double_down
-            FROM battle_double_down_offers o
-           WHERE o.result IS NOT NULL
-             AND o.resolved_at >= $1
-             AND o.user_id IN (
-               SELECT id FROM "user"
-               WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
-             )
-           GROUP BY 1
-           ORDER BY 1`, cutoffBind)
-        : Promise.resolve([] as DoubleDownBucketRow[]),
-      [],
-      "dashboard.trends.doubleDown",
-      REWARD_QUERY_TIMEOUT_MS,
-    ).then((r) => (slots.doubleDown = r)),
-
-    // Bot-prevention drop (`is_locked = true` with `locked_reason = 'bot prevention'`):
-    // the signup pipeline locks automated registrations server-side. Jun 11 had
-    // 4,141 of 4,205 same-day signups locked as bots — without this filter the
-    // chart shows the raw spike instead of the ~75/day real-customer baseline.
-    () => safeQuery(
-      () => queryRows<CountBucketRow[]>(db, `
-      SELECT ${bucketUser} AS bucket, COUNT(*)::text AS value
-        FROM "user"
-       WHERE created_at >= $1
-         AND role NOT IN ('admin', 'support') ${blacklistIdNotIn}
-         AND is_locked = false
-       GROUP BY 1
-       ORDER BY 1`, cutoffBind),
-      [],
-      "dashboard.trends.signups",
-      REWARD_QUERY_TIMEOUT_MS,
-    ).then((r) => (slots.signups = r)),
-
-    () => safeQuery(
-      () => queryRows<AttributionBucketRow[]>(db, `
-      WITH customers AS (
-        -- under_creator used to be a correlated EXISTS in this CTE's target
-        -- list. PostgreSQL inlines the single-reference CTE, which pulls that
-        -- SubPlan up into the join, where it is re-evaluated per WAGER EVENT
-        -- instead of once per customer -- millions of index probes for a fact
-        -- that has exactly one value per user. A join computes it once per
-        -- customer; ref.id is the primary key, so it can never duplicate a
-        -- row. The inner subquery keeps "user" alone in scope because the
-        -- blacklist fragment interpolated below refers to a bare id.
+  // The old money path ran four independent queries: ledger, upgrader,
+  // double-down, and then a second full scan of all wager events solely for
+  // creator attribution. This normalized event stream scans each source once,
+  // joins customer scope once, and derives all six money series in one GROUP.
+  const moneyPromise = safeQuery(
+    () =>
+      queryRows<MoneyBucketRow[]>(
+        db,
+        `
+      WITH customers AS MATERIALIZED (
         SELECT u.id, (ref.id IS NOT NULL) AS under_creator
           FROM (
             SELECT id, referred_by
@@ -448,31 +313,66 @@ async function fetchTrendSeriesPg(
           ) u
           LEFT JOIN "user" ref
             ON ref.id = u.referred_by AND ref.role = 'creator'
-      ), wager_events AS (
-        SELECT lt.user_id, ABS(lt.amount::numeric) AS amount, lt.created_at
-          FROM ledger_transactions lt
-         WHERE lt.status = 'completed'
-           AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','keno_bet')
-           AND lt.created_at >= $1
+      ), events AS (
+        SELECT user_id, type::text AS type, amount::numeric AS amount, created_at
+          FROM ledger_transactions
+         WHERE type::text IN ('pack_opening','battle_bet','battle_sponsorship','keno_bet','deposit')
+           AND status = 'completed'
+           AND created_at >= $1
            AND ${WAGER_LEG_FILTER}
-        ${attributionUpgraderUnion}
-        ${attributionDoubleDownUnion}
+        UNION ALL
+        SELECT i.user_id, 'deposit_refund'::text,
+               -${fiatRefundCreditUsdSql("i")},
+               ${fiatRefundAttributionTimestampSql("i")}
+          FROM fiat_deposit_intents i
+         WHERE i.status IN ('partially_refunded', 'refunded')
+           AND ${fiatRefundAttributionTimestampSql("i")} >= $1
+        ${upgraderUnion}
+        ${doubleDownUnion}
       )
-      SELECT ${dashboardChartBucketExpr("e.created_at", period)} AS bucket,
-             COALESCE(SUM(CASE WHEN NOT c.under_creator THEN e.amount ELSE 0 END), 0)::text AS organic,
-             COALESCE(SUM(CASE WHEN c.under_creator THEN e.amount ELSE 0 END), 0)::text AS creator_attributed
-        FROM wager_events e
+      SELECT ${bucketEvent} AS bucket,
+             COALESCE(SUM(ABS(e.amount)) FILTER (WHERE e.type = 'pack_opening'), 0)::text AS packs,
+             COALESCE(SUM(ABS(e.amount)) FILTER (WHERE e.type IN ('battle_bet','battle_sponsorship')), 0)::text AS battles,
+             COALESCE(SUM(ABS(e.amount)) FILTER (WHERE e.type = 'keno_bet'), 0)::text AS keno,
+             COALESCE(SUM(e.amount) FILTER (WHERE e.type = 'upgrader'), 0)::text AS upgrader,
+             COALESCE(SUM(e.amount) FILTER (WHERE e.type = 'double_down'), 0)::text AS double_down,
+             COALESCE(SUM(e.amount) FILTER (WHERE e.type IN ('deposit','deposit_refund')), 0)::text AS deposits,
+             (COUNT(DISTINCT e.user_id) FILTER (WHERE e.type = 'deposit'))::text AS active_depositors,
+             COALESCE(SUM(ABS(e.amount)) FILTER (
+               WHERE e.type IN ('pack_opening','battle_bet','battle_sponsorship','keno_bet','upgrader','double_down')
+                 AND NOT c.under_creator
+             ), 0)::text AS organic,
+             COALESCE(SUM(ABS(e.amount)) FILTER (
+               WHERE e.type IN ('pack_opening','battle_bet','battle_sponsorship','keno_bet','upgrader','double_down')
+                 AND c.under_creator
+             ), 0)::text AS creator_attributed
+        FROM events e
         JOIN customers c ON c.id = e.user_id
        GROUP BY 1
-       ORDER BY 1`, cutoffBind),
-      [],
-      "dashboard.trends.attribution",
-      REWARD_QUERY_TIMEOUT_MS,
-    ).then((r) => (slots.attribution = r)),
+       ORDER BY 1`,
+        cutoffBind,
+      ),
+    [],
+    "dashboard.trends.money",
+    REWARD_QUERY_TIMEOUT_MS,
+  ).then((result) => (slots.money = result));
 
-    () => safeQuery(
-      () => queryRows<FtdBucketRow[]>(db, `
-      WITH first_deposits AS (
+  // Signups and FTDs touch different base relations, but share one checkout
+  // and one wire response. Keeping this separate from money preserves useful
+  // partial rendering if either broad workload times out.
+  const acquisitionPromise = safeQuery(
+    () =>
+      queryRows<AcquisitionBucketRow[]>(
+        db,
+        `
+      WITH signup_buckets AS (
+        SELECT ${bucketUser} AS bucket, COUNT(*)::text AS count
+          FROM "user"
+         WHERE created_at >= $1
+           AND role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+           AND is_locked = false
+         GROUP BY 1
+      ), first_deposits AS (
         SELECT DISTINCT ON (lt.user_id)
                lt.user_id,
                (lt.amount::numeric - COALESCE(${fiatRefundCreditUsdSql("i")}, 0)) AS amount,
@@ -487,23 +387,31 @@ async function fetchTrendSeriesPg(
              WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
            )
          ORDER BY lt.user_id, lt.created_at ASC
+      ), ftd_buckets AS (
+        SELECT ${bucketFtd} AS bucket,
+               COUNT(*)::text AS count,
+               COALESCE(SUM(amount), 0)::text AS total
+          FROM first_deposits fd
+         WHERE fd.created_at >= $1
+         GROUP BY 1
       )
-      SELECT ${bucketFtd} AS bucket,
-             COUNT(*)::text AS count,
-             COALESCE(SUM(amount), 0)::text AS total
-        FROM first_deposits fd
-       WHERE fd.created_at >= $1
-       GROUP BY 1
-       ORDER BY 1`, cutoffBind),
-      [],
-      "dashboard.trends.ftds",
-      REWARD_QUERY_TIMEOUT_MS,
-    ).then((r) => (slots.ftds = r)),
-  ] as const, 2);
+      SELECT 'signup'::text AS kind, bucket, count, '0'::text AS total
+        FROM signup_buckets
+      UNION ALL
+      SELECT 'ftd'::text AS kind, bucket, count, total
+        FROM ftd_buckets
+      ORDER BY bucket, kind`,
+        cutoffBind,
+      ),
+    [],
+    "dashboard.trends.acquisition",
+    REWARD_QUERY_TIMEOUT_MS,
+  ).then((result) => (slots.acquisition = result));
+
+  await Promise.all([moneyPromise, acquisitionPromise]);
 
   return buildTrendSnapshot(slots, period);
 }
-
 
 /** Uncached PostgreSQL computation wrapped by cachedDashboardTrendSeries. */
 async function fetchDashboardTrendSeriesInner(
@@ -546,7 +454,7 @@ export function emptyDashboardTrendSeries(
  *
  * A snapshot with any unavailable leg is deliberately refused a main-cache
  * entry (see below), so while one leg stays slow NOTHING is ever cached and
- * every single request re-pays the whole six-leg fan-out — which is precisely
+ * every single request re-pays the whole aggregate fan-out — which is precisely
  * what keeps the mirror pool saturated and that leg slow. This short window
  * breaks the feedback loop without weakening the invariant it protects: a
  * partial snapshot lives under its own key and can never replace the
@@ -563,7 +471,7 @@ export async function getDashboardTrendSeries(
     return fetchDashboardTrendSeriesInner(period, blacklistIdNotIn, env);
   }
 
-  const key = buildCacheKey("dashboard-trends-v5-all-games-attribution", [
+  const key = buildCacheKey("dashboard-trends-v6-consolidated", [
     env,
     period,
     hashString(blacklistIdNotIn),
@@ -583,36 +491,25 @@ async function loadDashboardTrendSnapshot(
   env: DbEnv,
   key: string,
 ): Promise<DashboardTrendSeries> {
-  // Legs publish into `slots` as they settle, so this stays populated even when
-  // the outer race below gives up — that is what keeps a single slow leg from
-  // blanking all six charts.
+  // Query groups publish into `slots` as they settle, so this stays populated
+  // even when the outer race below gives up.
   const slots = emptyTrendLegSlots();
   try {
-    return await cacheGetOrSetStale(
-      key,
-      60,
-      24 * 60 * 60,
-      async () => {
-        const result = await withTimeout(
-          () =>
-            fetchDashboardTrendSeriesInner(
-              period,
-              blacklistIdNotIn,
-              env,
-              slots,
-            ),
-          TREND_SNAPSHOT_TIMEOUT_MS,
-        );
-        // Only a COMPLETE snapshot earns a cache entry: caching a degraded one
-        // would pin a half-empty grid for the full 60s fresh window and hide a
-        // recovery. `cacheGetOrSetStale` serves the last good retained value
-        // when this throws, so a degraded refresh never blanks a healthy cache.
-        if (!isCompleteTrendSnapshot(result)) {
-          throw new Error("dashboard trend snapshot was incomplete");
-        }
-        return result;
-      },
-    );
+    return await cacheGetOrSetStale(key, 60, 24 * 60 * 60, async () => {
+      const result = await withTimeout(
+        () =>
+          fetchDashboardTrendSeriesInner(period, blacklistIdNotIn, env, slots),
+        TREND_SNAPSHOT_TIMEOUT_MS,
+      );
+      // Only a COMPLETE snapshot earns a cache entry: caching a degraded one
+      // would pin a half-empty grid for the full 60s fresh window and hide a
+      // recovery. `cacheGetOrSetStale` serves the last good retained value
+      // when this throws, so a degraded refresh never blanks a healthy cache.
+      if (!isCompleteTrendSnapshot(result)) {
+        throw new Error("dashboard trend snapshot was incomplete");
+      }
+      return result;
+    });
   } catch {
     // Serve whatever legs finished. Previously this returned the all-false
     // empty snapshot whenever the outer timeout fired (the assignment never

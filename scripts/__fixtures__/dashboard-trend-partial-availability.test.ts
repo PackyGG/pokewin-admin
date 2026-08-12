@@ -3,8 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { runWithConcurrency } from "../../src/lib/promise-pool";
-import { withTimeout, isQueryTimeoutError } from "../../src/lib/errors/safe-query";
+import {
+  withTimeout,
+  isQueryTimeoutError,
+} from "../../src/lib/errors/safe-query";
 
 const repoRoot = process.cwd();
 
@@ -64,29 +66,44 @@ test("the aggregate trend timeout stays above the per-leg query timeout", () => 
   );
 });
 
-test("every trend leg publishes its slot as it settles", () => {
+test("trend SQL is consolidated to a three-statement budget", () => {
   const trendSource = read(TREND_SOURCE);
 
-  for (const leg of [
-    "ledger",
-    "upgrader",
-    "doubleDown",
-    "signups",
-    "attribution",
-    "ftds",
-  ]) {
+  for (const group of ["money", "acquisition"]) {
     assert.match(
       trendSource,
-      new RegExp(`\\.then\\(\\(r\\) => \\(slots\\.${leg} = r\\)\\)`),
-      `leg "${leg}" must publish into the shared slots object so a timed-out ` +
+      new RegExp(
+        `\\.then\\(\\(result\\) => \\(slots\\.${group} = result\\)\\)`,
+      ),
+      `group "${group}" must publish into the shared slots object so a timed-out ` +
         `snapshot still serves it`,
     );
   }
 
-  // Both table probes gate the `wagers` availability flag, so their outcome
-  // has to survive into the slots too.
-  assert.match(trendSource, /slots\.upgraderProbeOk = upgProbe\.error === null/);
-  assert.match(trendSource, /slots\.doubleDownProbeOk = ddProbe\.error === null/);
+  assert.match(
+    trendSource,
+    /slots\.schemaProbeOk = schemaProbe\.error === null/,
+  );
+
+  const fetchBody = trendSource.slice(
+    trendSource.indexOf("async function fetchTrendSeriesPg"),
+    trendSource.indexOf("/** Uncached PostgreSQL computation"),
+  );
+  assert.equal(
+    fetchBody.match(/queryRows</g)?.length,
+    3,
+    "a cold trend refresh must use exactly one schema probe and two aggregate statements",
+  );
+  assert.doesNotMatch(
+    fetchBody,
+    /dashboard\.trends\.(ledger|upgrader|doubleDown|signups|attribution|ftds)"/,
+  );
+  assert.match(fetchBody, /WITH customers AS MATERIALIZED/);
+  assert.equal(
+    fetchBody.match(/FROM ledger_transactions/g)?.length,
+    2,
+    "ledger must be scanned once for money and once for first deposits, never again for attribution",
+  );
 });
 
 test("a timed-out trend snapshot degrades to partial data, never to all-false", () => {
@@ -108,16 +125,13 @@ test("a timed-out trend snapshot degrades to partial data, never to all-false", 
   assert.match(trendSource, /snapshot was incomplete/);
 });
 
-test("slot publication survives an aggregate timeout (behavioural)", async () => {
-  // Faithful reproduction of the leg pipeline: six tasks at concurrency 2,
-  // each publishing into a shared slots object, raced against an outer bound
-  // that fires before the slowest leg completes.
+test("group publication survives an aggregate timeout (behavioural)", async () => {
   const slots: Record<string, string | null> = {
-    a: null, b: null, c: null, d: null, e: null, f: null,
+    money: null,
+    acquisition: null,
   };
-  const names = ["a", "b", "c", "d", "e", "f"];
 
-  const settle = (name: string, ms: number) => () =>
+  const settle = (name: string, ms: number) =>
     new Promise<void>((resolve) => {
       setTimeout(() => {
         slots[name] = `done:${name}`;
@@ -125,30 +139,22 @@ test("slot publication survives an aggregate timeout (behavioural)", async () =>
       }, ms);
     });
 
-  // a–d are quick; e and f outlive the outer bound.
-  const tasks = [
-    settle("a", 5),
-    settle("b", 5),
-    settle("c", 10),
-    settle("d", 10),
-    settle("e", 5_000),
-    settle("f", 5_000),
-  ] as const;
-
   let timedOut = false;
   try {
-    await withTimeout(() => runWithConcurrency(tasks, 2), 120);
+    await withTimeout(
+      () => Promise.all([settle("money", 5), settle("acquisition", 5_000)]),
+      120,
+    );
   } catch (err) {
     timedOut = isQueryTimeoutError(err);
   }
 
   assert.equal(timedOut, true, "the outer bound should have fired");
 
-  const settled = names.filter((n) => slots[n] !== null);
-  assert.ok(
-    settled.length >= 4,
-    `legs that finished before the timeout must remain readable, got ${settled.join(",")}`,
+  assert.equal(slots.money, "done:money");
+  assert.equal(
+    slots.acquisition,
+    null,
+    "the slow group must still be unavailable",
   );
-  assert.equal(slots.e, null, "the slow leg must still be unavailable");
-  assert.equal(slots.f, null, "the slow leg must still be unavailable");
 });

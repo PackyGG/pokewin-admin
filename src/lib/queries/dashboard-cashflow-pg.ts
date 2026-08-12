@@ -108,63 +108,75 @@ async function computeCashflow(
       "i.user_id",
     );
 
-    type DepRow = { amt: string; cnt: string };
-    type CardRow = { amt: string; cnt: string };
-    type ManualRow = { amt: string; cnt: string };
-    type RefundRow = { amt: string };
+    type CashflowRow = {
+      deposit_amt: string;
+      deposit_count: string;
+      card_amt: string;
+      card_count: string;
+      manual_amt: string;
+      manual_count: string;
+      refund_amt: string;
+    };
     const cutoffBind = cutoff.toISOString();
 
-    const [dep, card, manual, refunds] = await Promise.all([
-      queryRows<DepRow[]>(db,
-        `SELECT COALESCE(SUM(lt.amount::numeric), 0)::text AS amt,
-                COUNT(*)::text AS cnt
+    // One statement replaces four concurrent pool checkouts. The ledger CTE
+    // reads the window once and derives deposits + manual withdrawals with
+    // FILTER aggregates; the other small relations join as single-row CTEs.
+    // This also gives PostgreSQL one consistent snapshot for every number in
+    // the cash-flow card.
+    const rows = await queryRows<CashflowRow[]>(
+      db,
+      `WITH ledger AS (
+         SELECT
+           COALESCE(SUM(lt.amount::numeric)
+             FILTER (WHERE lt.type::text = 'deposit'), 0)::text AS deposit_amt,
+           (COUNT(*) FILTER (WHERE lt.type::text = 'deposit'))::text AS deposit_count,
+           COALESCE(SUM(COALESCE(
+             NULLIF(lt.metadata->>'withdrawal_amount_usd', '')::numeric,
+             ABS(lt.amount::numeric)
+           )) FILTER (
+             WHERE lt.type::text = 'admin_balance_adjustment'
+               AND lt.description ILIKE 'Manual withdrawal:%'
+           ), 0)::text AS manual_amt,
+           (COUNT(*) FILTER (
+             WHERE lt.type::text = 'admin_balance_adjustment'
+               AND lt.description ILIKE 'Manual withdrawal:%'
+           ))::text AS manual_count
          FROM ledger_transactions lt
          WHERE lt.status = 'completed'
-           AND lt.type::text = 'deposit'
            AND lt.created_at >= $1
-           AND ${scopeLt}`,
-        cutoffBind,
-      ),
-      queryRows<CardRow[]>(db,
-        `SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS amt,
-                COUNT(*)::text AS cnt
+           AND lt.type::text IN ('deposit', 'admin_balance_adjustment')
+           AND ${scopeLt}
+       ), cards AS (
+         SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS card_amt,
+                COUNT(*)::text AS card_count
          FROM card_withdrawal_requests cwr
          WHERE cwr.status IN ('completed', 'shipped')
            AND COALESCE(cwr.shipped_at, cwr.completed_at) >= $1
-           AND ${scopeCwr}`,
-        cutoffBind,
-      ),
-      queryRows<ManualRow[]>(db,
-        `SELECT COALESCE(SUM(COALESCE(
-                  NULLIF(lt.metadata->>'withdrawal_amount_usd', '')::numeric,
-                  ABS(lt.amount::numeric)
-                )), 0)::text AS amt,
-                COUNT(*)::text AS cnt
-         FROM ledger_transactions lt
-         WHERE lt.status = 'completed'
-           AND lt.type::text = 'admin_balance_adjustment'
-           AND lt.description ILIKE 'Manual withdrawal:%'
-           AND lt.created_at >= $1
-           AND ${scopeLt}`,
-        cutoffBind,
-      ),
-      queryRows<RefundRow[]>(db,
-        `SELECT COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::text AS amt
+           AND ${scopeCwr}
+       ), refunds AS (
+         SELECT COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::text AS refund_amt
          FROM fiat_deposit_intents i
          WHERE i.status IN ('partially_refunded', 'refunded')
            AND ${fiatRefundAttributionTimestampSql("i")} >= $1
-           AND ${scopeIntent}`,
-        cutoffBind,
-      ),
-    ]);
+           AND ${scopeIntent}
+       )
+       SELECT ledger.deposit_amt, ledger.deposit_count,
+              cards.card_amt, cards.card_count,
+              ledger.manual_amt, ledger.manual_count,
+              refunds.refund_amt
+       FROM ledger CROSS JOIN cards CROSS JOIN refunds`,
+      cutoffBind,
+    );
 
-    const deposits = toNumber(dep[0]?.amt);
-    const depositCount = Number(dep[0]?.cnt ?? 0);
-    const cardWd = toNumber(card[0]?.amt);
-    const cardWdCount = Number(card[0]?.cnt ?? 0);
-    const manualWd = toNumber(manual[0]?.amt);
-    const manualWdCount = Number(manual[0]?.cnt ?? 0);
-    const attributedRefunds = toNumber(refunds[0]?.amt);
+    const row = rows[0];
+    const deposits = toNumber(row?.deposit_amt);
+    const depositCount = Number(row?.deposit_count ?? 0);
+    const cardWd = toNumber(row?.card_amt);
+    const cardWdCount = Number(row?.card_count ?? 0);
+    const manualWd = toNumber(row?.manual_amt);
+    const manualWdCount = Number(row?.manual_count ?? 0);
+    const attributedRefunds = toNumber(row?.refund_amt);
 
     return {
       deposits,
@@ -196,7 +208,7 @@ const cachedCashflow = unstable_cache(
     void _window; // cache-key discriminator only
     return computeCashflow(new Date(cutoffIso), blacklist);
   },
-  ["dashboard-cashflow-pg-v2-refund-attribution"],
+  ["dashboard-cashflow-pg-v3-consolidated"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 

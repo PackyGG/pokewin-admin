@@ -6,8 +6,12 @@ import { fileURLToPath } from "node:url";
 
 import { runWithConcurrency } from "../../src/lib/promise-pool";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const read = (relative: string) => readFileSync(path.join(root, relative), "utf8");
+const root = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
+const read = (relative: string) =>
+  readFileSync(path.join(root, relative), "utf8");
 
 /**
  * A rejected batch used to keep running. `Promise.all` rejects on the first
@@ -47,7 +51,7 @@ test("runWithConcurrency stops pulling work in EVERY worker after a rejection", 
 /**
  * An incomplete snapshot is deliberately never written under the main key, so
  * one permanently-slow leg meant nothing was EVER cached and every request
- * re-paid the six-leg fan-out — which is what keeps the mirror pool saturated
+ * re-paid the aggregate fan-out — which is what keeps the mirror pool saturated
  * and that leg slow. The short served-snapshot window breaks the loop; the
  * invariant it must not break is that a partial never lands on the main key.
  */
@@ -74,8 +78,8 @@ test("the dashboard trend fan-out is relieved without caching a partial over the
 test("wager attribution resolves creator referral by join, not by a per-row subplan", () => {
   const source = read("src/lib/queries/dashboard-trend-series.ts");
   const customersCte = source.slice(
-    source.indexOf("WITH customers AS ("),
-    source.indexOf("), wager_events AS ("),
+    source.indexOf("WITH customers AS MATERIALIZED ("),
+    source.indexOf("), events AS ("),
   );
 
   assert.ok(customersCte.length > 0, "the customers CTE must still exist");
@@ -130,7 +134,10 @@ test("a retried Whop auto-ban recognises its own earlier ban", () => {
   assert.match(source, /AND is_banned = TRUE/);
   assert.match(source, /AND banned_by IS NULL/);
   assert.match(source, /AND banned_reason = \$\{target\.reason\}/);
-  assert.match(source, /if \(priorAutoBan\.rows\.length !== 1\) return "skipped";/);
+  assert.match(
+    source,
+    /if \(priorAutoBan\.rows\.length !== 1\) return "skipped";/,
+  );
   // The guarded UPDATE and the session revoke stay exactly as they were.
   assert.match(source, /AND is_banned = FALSE/);
   assert.match(source, /DELETE FROM session/);

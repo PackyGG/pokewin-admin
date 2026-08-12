@@ -16,10 +16,13 @@ test("dashboard KPI and trend sections retain successful snapshots", () => {
   assert.match(kpiSource, /cacheGetOrSetStale/);
   assert.match(kpiSource, /dashboard-kpi-v5-organic-all-games/);
   assert.match(kpiSource, /24 \* 60 \* 60/);
-  assert.match(kpiSource, /must never replace a complete last-known-good snapshot/);
+  assert.match(
+    kpiSource,
+    /must never replace a complete last-known-good snapshot/,
+  );
 
   assert.match(trendSource, /cacheGetOrSetStale/);
-  assert.match(trendSource, /dashboard-trends-v5-all-games-attribution/);
+  assert.match(trendSource, /dashboard-trends-v6-consolidated/);
   assert.match(trendSource, /snapshot was incomplete/);
 });
 
@@ -30,8 +33,15 @@ test("dashboard trends load only chart data with bounded query fan-out", () => {
   assert.match(pageSource, /getScopedDashboardTrendSeries/);
   assert.doesNotMatch(pageSource, /getDashboardStats\(/);
   assert.doesNotMatch(pageSource, /label="Trends"/);
-  assert.match(trendSource, /runWithConcurrency\(\[/);
-  assert.match(trendSource, /\] as const, 2\)/);
+  assert.match(
+    trendSource,
+    /Promise\.all\(\[moneyPromise, acquisitionPromise\]\)/,
+  );
+  assert.equal(
+    trendSource.match(/queryRows</g)?.length,
+    3,
+    "trend cold misses must stay at one schema probe plus two aggregate statements",
+  );
 });
 
 test("cold failures stay isolated to individual dashboard tiles", () => {

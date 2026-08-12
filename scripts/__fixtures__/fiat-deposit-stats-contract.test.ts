@@ -4,7 +4,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const root = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
 
 function source(relativePath: string): string {
   return readFileSync(path.join(root, relativePath), "utf8");
@@ -122,18 +125,12 @@ test("dashboard and analytics surfaces stay wired to inclusive aggregates", () =
     "src/app/(admin)/analytics/tab-cost-breakdown.tsx",
   );
 
-  assert.match(
-    dashboardWindow,
-    /getDashboardCashflowFromPostgres\(window\)/,
-  );
+  assert.match(dashboardWindow, /getDashboardCashflowFromPostgres\(window\)/);
   // The today tile must stay on the canonical windowed-delta path — either
   // form (parallel legs or the one-shot CTE variant the uncached tile uses),
   // since both build their SQL from `windowedPnlLegSql` and therefore carry
   // the refund-aware net-deposit contract.
-  assert.match(
-    dashboardToday,
-    /calculateWindowedPnl(OneShot)?\(\{\s*since,?/,
-  );
+  assert.match(dashboardToday, /calculateWindowedPnl(OneShot)?\(\{\s*since,?/);
   assert.match(analyticsOverview, /getAnalyticsData\(period\)/);
   assert.match(analyticsOverview, /getTopDepositors\(window\.key\)/);
   assert.match(analyticsMap, /getUsersByCountry\(period\)/);
@@ -141,14 +138,34 @@ test("dashboard and analytics surfaces stay wired to inclusive aggregates", () =
 });
 
 test("dashboard cash-flow copy describes fiat and crypto deposits", () => {
-  const todayCard = source(
-    "src/app/(admin)/dashboard/today-pnl-stat-card.tsx",
-  );
+  const todayCard = source("src/app/(admin)/dashboard/today-pnl-stat-card.tsx");
   const charts = source("src/app/(admin)/dashboard/charts.tsx");
 
   assert.match(todayCard, /completed fiat \+ crypto deposits/);
   assert.match(charts, /completed fiat \+ crypto inflow/);
   assert.doesNotMatch(charts, /(?:actual|raw) crypto (?:inflow|cash flow)/);
+});
+
+test("dashboard cash-flow uses one consistent database statement", () => {
+  const cashflow = source("src/lib/queries/dashboard-cashflow-pg.ts");
+  const compute = cashflow.slice(
+    cashflow.indexOf("async function computeCashflow"),
+    cashflow.indexOf("const cachedCashflow"),
+  );
+
+  assert.equal(
+    compute.match(/queryRows</g)?.length,
+    1,
+    "cash-flow must use one checkout instead of four independent statements",
+  );
+  assert.equal(
+    compute.match(/FROM ledger_transactions/g)?.length,
+    1,
+    "deposits and manual withdrawals must share one bounded ledger scan",
+  );
+  assert.match(compute, /WITH ledger AS \(/);
+  assert.match(compute, /FILTER \(WHERE lt\.type::text = 'deposit'\)/);
+  assert.match(compute, /CROSS JOIN cards CROSS JOIN refunds/);
 });
 
 test("lifetime PnL starts from credited balances and reverses finalized refunds", () => {
