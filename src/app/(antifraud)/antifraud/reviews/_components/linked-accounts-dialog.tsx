@@ -47,11 +47,15 @@ export function LinkedAccountsDialog({ reviewId }: { reviewId: string }) {
   const [confirm, setConfirm] = useState("");
   const [loading, startLoading] = useTransition();
   const [banning, startBanning] = useTransition();
+  const loadInFlight = useRef(false);
+  const banInFlight = useRef(false);
   const idempotencyKey = useRef<string | null>(null);
   const effectiveReason =
     reasonOption === "custom" ? customReason.trim() : reasonOption;
 
   function load() {
+    if (loadInFlight.current) return;
+    loadInFlight.current = true;
     startLoading(async () => {
       try {
         const result = await fetchReviewLinkedAccounts({ reviewId });
@@ -66,6 +70,8 @@ export function LinkedAccountsDialog({ reviewId }: { reviewId: string }) {
       } catch (error) {
         setAccounts([]);
         toast.error(clientActionError(error, "Linked accounts could not be loaded"));
+      } finally {
+        loadInFlight.current = false;
       }
     });
   }
@@ -80,12 +86,14 @@ export function LinkedAccountsDialog({ reviewId }: { reviewId: string }) {
   }
 
   function banSelected() {
+    if (banInFlight.current) return;
     if (
       selected.size === 0 ||
       effectiveReason.length < 4 ||
       !credential ||
       confirm !== "BAN SELECTED"
     ) return;
+    banInFlight.current = true;
     startBanning(async () => {
       try {
         idempotencyKey.current ??= crypto.randomUUID();
@@ -121,6 +129,8 @@ export function LinkedAccountsDialog({ reviewId }: { reviewId: string }) {
         toast.success(`Banned ${outcome.bannedCount} linked account${outcome.bannedCount === 1 ? "" : "s"}.`);
       } catch (error) {
         toast.error(clientActionError(error, "The linked accounts could not be banned"));
+      } finally {
+        banInFlight.current = false;
       }
     });
   }

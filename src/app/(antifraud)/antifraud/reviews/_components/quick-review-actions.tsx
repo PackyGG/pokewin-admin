@@ -82,6 +82,8 @@ const ACTIONS: Array<{
   },
 ];
 
+type ReviewActionLock = { current: boolean };
+
 export function QuickReviewActions({
   reviewId,
   targetUserId,
@@ -97,6 +99,8 @@ export function QuickReviewActions({
 }) {
   const dismissal = useReviewCaseDismissal();
   const terminal = status === "cleared" || status === "flagged";
+  const actionLock = useRef(false);
+  const [actionPending, setActionPending] = useState(false);
 
   useEffect(() => {
     if (!dismissal || terminal) return;
@@ -123,6 +127,9 @@ export function QuickReviewActions({
           account={targetUsername ?? targetUserId}
           status={status}
           compact={compact}
+          actionLock={actionLock}
+          actionPending={actionPending}
+          setActionPending={setActionPending}
           onActionCompleted={dismissal?.completeAction}
         />
       ))}
@@ -130,12 +137,18 @@ export function QuickReviewActions({
         reviewId={reviewId}
         account={targetUsername ?? targetUserId}
         compact={compact}
+        actionLock={actionLock}
+        actionPending={actionPending}
+        setActionPending={setActionPending}
         onActionCompleted={dismissal?.completeAction}
       />
       <PostponeButton
         reviewId={reviewId}
         status={status}
         compact={compact}
+        actionLock={actionLock}
+        actionPending={actionPending}
+        setActionPending={setActionPending}
         onActionCompleted={dismissal?.completeAction}
       />
     </div>
@@ -146,11 +159,17 @@ function PostponeButton({
   reviewId,
   status,
   compact,
+  actionLock,
+  actionPending,
+  setActionPending,
   onActionCompleted,
 }: {
   reviewId: string;
   status: string;
   compact: boolean;
+  actionLock: ReviewActionLock;
+  actionPending: boolean;
+  setActionPending: (pending: boolean) => void;
   onActionCompleted?: () => void;
 }) {
   const router = useRouter();
@@ -158,6 +177,9 @@ function PostponeButton({
   const idempotencyKey = useRef<string | null>(null);
 
   function handlePostpone() {
+    if (actionLock.current) return;
+    actionLock.current = true;
+    setActionPending(true);
     startTransition(async () => {
       try {
         idempotencyKey.current ??= crypto.randomUUID();
@@ -177,6 +199,9 @@ function PostponeButton({
         toast.error(
           clientActionError(error, "The action failed"),
         );
+      } finally {
+        actionLock.current = false;
+        setActionPending(false);
       }
     });
   }
@@ -186,7 +211,7 @@ function PostponeButton({
       type="button"
       size="sm"
       variant="outline"
-      disabled={pending}
+      disabled={pending || actionPending}
       onClick={handlePostpone}
       className={cn(
         "border-orange-500/40 bg-orange-500/10 text-orange-700 hover:bg-orange-500/20 hover:text-orange-800 dark:text-orange-300 dark:hover:text-orange-200",
@@ -211,11 +236,17 @@ function RequireKycButton({
   reviewId,
   account,
   compact,
+  actionLock,
+  actionPending,
+  setActionPending,
   onActionCompleted,
 }: {
   reviewId: string;
   account: string;
   compact: boolean;
+  actionLock: ReviewActionLock;
+  actionPending: boolean;
+  setActionPending: (pending: boolean) => void;
   onActionCompleted?: () => void;
 }) {
   const router = useRouter();
@@ -233,6 +264,9 @@ function RequireKycButton({
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (actionLock.current) return;
+    actionLock.current = true;
+    setActionPending(true);
     startTransition(async () => {
       try {
         idempotencyKey.current ??= crypto.randomUUID();
@@ -255,6 +289,9 @@ function RequireKycButton({
         toast.error(
           clientActionError(error, "The action failed"),
         );
+      } finally {
+        actionLock.current = false;
+        setActionPending(false);
       }
     });
   }
@@ -273,7 +310,7 @@ function RequireKycButton({
             type="button"
             size="sm"
             variant="outline"
-            disabled={pending}
+            disabled={pending || actionPending}
             className={cn(compact && "h-8 px-2.5 text-xs")}
           />
         }
@@ -347,12 +384,18 @@ function QuickActionButton({
   account,
   status,
   compact,
+  actionLock,
+  actionPending,
+  setActionPending,
   onActionCompleted,
 }: (typeof ACTIONS)[number] & {
   reviewId: string;
   account: string;
   status: string;
   compact: boolean;
+  actionLock: ReviewActionLock;
+  actionPending: boolean;
+  setActionPending: (pending: boolean) => void;
   onActionCompleted?: () => void;
 }) {
   const router = useRouter();
@@ -366,6 +409,9 @@ function QuickActionButton({
     reasonOption === "custom" ? customReason.trim() : reasonOption;
 
   function handleConfirm() {
+    if (actionLock.current) return;
+    actionLock.current = true;
+    setActionPending(true);
     startTransition(async () => {
       try {
         idempotencyKey.current ??= crypto.randomUUID();
@@ -406,6 +452,9 @@ function QuickActionButton({
         toast.error(
           clientActionError(error, "The action failed"),
         );
+      } finally {
+        actionLock.current = false;
+        setActionPending(false);
       }
     });
   }
@@ -418,7 +467,7 @@ function QuickActionButton({
             type="button"
             size="sm"
             variant={variant}
-            disabled={pending}
+            disabled={pending || actionPending}
             className={cn(
               action === "fine" &&
                 "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 dark:border-emerald-500 dark:bg-emerald-600 dark:hover:bg-emerald-500",

@@ -14,7 +14,6 @@ import {
 } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { antifraud_review_notes, antifraud_reviews, antifraud_signals } from "@/lib/db-schema/admin/schema";
-import { user, user_feature_locks } from "@/lib/db-schema/main/schema";
 import { getReadDrizzleDb } from "@/lib/db";
 import { isPostgresError } from "@/lib/postgres-errors";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
@@ -108,7 +107,6 @@ export type ReviewRow = {
 export type ReviewListItem = ReviewRow & {
   assignee: AdminIdentity | null;
   opener: AdminIdentity | null;
-  workflow: ReviewWorkflow | null;
   /** Exact time the automatic containment write completed. */
   automatedActionAt: Date | null;
 };
@@ -285,7 +283,7 @@ export async function listReviews(
       .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(antifraud_reviews.created_at)).limit(limit);
 
-    return await attachIdentities(rows);
+    return await attachQueueEnrichment(rows, { automatedActionTimes: true });
   } catch (err) {
     if (!isMissingRelationError(err)) {
       console.error("[antifraud] listReviews failed:", err);
@@ -294,23 +292,23 @@ export async function listReviews(
   }
 }
 
-async function attachIdentities(
+async function attachQueueEnrichment(
   rows: (typeof antifraud_reviews.$inferSelect)[],
+  options: { automatedActionTimes: boolean },
 ): Promise<ReviewListItem[]> {
-  // Independent reads — the workflow lookup does not need the identities.
-  // Awaiting them in sequence put a second full round-trip on the hottest
-  // path in the workspace (every queue page and every case dialog).
-  const reviewIds = rows.map((row) => row.id);
-  const [identities, workflows, actionTimes] = await Promise.all([
+  // Queue cards do not render workflow evidence. Avoid spending one scarce
+  // ADMIN connection on it, and only load containment timestamps for the
+  // Auto banned tab where they are actually displayed.
+  const [identities, actionTimes] = await Promise.all([
     loadAdminIdentities(rows.flatMap((r) => [r.assigned_to, r.opened_by])),
-    loadReviewWorkflows(reviewIds),
-    loadAutomatedActionTimes(reviewIds),
+    options.automatedActionTimes
+      ? loadAutomatedActionTimes(rows.map((row) => row.id))
+      : Promise.resolve(new Map<string, Date>()),
   ]);
   return rows.map((row) => ({
     ...toRow(row),
     assignee: row.assigned_to ? identities.get(row.assigned_to) ?? null : null,
     opener: row.opened_by ? identities.get(row.opened_by) ?? null : null,
-    workflow: workflows.get(row.id) ?? null,
     automatedActionAt: actionTimes.get(row.id) ?? null,
   }));
 }
@@ -444,6 +442,7 @@ function decodeReviewCursor(
 export async function listReviewPage(
   filters: ReviewFilters = {},
   cursor?: string | null,
+  options: { includeTotal?: boolean } = {},
 ): Promise<ReviewPage> {
   const pageSize = Math.min(Math.max(filters.limit ?? REVIEW_PAGE_SIZE, 1), 200);
   const conditions = buildReviewConditions(filters);
@@ -470,7 +469,7 @@ export async function listReviewPage(
     }
   }
 
-  const [rows, totals] = await Promise.all([
+  const rowsPromise =
     adminDrizzle.select().from(antifraud_reviews)
       .where(pageConditions.length ? and(...pageConditions) : undefined)
       .orderBy(
@@ -480,10 +479,15 @@ export async function listReviewPage(
       )
       // One extra row is the "is there another page?" probe — cheaper and
       // race-free compared with comparing the count against the offset.
-      .limit(pageSize + 1),
-    adminDrizzle.select({ total: sql<string>`count(*)` })
-      .from(antifraud_reviews)
-      .where(conditions.length ? and(...conditions) : undefined),
+      .limit(pageSize + 1);
+  const includeTotal = options.includeTotal !== false;
+  const [rows, totals] = await Promise.all([
+    rowsPromise,
+    includeTotal
+      ? adminDrizzle.select({ total: sql<string>`count(*)` })
+          .from(antifraud_reviews)
+          .where(conditions.length ? and(...conditions) : undefined)
+      : Promise.resolve([]),
   ]);
 
   const hasMore = rows.length > pageSize;
@@ -491,7 +495,9 @@ export async function listReviewPage(
   const last = pageRows[pageRows.length - 1];
 
   return {
-    items: await attachIdentities(pageRows),
+    items: await attachQueueEnrichment(pageRows, {
+      automatedActionTimes: filters.autoBanned === true,
+    }),
     nextCursor:
       hasMore && last
         ? encodeReviewCursor(
@@ -508,7 +514,7 @@ export async function listReviewPage(
               : undefined,
           )
         : null,
-    total: Number(totals[0]?.total ?? 0),
+    total: includeTotal ? Number(totals[0]?.total ?? 0) : 0,
   };
 }
 
@@ -624,83 +630,90 @@ export async function getReviewDetail(
         safeQueryOrNull(
           async () => {
             const main = await getReadDrizzleDb();
-            const [accounts, lockRows, financialResult] = await Promise.all([
-              main.select({
-                email: user.email,
-                country: user.country,
-                countryCode: user.country_code,
-                createdAt: user.created_at,
-              }).from(user).where(eq(user.id, review.target_user_id)).limit(1),
-              main.select({
-                depositsCrypto: user_feature_locks.locked_deposits_crypto,
-                depositsFiat: user_feature_locks.locked_deposits_fiat,
-                withdrawalsCrypto:
-                  user_feature_locks.locked_withdrawals_crypto,
-                withdrawalsItems:
-                  user_feature_locks.locked_withdrawals_items,
-                inventorySales: user_feature_locks.locked_inventory_sales,
-                exchanges: user_feature_locks.locked_exchanges,
-                openings: user_feature_locks.locked_openings,
-                vault: user_feature_locks.locked_vault,
-              }).from(user_feature_locks).where(
-                eq(user_feature_locks.user_id, review.target_user_id),
-              ).limit(1),
-              main.execute<{
-                fiat_deposits: string | null;
-                crypto_deposits: string | null;
-                wagered: string | null;
-              }>(sql`
+            // Keep the production-read pool footprint at one connection per
+            // opened case. This used to fan out into three concurrent reads,
+            // and the two deposit SUMs each walked the same user's ledger
+            // rows. The partial per-user deposit index serves the single
+            // aggregate below; FILTER splits fiat/crypto in that one pass.
+            const contextResult = await main.execute<{
+              email: string | null;
+              country: string | null;
+              country_code: string | null;
+              created_at: Date | string | null;
+              deposits_crypto: string[] | null;
+              deposits_fiat: string[] | null;
+              withdrawals_crypto: string[] | null;
+              withdrawals_items: boolean | null;
+              inventory_sales: boolean | null;
+              exchanges: boolean | null;
+              openings: boolean | null;
+              vault: boolean | null;
+              fiat_deposits: string;
+              crypto_deposits: string;
+              wagered: string;
+            }>(sql`
+              SELECT
+                account.email,
+                account.country,
+                account.country_code,
+                account.created_at,
+                locks.locked_deposits_crypto AS deposits_crypto,
+                locks.locked_deposits_fiat AS deposits_fiat,
+                locks.locked_withdrawals_crypto AS withdrawals_crypto,
+                locks.locked_withdrawals_items AS withdrawals_items,
+                locks.locked_inventory_sales AS inventory_sales,
+                locks.locked_exchanges AS exchanges,
+                locks.locked_openings AS openings,
+                locks.locked_vault AS vault,
+                COALESCE(deposits.fiat, 0)::text AS fiat_deposits,
+                COALESCE(deposits.crypto, 0)::text AS crypto_deposits,
+                COALESCE(balance.total_wagered, 0)::text AS wagered
+              FROM (VALUES (${review.target_user_id}::text)) AS target(user_id)
+              LEFT JOIN "user" AS account ON account.id = target.user_id
+              LEFT JOIN user_feature_locks AS locks
+                ON locks.user_id = target.user_id
+              LEFT JOIN balances AS balance ON balance.user_id = target.user_id
+              LEFT JOIN LATERAL (
                 SELECT
-                  COALESCE((
-                    SELECT SUM(amount::numeric)
-                      FROM ledger_transactions
-                     WHERE user_id = ${review.target_user_id}
-                       AND type::text = 'deposit'
-                       AND status::text = 'completed'
-                       AND crypto_asset IS NULL
-                  ), 0)::text AS fiat_deposits,
-                  COALESCE((
-                    SELECT SUM(amount::numeric)
-                      FROM ledger_transactions
-                     WHERE user_id = ${review.target_user_id}
-                       AND type::text = 'deposit'
-                       AND status::text = 'completed'
-                       AND crypto_asset IS NOT NULL
-                  ), 0)::text AS crypto_deposits,
-                  COALESCE((
-                    SELECT total_wagered::numeric
-                      FROM balances
-                     WHERE user_id = ${review.target_user_id}
-                     LIMIT 1
-                  ), 0)::text AS wagered
-              `),
-            ]);
-            const financial = financialResult.rows[0];
-            const locks = lockRows[0];
+                  SUM(amount::numeric) FILTER (
+                    WHERE crypto_asset IS NULL
+                  ) AS fiat,
+                  SUM(amount::numeric) FILTER (
+                    WHERE crypto_asset IS NOT NULL
+                  ) AS crypto
+                FROM ledger_transactions
+                WHERE user_id = target.user_id
+                  AND type = 'deposit'
+                  AND status = 'completed'
+              ) AS deposits ON true
+            `);
+            const context = contextResult.rows[0];
             const listLock = (label: string, values: string[] | undefined) =>
               values?.length ? `${label} (${values.join(", ")})` : null;
             const activeLocks = [
-              listLock("Crypto deposits", locks?.depositsCrypto),
-              listLock("Fiat deposits", locks?.depositsFiat),
-              listLock("Crypto withdrawals", locks?.withdrawalsCrypto),
-              locks?.withdrawalsItems ? "Item withdrawals" : null,
-              locks?.inventorySales ? "Inventory sales" : null,
-              locks?.exchanges ? "Exchanges" : null,
-              locks?.openings ? "Pack openings" : null,
-              locks?.vault ? "Vault" : null,
+              listLock("Crypto deposits", context?.deposits_crypto ?? undefined),
+              listLock("Fiat deposits", context?.deposits_fiat ?? undefined),
+              listLock("Crypto withdrawals", context?.withdrawals_crypto ?? undefined),
+              context?.withdrawals_items ? "Item withdrawals" : null,
+              context?.inventory_sales ? "Inventory sales" : null,
+              context?.exchanges ? "Exchanges" : null,
+              context?.openings ? "Pack openings" : null,
+              context?.vault ? "Vault" : null,
             ].filter((value): value is string => Boolean(value));
             return {
-              account: accounts[0]
+              account: context?.created_at
                 ? {
-                    ...accounts[0],
-                    createdAt: new Date(accounts[0].createdAt),
+                    email: context.email,
+                    country: context.country,
+                    countryCode: context.country_code,
+                    createdAt: new Date(context.created_at),
                   }
                 : null,
               activeLocks,
               financialFacts: {
-                fiatDepositsUsd: toNumber(financial?.fiat_deposits),
-                cryptoDepositsUsd: toNumber(financial?.crypto_deposits),
-                wageredUsd: toNumber(financial?.wagered),
+                fiatDepositsUsd: toNumber(context?.fiat_deposits),
+                cryptoDepositsUsd: toNumber(context?.crypto_deposits),
+                wageredUsd: toNumber(context?.wagered),
               },
             };
           },

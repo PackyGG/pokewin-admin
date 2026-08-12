@@ -47,6 +47,7 @@ export function OpenCaseDialog({
   const router = useRouter();
   const [open, setOpen] = React.useState(autoOpen);
   const [loading, setLoading] = React.useState(false);
+  const submissionInFlight = React.useRef(false);
   const [targetUserId, setTargetUserId] = React.useState(
     prefill.targetUserId ?? "",
   );
@@ -68,6 +69,8 @@ export function OpenCaseDialog({
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (submissionInFlight.current) return;
+    submissionInFlight.current = true;
     setLoading(true);
     try {
       const result = await openReview({
@@ -111,6 +114,7 @@ export function OpenCaseDialog({
     } catch (err) {
       toast.error(clientActionError(err, "Could not open the case"));
     } finally {
+      submissionInFlight.current = false;
       setLoading(false);
     }
   }

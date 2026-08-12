@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import {
   getAccountReviewTabCounts,
+  getReviewDetail,
   getReviewIdForMonitorCase,
   listReviewPage,
   REVIEW_PAGE_SIZE,
@@ -139,6 +140,12 @@ export default async function ReviewQueuePage({
 
   const filterKey = `${tab}-${search ?? ""}-${cursor ?? "first"}`;
   const current = { tab, q: search, cursor };
+  // Start the clicked case before the eager queue/count reads. The Vercel
+  // ADMIN pool is intentionally one connection per instance, so call order is
+  // also priority order; case content must win over background queue chrome.
+  const directReviewDetail = directReviewId
+    ? getReviewDetail(directReviewId)
+    : undefined;
   const queueData = loadReviewQueueData(filters, cursor);
   const closeHref = buildHref({ review: undefined }, current);
   return (
@@ -177,6 +184,7 @@ export default async function ReviewQueuePage({
           {directReviewId ? (
             <ReviewDialogFromQueue
               reviewId={directReviewId}
+              detailData={directReviewDetail}
               queueData={queueData}
               current={current}
               viewerId={session.userId}
@@ -315,10 +323,21 @@ function FilterBar({
 function loadReviewQueueData(filters: ReviewFilters, cursor?: string) {
   return safeQuery(
     async () => {
+      // Without a search term the active tab count is the exact same total as
+      // the page predicates. Reuse it instead of queueing a redundant COUNT
+      // ahead of the selected case on the capacity-bounded ADMIN pool.
+      const reuseTabCount = !filters.search;
       const [page, stats] = await Promise.all([
-        listReviewPage(filters, cursor),
+        listReviewPage(filters, cursor, { includeTotal: !reuseTabCount }),
         getAccountReviewTabCounts(),
       ]);
+      if (reuseTabCount) {
+        page.total = filters.autoBanned
+          ? stats.autoBanned
+          : filters.postponed
+            ? stats.postponed
+            : stats.reviews;
+      }
       return { page, stats };
     },
     {
@@ -613,12 +632,14 @@ function ReviewDialogFromQueue({
   current,
   viewerId,
   canManage,
+  detailData,
 }: {
   reviewId: string;
   queueData: Promise<ReviewQueueData>;
   current: SearchParams;
   viewerId: string;
   canManage: boolean;
+  detailData?: ReturnType<typeof getReviewDetail>;
 }) {
   const closeHref = buildHref({ review: undefined }, current);
 
@@ -643,6 +664,7 @@ function ReviewDialogFromQueue({
       <Suspense key={reviewId} fallback={<CaseDialogSkeleton />}>
         <ReviewCaseWorkspace
           reviewId={reviewId}
+          detailData={detailData}
           viewerId={viewerId}
           canManage={canManage}
         />

@@ -56,6 +56,9 @@ test("opening a review navigates immediately and does not wait on queue data", (
     /router\.prefetch\(href\)/,
     "hovering one of many cases must not consume database capacity",
   );
+  assert.match(button, /if \(requestInFlight\.current\) return;/);
+  assert.match(button, /requestInFlight\.current = true;[\s\S]*router\.push\(href/);
+  assert.match(button, /finally \{[\s\S]*requestInFlight\.current = false;/);
   assert.match(
     page,
     /href=\{buildHref\(\{ review: review\.id \}, current\)\}[\s\S]{0,100}prefetch=\{false\}/,
@@ -65,6 +68,11 @@ test("opening a review navigates immediately and does not wait on queue data", (
   const dialogBoundary = page.indexOf('key={selectedReviewId}');
   assert.ok(queueBoundary >= 0 && dialogBoundary > queueBoundary);
   assert.match(page, /queueData={queueData}/);
+  assert.ok(
+    page.indexOf("const directReviewDetail") <
+      page.indexOf("const queueData = loadReviewQueueData"),
+    "the selected case must enter the one-connection pool before queue chrome",
+  );
   const detailStart = page.indexOf("<ReviewCaseWorkspace");
   const queueNavigationWait = page.indexOf(
     "async function ReviewQueueNavigation",
@@ -81,6 +89,30 @@ test("opening a review navigates immediately and does not wait on queue data", (
     page,
     /fallback=\{[\s\S]*?<ReviewCaseDialog closeHref=\{closeHref\}>[\s\S]*?<CaseDialogSkeleton \/>/,
   );
+});
+
+test("review controls synchronously suppress duplicate client requests", () => {
+  const dialog = source(
+    "src/app/(antifraud)/antifraud/reviews/_components/review-case-dialog.tsx",
+  );
+  const quickActions = source(
+    "src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
+  );
+  const linkedAccounts = source(
+    "src/app/(antifraud)/antifraud/reviews/_components/linked-accounts-dialog.tsx",
+  );
+  const openCase = source(
+    "src/app/(antifraud)/antifraud/reviews/_components/open-case-dialog.tsx",
+  );
+
+  assert.match(dialog, /if \(navigatingRef\.current\) \{[\s\S]*event\.preventDefault\(\)/);
+  assert.match(dialog, /prefetch=\{false\}/);
+  assert.match(dialog, /navigatingTo === "previous"[\s\S]*LoaderCircle/);
+  assert.match(quickActions, /if \(actionLock\.current\) return;/);
+  assert.match(quickActions, /disabled=\{pending \|\| actionPending\}/);
+  assert.match(linkedAccounts, /if \(loadInFlight\.current\) return;/);
+  assert.match(linkedAccounts, /if \(banInFlight\.current\) return;/);
+  assert.match(openCase, /if \(submissionInFlight\.current\) return;/);
 });
 
 test("dismissing a live review postpones it unless an action completed", () => {
@@ -125,10 +157,25 @@ test("case facts show lifetime fiat, crypto, and wager totals", () => {
 
   assert.match(reviews, /crypto_asset IS NULL/);
   assert.match(reviews, /crypto_asset IS NOT NULL/);
-  assert.match(reviews, /SELECT total_wagered::numeric/);
+  assert.match(reviews, /balance\.total_wagered/);
   assert.match(workspace, /label: "Fiat deposits"/);
   assert.match(workspace, /label: "Crypto deposits"/);
   assert.match(workspace, /label: "Wagered money"/);
+});
+
+test("review queue avoids unused enrichment and redundant common-path counts", () => {
+  const page = source("src/app/(antifraud)/antifraud/reviews/page.tsx");
+  const reviews = source("src/lib/antifraud/reviews.ts");
+
+  const enrichment = reviews.slice(
+    reviews.indexOf("async function attachQueueEnrichment"),
+    reviews.indexOf("async function loadAutomatedActionTimes"),
+  );
+  assert.doesNotMatch(enrichment, /loadReviewWorkflows/);
+  assert.match(reviews, /automatedActionTimes: filters\.autoBanned === true/);
+  assert.match(page, /const reuseTabCount = !filters\.search/);
+  assert.match(page, /includeTotal: !reuseTabCount/);
+  assert.match(page, /page\.total = filters\.autoBanned/);
 });
 
 test("case facts show one conditional box containing every active lock", () => {

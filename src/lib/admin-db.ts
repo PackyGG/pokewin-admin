@@ -27,9 +27,12 @@ function createPool(): Pool {
     connectionString: adminDatabaseUrl(),
     application_name: "pokewin-admin",
     min: 0,
-    // Every warm serverless instance owns its pool. Two connections cover
-    // request-local fan-out without exhausting the small admin database.
-    max: process.env.VERCEL ? 2 : 5,
+    // Every warm serverless instance owns its pool. Production has previously
+    // exhausted the Admin database when warm instances retained two sessions
+    // each. Keep one connection per instance and serialize the now-bounded
+    // request-local reads; the managed transaction pooler can still multiplex
+    // across instances when ADMIN_DATABASE_URL_POOLED is configured.
+    max: process.env.VERCEL ? 1 : 5,
     idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 10_000,
     statement_timeout: 30_000,

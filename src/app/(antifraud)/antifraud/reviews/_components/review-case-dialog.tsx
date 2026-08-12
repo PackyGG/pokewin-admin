@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { clientActionError } from "@/lib/errors/client-action-error";
 
@@ -149,33 +149,79 @@ export function ReviewCaseNavigation({
   previousHref?: string;
   nextHref?: string;
 }) {
+  const navigatingRef = useRef(false);
+  const [navigatingTo, setNavigatingTo] = useState<"previous" | "next" | null>(
+    null,
+  );
+
+  function beginNavigation(
+    event: React.MouseEvent<HTMLAnchorElement>,
+    direction: "previous" | "next",
+  ) {
+    // Preserve normal modified-link behavior, but synchronously suppress a
+    // second ordinary click while the next case's RSC payload is in flight.
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+    if (navigatingRef.current) {
+      event.preventDefault();
+      return;
+    }
+    navigatingRef.current = true;
+    setNavigatingTo(direction);
+  }
+
   return (
     <div className="flex shrink-0 items-center gap-1">
       <Button
         size="icon-sm"
         variant="outline"
-        disabled={!previousHref}
+        disabled={!previousHref || navigatingTo !== null}
         aria-label="Previous case"
         render={
           previousHref ? (
-            <HostLink href={previousHref} scroll={false} />
+            <HostLink
+              href={previousHref}
+              scroll={false}
+              prefetch={false}
+              onClick={(event) => beginNavigation(event, "previous")}
+            />
           ) : undefined
         }
       >
-        <ChevronLeft className="size-4" />
+        {navigatingTo === "previous" ? (
+          <LoaderCircle className="size-4 animate-spin" />
+        ) : (
+          <ChevronLeft className="size-4" />
+        )}
       </Button>
       <Button
         size="icon-sm"
         variant="outline"
-        disabled={!nextHref}
+        disabled={!nextHref || navigatingTo !== null}
         aria-label="Next case"
         render={
           nextHref ? (
-            <HostLink href={nextHref} scroll={false} />
+            <HostLink
+              href={nextHref}
+              scroll={false}
+              prefetch={false}
+              onClick={(event) => beginNavigation(event, "next")}
+            />
           ) : undefined
         }
       >
-        <ChevronRight className="size-4" />
+        {navigatingTo === "next" ? (
+          <LoaderCircle className="size-4 animate-spin" />
+        ) : (
+          <ChevronRight className="size-4" />
+        )}
       </Button>
     </div>
   );

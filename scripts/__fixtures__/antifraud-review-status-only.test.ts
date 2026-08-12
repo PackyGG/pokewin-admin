@@ -44,7 +44,7 @@ test("Account Review exposes the simplified high-risk workflow", async () => {
   assert.doesNotMatch(workspace, /aria-label="Review progress"/);
   assert.doesNotMatch(queue, /<QuickReviewActions/);
   assert.match(workspace, /Signed up/);
-  assert.match(reads, /createdAt:\s*user\.created_at/);
+  assert.match(reads, /account\.created_at/);
   assert.match(workspace, /formatRelative\(accountCreatedAt\)/);
   assert.match(workspace, /label: "Review opened"/);
   assert.doesNotMatch(workspace, /label: "Source"/);

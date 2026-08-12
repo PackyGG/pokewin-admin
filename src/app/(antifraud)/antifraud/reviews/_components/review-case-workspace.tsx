@@ -19,6 +19,7 @@ import {
 import {
   getReviewDetail,
   type ReviewDetail,
+  type ReviewDetailResult,
 } from "@/lib/antifraud/reviews";
 import { ReviewStatusBadge } from "../../_components/badges";
 import { QuickReviewActions } from "./quick-review-actions";
@@ -28,12 +29,14 @@ import { LinkedAccountsDialog } from "./linked-accounts-dialog";
 /** Complete evidence and controls for the queue's review dialog. */
 export async function ReviewCaseWorkspace({
   reviewId,
+  detailData,
 }: {
   reviewId: string;
   viewerId: string;
   canManage: boolean;
+  detailData?: Promise<ReviewDetailResult>;
 }) {
-  const detail = await getReviewDetail(reviewId);
+  const detail = await (detailData ?? getReviewDetail(reviewId));
   if (detail.kind === "not_found") {
     return (
       <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-10 text-center">
