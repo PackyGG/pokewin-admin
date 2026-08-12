@@ -48,8 +48,8 @@ const COMPOSER_OPTIONS = [
   },
   {
     value: "reward",
-    label: "Reward",
-    description: "Send single-use rewards",
+    label: "Promo campaign",
+    description: "Tier rewards by deposit history",
     icon: Gift,
   },
   {
@@ -151,11 +151,11 @@ export function DirectNotificationsContent({
 
       {mode === "reward" ? (
         <div className="space-y-3">
-          <SectionHeading icon={Gift} title="Send rewards" />
+          <SectionHeading icon={Gift} title="Send a promo campaign" />
           <p className="text-xs text-muted-foreground">
-            Set an amount and a recipient list. Every user gets their own
-            single-use promo code, minted server-side and redeemable only by
-            that account, delivered as a notification they can tap to copy.
+            Create deposit bands with different reward values and lifetime,
+            rolling, or custom deposit windows. Every matched user gets a unique
+            single-use promo code bound to their account.
           </p>
           <RewardCampaignForm targetEnv={backendEnv} />
         </div>

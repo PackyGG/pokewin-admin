@@ -23,6 +23,11 @@ import {
   BULK_MAX_ITEMS,
   REWARD_MAX_VALUE_USD,
 } from "@/lib/user-notification";
+import {
+  depositWindowLabel,
+  validateRewardTiers,
+  type RewardTier,
+} from "@/lib/reward-campaign-tiers";
 
 /**
  * Reward campaigns: mint one single-use promo code per recipient, bound to
@@ -71,6 +76,7 @@ export type SendRewardChunkInput = {
   expiresInDays: number | null;
   chunkIndex: number;
   chunkCount: number;
+  tier?: RewardTier;
 };
 
 export async function sendRewardCampaignChunkAction(
@@ -82,7 +88,10 @@ export async function sendRewardCampaignChunkAction(
   // Gate 1 — the backend the notification would reach.
   const availability = await getDirectNotificationAvailability();
   if (!availability.ready) {
-    return { success: false, error: availability.reason ?? "Sending is not available." };
+    return {
+      success: false,
+      error: availability.reason ?? "Sending is not available.",
+    };
   }
   // Gate 2 — resolve the database independently, then require an exact match
   // with the backend target before creating money-bearing rows.
@@ -109,7 +118,10 @@ export async function sendRewardCampaignChunkAction(
   // entry describing the same money.
   const valueUsd = Math.round(input.valueUsd * 100) / 100;
   if (valueUsd <= 0) {
-    return { success: false, error: "Reward amount rounds to $0.00 — raise it above one cent" };
+    return {
+      success: false,
+      error: "Reward amount rounds to $0.00 — raise it above one cent",
+    };
   }
   if (valueUsd > REWARD_MAX_VALUE_USD) {
     // Policy ceiling, not a backend limit. This is the boundary — the
@@ -120,8 +132,20 @@ export async function sendRewardCampaignChunkAction(
       error: `Reward amount is capped at $${REWARD_MAX_VALUE_USD} per code (got $${valueUsd}).`,
     };
   }
+  if (input.tier) {
+    const tierError = validateRewardTiers([input.tier]);
+    if (tierError) return { success: false, error: tierError };
+    if (Math.round(input.tier.rewardUsd * 100) / 100 !== valueUsd) {
+      return {
+        success: false,
+        error: "Tier reward does not match this chunk's code value",
+      };
+    }
+  }
 
-  const userIds = [...new Set(input.userIds.map((id) => id.trim()).filter(Boolean))];
+  const userIds = [
+    ...new Set(input.userIds.map((id) => id.trim()).filter(Boolean)),
+  ];
   if (userIds.length === 0) return { success: false, error: "Chunk is empty" };
   // The composer never builds a chunk above BULK_MAX_ITEMS, but a server
   // action is callable directly — an unbounded array would drive an unbounded
@@ -180,7 +204,8 @@ export async function sendRewardCampaignChunkAction(
   } catch (err) {
     return {
       success: false,
-      error: err instanceof Error ? err.message : "Code pepper is not configured",
+      error:
+        err instanceof Error ? err.message : "Code pepper is not configured",
     };
   }
 
@@ -200,7 +225,11 @@ export async function sendRewardCampaignChunkAction(
   let toMint: typeof planned;
   try {
     const existing = await db
-      .select({ code_hash: promo_codes.code_hash })
+      .select({
+        code_hash: promo_codes.code_hash,
+        value: promo_codes.value,
+        metadata: promo_codes.metadata,
+      })
       .from(promo_codes)
       .where(
         inArray(
@@ -208,6 +237,22 @@ export async function sendRewardCampaignChunkAction(
           planned.map((p) => p.codeHash),
         ),
       );
+    const plannedByHash = new Map(planned.map((item) => [item.codeHash, item]));
+    for (const code of existing) {
+      const expected = plannedByHash.get(code.code_hash);
+      const metadata = code.metadata as Record<string, unknown> | null;
+      if (
+        expected &&
+        (Math.round(Number(code.value) * 100) / 100 !== valueUsd ||
+          metadata?.bound_user_id !== expected.userId ||
+          metadata?.campaign !== campaign)
+      ) {
+        return {
+          success: false,
+          error: `Campaign ${campaign} was already used with different reward settings. Use a new campaign name rather than changing a user's existing code.`,
+        };
+      }
+    }
     const existingHashes = new Set(existing.map((e) => e.code_hash));
     toMint = planned.filter((p) => !existingHashes.has(p.codeHash));
   } catch (err) {
@@ -232,18 +277,27 @@ export async function sendRewardCampaignChunkAction(
             code_hash: p.codeHash,
             value: String(valueUsd),
             region: p.region,
-        // Single use, and bound to the one account it was minted for —
-        // `metadata.bound_user_id` is enforced at redeem by the backend
-        // (PackyGG/backend#462). max_uses alone would let anyone who learns
-        // the code burn it before its owner.
-        max_uses: 1,
-        // A granted reward must not be gated behind linking Discord.
-        requires_discord: false,
+            // Single use, and bound to the one account it was minted for —
+            // `metadata.bound_user_id` is enforced at redeem by the backend
+            // (PackyGG/backend#462). max_uses alone would let anyone who learns
+            // the code burn it before its owner.
+            max_uses: 1,
+            // A granted reward must not be gated behind linking Discord.
+            requires_discord: false,
             expires_at: expiresAt?.toISOString() ?? null,
             metadata: {
               code: p.code,
               bound_user_id: p.userId,
               campaign,
+              ...(input.tier
+                ? {
+                    reward_tier_id: input.tier.id,
+                    reward_tier_label: input.tier.label,
+                    deposit_min_usd: input.tier.minDepositUsd,
+                    deposit_max_usd: input.tier.maxDepositUsd,
+                    deposit_window: input.tier.window,
+                  }
+                : {}),
             },
           })),
         )
@@ -300,6 +354,15 @@ export async function sendRewardCampaignChunkAction(
         env: availability.backendEnv,
         campaign,
         valueUsd,
+        tier: input.tier
+          ? {
+              id: input.tier.id,
+              label: input.tier.label,
+              minDepositUsd: input.tier.minDepositUsd,
+              maxDepositUsd: input.tier.maxDepositUsd,
+              depositWindow: depositWindowLabel(input.tier.window),
+            }
+          : null,
         expiresAt: expiresAt?.toISOString() ?? null,
         chunkIndex: input.chunkIndex,
         chunkCount: input.chunkCount,
