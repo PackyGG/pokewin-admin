@@ -47,6 +47,9 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
   assert.match(workflow, /buildBackendDealPeriods\(payload\)/);
   assert.match(workflow, /creator_approval_period_index: period\.index/);
   assert.match(workflow, /creator_approval_period_count: period\.count/);
+  assert.match(workflow, /Compensating incomplete approval schedule/);
+  assert.match(workflow, /await creatorsApi\.terminateDeal/);
+  assert.match(workflow, /if \(reconciled\.every\(Boolean\)\)/);
   assert.match(workflow, /for \(const period of periods\)/);
   assert.match(workflow, /already has an unresolved deal approval/);
   assert.match(workflow, /agreement_checksum: agreement\.checksum/);

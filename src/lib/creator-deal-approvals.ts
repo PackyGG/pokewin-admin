@@ -827,7 +827,9 @@ async function ensureBackendDeal(request: typeof creator_deal_approval_requests.
     const periods = buildBackendDealPeriods(payload);
     const listed = await listAllCreatorDeals(request.creator_user_id);
     const existingPeriods = periods.map((period) =>
-      listed.find((deal) => markerDeal(deal, request.id, period.index)),
+      listed.find((deal) =>
+        (deal.status === "scheduled" || deal.status === "active")
+        && markerDeal(deal, request.id, period.index)),
     );
     if (existingPeriods.every(Boolean)) {
       return { ok: true, dealId: existingPeriods[0]!.id };
@@ -878,9 +880,28 @@ async function ensureBackendDeal(request: typeof creator_deal_approval_requests.
       }
       return { ok: true, dealId: dealIds[0] };
     } catch (cause) {
-      // A segmented retry reconciles every period by its terms marker. If a
-      // response was lost after commit, the backend overlap lock is an extra
-      // guard until the committed row becomes visible to the next list read.
+      // Resolve an ambiguous response before compensating. A complete marked
+      // schedule is success even when the final HTTP response was lost.
+      const afterFailure = await listAllCreatorDeals(request.creator_user_id);
+      const reconciled = periods.map((period) => afterFailure.find((deal) =>
+        (deal.status === "scheduled" || deal.status === "active")
+        && markerDeal(deal, request.id, period.index)));
+      if (reconciled.every(Boolean)) {
+        return { ok: true, dealId: reconciled[0]!.id };
+      }
+      // MAIN has no batch-create endpoint. Compensate a partially provisioned
+      // schedule immediately so no subset can remain financially active if a
+      // foreign caller interleaves between period creates. A later retry then
+      // starts clean or reports the foreign overlap.
+      const partial = afterFailure.filter((deal) =>
+        (deal.status === "scheduled" || deal.status === "active")
+        && markerDeal(deal, request.id));
+      for (const deal of partial) {
+        await creatorsApi.terminateDeal(request.creator_user_id, deal.id, {
+          reason: `Compensating incomplete approval schedule ${request.id}`,
+          force_end_active_session: true,
+        });
+      }
       return { ok: false, cause };
     }
   });
