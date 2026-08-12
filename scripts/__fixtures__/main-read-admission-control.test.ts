@@ -1,0 +1,139 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  withMainReadSlot,
+  mainReadLimiterSnapshot,
+} from "../../src/lib/main-read-limiter";
+
+const repoRoot = process.cwd();
+const read = (p: string) => fs.readFileSync(path.join(repoRoot, p), "utf8");
+
+/**
+ * Regression: "Couldn't load this section" on the dashboard.
+ *
+ * The mirror pool is max:2 while `statement_timeout` is 30s and
+ * `connectionTimeoutMillis` is 10s. node-postgres applies the connect timeout
+ * to QUEUE WAIT, so one slow query holding a slot for up to 30s made every
+ * reader queued behind it reject after 10s with
+ * `timeout exceeded when trying to connect`. That is not a QueryTimeoutError,
+ * so `safeQuery` classified it as a hard error and the tile rendered
+ * "Couldn't load this section" — on a different tile each reload, because the
+ * loser of the race varies.
+ *
+ * Admission control moves the waiting into JavaScript, where it is untimed and
+ * cannot manufacture a connect failure.
+ */
+
+test("admission control never admits more readers than the pool can serve", async () => {
+  const permits = 2;
+  let concurrent = 0;
+  let peak = 0;
+
+  await Promise.all(
+    Array.from({ length: 25 }, () =>
+      withMainReadSlot("test:cap", permits, async () => {
+        concurrent += 1;
+        peak = Math.max(peak, concurrent);
+        await new Promise((r) => setTimeout(r, 5));
+        concurrent -= 1;
+      }),
+    ),
+  );
+
+  assert.equal(peak <= permits, true, `peak concurrency ${peak} exceeded ${permits}`);
+  assert.equal(concurrent, 0, "every slot must be returned");
+});
+
+test("a rejected read still returns its slot", async () => {
+  const permits = 1;
+  // Fail repeatedly; if the permit leaked even once the next acquire hangs.
+  for (let i = 0; i < 5; i += 1) {
+    await assert.rejects(
+      withMainReadSlot("test:release", permits, async () => {
+        throw new Error("boom");
+      }),
+      /boom/,
+    );
+  }
+
+  // Must still be able to acquire — proves nothing leaked.
+  const ok = await withMainReadSlot("test:release", permits, async () => "ok");
+  assert.equal(ok, "ok");
+  assert.equal(mainReadLimiterSnapshot()["test:release"].inFlight, 0);
+});
+
+test("all queued readers eventually run (no starvation)", async () => {
+  const completed: number[] = [];
+  await Promise.all(
+    Array.from({ length: 12 }, (_, i) =>
+      withMainReadSlot("test:fifo", 2, async () => {
+        await new Promise((r) => setTimeout(r, 1));
+        completed.push(i);
+      }),
+    ),
+  );
+  assert.equal(completed.length, 12, "every queued reader must run");
+});
+
+test("a slow reader delays but does not fail its siblings", async () => {
+  const permits = 2;
+  const outcomes: string[] = [];
+
+  const slow = withMainReadSlot("test:slow", permits, async () => {
+    await new Promise((r) => setTimeout(r, 60));
+    outcomes.push("slow");
+  });
+  const fast = Array.from({ length: 6 }, (_, i) =>
+    withMainReadSlot("test:slow", permits, async () => {
+      await new Promise((r) => setTimeout(r, 1));
+      outcomes.push(`fast-${i}`);
+    }),
+  );
+
+  // The key property: nothing rejects. Previously the siblings queued behind a
+  // slow slot-holder rejected with a connect timeout.
+  await assert.doesNotReject(Promise.all([slow, ...fast]));
+  assert.equal(outcomes.length, 7);
+});
+
+test("the mirror pool routes both query and connect through the limiter", () => {
+  const source = read("src/lib/db.ts");
+
+  assert.match(source, /const MIRROR_POOL_MAX = 2;/);
+  assert.match(
+    source,
+    /max: isReadMirror \? MIRROR_POOL_MAX : 3,/,
+    "the limiter must be sized from the same constant as the pool",
+  );
+  assert.match(
+    source,
+    /return isReadMirror \? withReadAdmissionControl\(pool, env\) : pool;/,
+    "only the read mirror is admission-controlled; the primary is untouched",
+  );
+
+  // Both acquisition paths must be wrapped — `query` for ordinary statements
+  // and `connect` for transactions.
+  assert.match(source, /Reflect\.set\(pool, "query"/);
+  assert.match(source, /Reflect\.set\(pool, "connect"/);
+
+  // A transaction must hold its permit for the whole checkout, released via
+  // client.release(), and must never leak it on a failed checkout.
+  assert.match(source, /releasePermit\?\.\(\)/);
+  assert.match(source, /if \(released\) return undefined;/);
+});
+
+test("the limiter is shared across module instances via globalThis", () => {
+  const source = read("src/lib/main-read-limiter.ts");
+  assert.match(source, /globalForLimiter\.mainReadLimiters = limiters;/);
+  // Must NOT be dev-only: a per-instance limiter in production defeats it.
+  assert.doesNotMatch(
+    source,
+    /NODE_ENV !== "production"[\s\S]{0,120}mainReadLimiters/,
+    "admission control must be shared in production too",
+  );
+  // The permit must be returned in a finally block.
+  assert.match(source, /\} finally \{[\s\S]{0,240}this\.release\(\);/);
+});
