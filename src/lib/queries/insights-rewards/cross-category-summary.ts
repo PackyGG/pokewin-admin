@@ -211,17 +211,42 @@ async function computeCrossCategorySummary(
   // `rain_tip` is the rain POOL FUNDING leg (user/founder contributions);
   // it is summed ONLY to net the rain cost and is included in the scan's
   // type filter for that reason — it is never added to the reward total.
-  const currentRows = await queryRows<
-    {
-      reward_excl_rain: string;
-      rain_win: string;
-      rain_tip: string;
-      reward_count: string;
-      reward_claimants: string;
-      wager_total: string;
-      payout_total: string;
-    }[]
-  >(db, sql`
+  // Prior-equal window — only for finite periods (lifetime has no prior
+  // frame). Built here so it can ride the same Promise.all as the current
+  // window and the daily-pack cost: all three are independent, and under the
+  // process-wide mirror admission cap the cost that matters is how long each
+  // render holds permits, not how fast one statement is. This used to be
+  // three awaits in a row.
+  const priorDateClause =
+    days === null
+      ? null
+      : sql`
+      AND lt.created_at >= NOW() - (${days * 2} * INTERVAL '1 day')
+      AND lt.created_at < NOW() - (${days} * INTERVAL '1 day')
+    `;
+
+  type PriorRow = {
+    reward_excl_rain: string;
+    rain_win: string;
+    rain_tip: string;
+    reward_count: string;
+    reward_claimants: string;
+  };
+
+  const [currentRows, priorRows, dailyPacks] = await Promise.all([
+    // Current window — rewards / wagers / payouts side by side via FILTER on
+    // one scan.
+    queryRows<
+      {
+        reward_excl_rain: string;
+        rain_win: string;
+        rain_tip: string;
+        reward_count: string;
+        reward_claimants: string;
+        wager_total: string;
+        payout_total: string;
+      }[]
+    >(db, sql`
     SELECT
       ${sql.raw(REWARD_EXCL_RAIN_SUM)} AS reward_excl_rain,
       COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
@@ -237,7 +262,30 @@ async function computeCrossCategorySummary(
       // types (manual voucher / counted adjustment) + wager/payout types.
       sql.raw(`(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip',${CARVE_OUT_TYPES_SQL},${WAGER_TYPES_SQL.slice(1, -1)},${PAYOUT_TYPES_SQL.slice(1, -1)})`),
     )}
-  `);
+  `),
+    // Prior-equal window. Symmetric scope to current so the deltas are
+    // apples-to-apples: the SAME canonical reward set, the SAME net-rain
+    // treatment (`max(0, rain_win − rain_tip)`), the SAME canonical-set
+    // count/claimant basis. Skipped entirely for lifetime.
+    priorDateClause === null
+      ? Promise.resolve<PriorRow[]>([])
+      : queryRows<PriorRow[]>(db, sql`
+      SELECT
+        ${sql.raw(REWARD_EXCL_RAIN_SUM)} AS reward_excl_rain,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
+        COALESCE(SUM(CASE WHEN lt.type::text = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
+        COUNT(*) FILTER (WHERE lt.type::text IN ${sql.raw(REWARD_TYPES_SQL)})::text AS reward_count,
+        COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type::text IN ${sql.raw(REWARD_TYPES_SQL)})::text AS reward_claimants
+      FROM ledger_transactions lt
+      ${buildScopeClause(
+        priorDateClause,
+        sql.raw(`(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip',${CARVE_OUT_TYPES_SQL})`),
+      )}
+    `),
+    // Daily / free pack giveaway cost — cached, and independent of both
+    // sweeps above.
+    getDailyPacksTotalCost(period),
+  ]);
 
   const cur = currentRows[0];
   // Net rain house cost (owner-confirmed): the system-funded base only,
@@ -265,7 +313,6 @@ async function computeCrossCategorySummary(
   // ledger-distinct figure: daily-pack claimers overlap the ledger set in
   // an unknown way, and naively summing the two distinct counts would
   // double-count — keeping it ledger-only avoids inflating it.
-  const dailyPacks = await getDailyPacksTotalCost(period);
   const totalCost = ledgerCost + dailyPacks.cost;
   const totalCount = ledgerCount + dailyPacks.count;
 
@@ -274,37 +321,10 @@ async function computeCrossCategorySummary(
   const marketingPctOfWager =
     totalWager > 0 ? (totalCost / totalWager) * 100 : null;
 
-  // Prior window — only when the period is finite. Symmetric scope to
-  // current so the deltas are apples-to-apples: the SAME canonical
-  // reward set, the SAME net-rain treatment (`max(0, rain_win −
-  // rain_tip)`), the SAME canonical-set count/claimant basis.
+  // Prior window — only when the period is finite (its query above resolved
+  // to an empty result set for lifetime, which has no prior frame).
   let priorWindow: RewardsCrossCategorySummary["priorWindow"] = null;
   if (days !== null) {
-    const priorDateClause = sql`
-      AND lt.created_at >= NOW() - (${days * 2} * INTERVAL '1 day')
-      AND lt.created_at < NOW() - (${days} * INTERVAL '1 day')
-    `;
-    const priorRows = await queryRows<
-      {
-        reward_excl_rain: string;
-        rain_win: string;
-        rain_tip: string;
-        reward_count: string;
-        reward_claimants: string;
-      }[]
-    >(db, sql`
-      SELECT
-        ${sql.raw(REWARD_EXCL_RAIN_SUM)} AS reward_excl_rain,
-        COALESCE(SUM(CASE WHEN lt.type::text = 'rain_win' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_win,
-        COALESCE(SUM(CASE WHEN lt.type::text = 'rain_tip' THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS rain_tip,
-        COUNT(*) FILTER (WHERE lt.type::text IN ${sql.raw(REWARD_TYPES_SQL)})::text AS reward_count,
-        COUNT(DISTINCT lt.user_id) FILTER (WHERE lt.type::text IN ${sql.raw(REWARD_TYPES_SQL)})::text AS reward_claimants
-      FROM ledger_transactions lt
-      ${buildScopeClause(
-        priorDateClause,
-        sql.raw(`(${REWARD_TYPES_SQL.slice(1, -1)},'rain_tip',${CARVE_OUT_TYPES_SQL})`),
-      )}
-    `);
     const prev = priorRows[0];
     const prevRainCost = resolveRainHouseCost({
       kind: "net",

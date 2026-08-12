@@ -71,21 +71,35 @@ async function AffiliateBody() {
   // safeQuery so a slow / failing affiliate-config read degrades to an inline
   // band instead of throwing up the /rewards route boundary (which blanks the
   // WHOLE hub). Fallbacks: empty level-config list + empty site-config map.
-  const [{ data: configs, error: configsError }, { data: siteConfig, error: siteConfigError }] =
-    await Promise.all([
-      safeQuery(
-        () => getAffiliateLevelConfigs(),
-        [] as Awaited<ReturnType<typeof getAffiliateLevelConfigs>>,
-        "affiliate.levelConfigs",
-        REWARD_QUERY_TIMEOUT_MS,
-      ),
-      safeQuery(
-        () => getSiteConfigValues(["affiliate_cut_expiration_days"]),
-        {} as Awaited<ReturnType<typeof getSiteConfigValues>>,
-        "affiliate.siteConfig",
-        REWARD_QUERY_TIMEOUT_MS,
-      ),
-    ]);
+  const [
+    { data: configs, error: configsError },
+    { data: siteConfig, error: siteConfigError },
+    { data: wagerDefaults },
+  ] = await Promise.all([
+    safeQuery(
+      () => getAffiliateLevelConfigs(),
+      [] as Awaited<ReturnType<typeof getAffiliateLevelConfigs>>,
+      "affiliate.levelConfigs",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getSiteConfigValues(["affiliate_cut_expiration_days"]),
+      {} as Awaited<ReturnType<typeof getSiteConfigValues>>,
+      "affiliate.siteConfig",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    // The wager-requirement default is a backend HTTP read. It used to be
+    // awaited AFTER the two reads above had resolved, so the tab paid for two
+    // round trips end to end; nothing here depends on the other two, so it
+    // joins the same batch. Its failure still degrades to `null` (the card
+    // renders its own unset state) rather than taking the tab down.
+    safeQuery(
+      () => getWagerRequirementDefaults(),
+      null as Awaited<ReturnType<typeof getWagerRequirementDefaults>> | null,
+      "affiliate.wagerRequirementDefaults",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
 
   if (configsError !== null || siteConfigError !== null) {
     return <AffiliateLoadErrorBand />;
@@ -101,14 +115,8 @@ async function AffiliateBody() {
       ? expirationDays
       : null;
 
-  let affiliateClaimsWagerRequirementBps: number | null = null;
-  try {
-    const wagerDefaults = await getWagerRequirementDefaults();
-    affiliateClaimsWagerRequirementBps =
-      wagerDefaults.affiliate_wager_requirement_bps;
-  } catch {
-    affiliateClaimsWagerRequirementBps = null;
-  }
+  const affiliateClaimsWagerRequirementBps: number | null =
+    wagerDefaults?.affiliate_wager_requirement_bps ?? null;
 
   return (
     <FadeIn className="space-y-6">

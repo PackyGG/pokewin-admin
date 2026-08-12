@@ -98,7 +98,26 @@ test("serverless mirror pools preserve shared role connection headroom", () => {
   );
   assert.match(source, /maxLifetimeSeconds:\s*600/);
   assert.match(warmRoute, /export const maxDuration = 60/);
-  assert.match(warmRoute, /Array\.from\(\{ length: 2 \}/);
+  // The cron used to bound its demand on the shared mirror limiter with a flat
+  // two-worker pool (`Array.from({ length: 2 }, …)`). It now bounds it with two
+  // SERIAL lanes launched together. The invariant is the bound, not the shape:
+  // each lane runs strictly one warmer at a time, the warmer lists are never
+  // fanned out wholesale, and at most two lanes are ever in flight — so this
+  // route can hold at most one heavy fan-out plus one single read of a budget
+  // it shares with live page renders.
+  assert.match(warmRoute, /for \(const \[label, run\] of lane\)/);
+  assert.match(warmRoute, /await run\(\)/);
+  assert.doesNotMatch(warmRoute, /(?:HEAVY|LIGHT)_WARMERS\.map/);
+  const laneLaunch = warmRoute.match(/await Promise\.all\(\[([\s\S]*?)\]\)/);
+  assert.ok(
+    laneLaunch,
+    "warm lanes must be launched through one bounded Promise.all",
+  );
+  const laneCount = laneLaunch[1].match(/runWarmLane\(/g)?.length ?? 0;
+  assert.ok(
+    laneCount >= 1 && laneCount <= 2,
+    `at most two warm lanes may run concurrently against the shared mirror pool (found ${laneCount})`,
+  );
   assert.match(warmRoute, /PostgreSQL unavailable; skipping cache warmers/);
   assert.match(warmRoute, /\{ status: 503 \}/);
   assert.match(

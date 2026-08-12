@@ -99,15 +99,72 @@ async function loadHistory(
   ]);
   const snapshots = scoped ?? allSnapshots;
 
-  // One batched MAIN read for the union of pack ids across BOTH lists, so the
-  // timeline rows and the picker options share resolved identity.
+  // Nothing in scope → the caller renders the empty state. Checked BEFORE the
+  // join wave below (PERF): the picker options are only ever returned together
+  // with rows, so resolving pack meta for a view that returns `null` was a MAIN
+  // read whose result was thrown away.
+  if (snapshots.length === 0) return null;
+
+  // PERF: the three remaining reads are mutually independent — pack identity
+  // (MAIN), the captured_by admin display names (ADMIN), and per-card identity
+  // (MAIN) — so they go out in ONE wave. They previously ran as three further
+  // SERIAL round-trips after the snapshot read, i.e. four waves before the
+  // timeline could paint; under the process-wide MAIN read admission cap that
+  // tail is exactly what pushes a leg past its safeQuery budget.
   const packIds = Array.from(
     new Set([
       ...allSnapshots.map((s) => s.packId),
       ...snapshots.map((s) => s.packId),
     ]),
   );
-  const meta = await getPackMetaByIds(packIds);
+  // Batched ADMIN read: resolve every captured_by id → display name/email so the
+  // timeline shows WHO captured each row instead of a raw UUID slug. Same
+  // pattern as src/lib/queries/changelog.ts:106 / src/lib/balance-limits.ts:146.
+  const capturedByIds = Array.from(new Set(snapshots.map((s) => s.capturedBy)));
+  // Batched MAIN read: card identity for the union of every card_id across all
+  // visible snapshots. One PK probe (`id = ANY(...)`) — same shape as the
+  // doctor's batch read (retune-actions.ts:847) — so the expand drawer renders
+  // per-card name + image + value without N+1 lookups per row.
+  const cardIds = Array.from(
+    new Set(snapshots.flatMap((s) => s.cards.map((c) => c.card_id))),
+  );
+
+  const [meta, adminRows, cardMeta] = await Promise.all([
+    getPackMetaByIds(packIds),
+    capturedByIds.length > 0
+      ? adminDrizzle
+          .execute<{
+            id: string;
+            username: string;
+            display_username: string | null;
+            email: string;
+          }>(sql`
+            SELECT id, username, display_username, email
+            FROM admin_users WHERE id = ANY(${pgArrayParam(capturedByIds)}::uuid[])
+          `)
+          .then((r) => r.rows)
+      : Promise.resolve(
+          [] as {
+            id: string;
+            username: string;
+            display_username: string | null;
+            email: string;
+          }[],
+        ),
+    getHistoryCardMeta(cardIds),
+  ]);
+
+  const adminMap = new Map<
+    string,
+    { username: string; displayUsername: string | null; email: string }
+  >();
+  for (const a of adminRows) {
+    adminMap.set(a.id, {
+      username: a.username,
+      displayUsername: a.display_username,
+      email: a.email,
+    });
+  }
 
   // Pack picker options: one entry per pack that has history, sorted by name.
   const seen = new Set<string>();
@@ -122,48 +179,6 @@ async function loadHistory(
     });
   }
   packOptions.sort((a, b) => a.name.localeCompare(b.name));
-
-  if (snapshots.length === 0) {
-    // No snapshots for this scope — the caller renders the empty state.
-    return null;
-  }
-
-  // Batched ADMIN read: resolve every captured_by id → display name/email so the
-  // timeline shows WHO captured each row instead of a raw UUID slug. Same
-  // pattern as src/lib/queries/changelog.ts:106 / src/lib/balance-limits.ts:146.
-  const capturedByIds = Array.from(
-    new Set(snapshots.map((s) => s.capturedBy)),
-  );
-  const adminMap = new Map<
-    string,
-    { username: string; displayUsername: string | null; email: string }
-  >();
-  if (capturedByIds.length > 0) {
-    const admins = (
-      await adminDrizzle.execute<{
-        id: string; username: string; display_username: string | null; email: string;
-      }>(sql`
-        SELECT id, username, display_username, email
-        FROM admin_users WHERE id = ANY(${pgArrayParam(capturedByIds)}::uuid[])
-      `)
-    ).rows;
-    for (const a of admins) {
-      adminMap.set(a.id, {
-        username: a.username,
-        displayUsername: a.display_username,
-        email: a.email,
-      });
-    }
-  }
-
-  // Batched MAIN read: card identity for the union of every card_id across all
-  // visible snapshots. One PK probe (`id = ANY(...)`) — same shape as the
-  // doctor's batch read (retune-actions.ts:847) — so the expand drawer renders
-  // per-card name + image + value without N+1 lookups per row.
-  const cardIds = Array.from(
-    new Set(snapshots.flatMap((s) => s.cards.map((c) => c.card_id))),
-  );
-  const cardMeta = await getHistoryCardMeta(cardIds);
 
   const rows: HistoryRow[] = snapshots.map((s) => {
     const m = meta.get(s.packId);

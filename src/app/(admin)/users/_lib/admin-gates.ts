@@ -1,7 +1,53 @@
+import { cache } from "react";
+
 import { adminDrizzle, sql } from "@/lib/drizzle";
+import { withTimeout } from "@/lib/errors/safe-query";
 import { isExcludedSearchOwnerRow } from "@/lib/excluded-users/search-gate";
 import { logError } from "@/lib/errors/logger";
 import type { SessionPayload } from "@/lib/session";
+
+/**
+ * Wall-clock bound for the gate row read.
+ *
+ * The try/catch below only catches a read that THROWS, never one that merely
+ * hangs. This gate is consulted from inside the page's Suspense legs, so an
+ * unbounded hang would pin the toolbar and the table indefinitely with no
+ * failure state — the "page never finishes loading" shape. 4s is far above a
+ * primary-key lookup on `admin_users` and degrades to the same fail-closed
+ * flags a throw produces.
+ */
+const GATE_READ_TIMEOUT_MS = 4_000;
+
+/**
+ * The Admin DB half of the gate, deduped per request.
+ *
+ * Both /users Suspense legs (the toolbar's bulk-ban controls and the table's
+ * excluded-search override) need these flags, and they render independently.
+ * Keyed on the admin's id — a primitive — rather than the session object, so
+ * the dedupe holds regardless of whether the two call sites happen to share
+ * one object reference.
+ */
+const readGateRow = cache(
+  async (
+    adminUserId: string,
+  ): Promise<{ username: string; is_active: boolean; is_owner: boolean } | undefined> =>
+    withTimeout(
+      async () =>
+        (
+          await adminDrizzle.execute<{
+            username: string;
+            is_active: boolean;
+            is_owner: boolean;
+          }>(sql`
+            SELECT username, is_active, is_owner
+            FROM admin_users
+            WHERE id = ${adminUserId}::uuid
+            LIMIT 1
+          `)
+        ).rows[0],
+      GATE_READ_TIMEOUT_MS,
+    ),
+);
 
 /**
  * Render-cosmetic gate flags for the /users list page, resolved from ONE
@@ -33,8 +79,14 @@ export type UsersPageGates = {
   canBulkBan: boolean;
 };
 
+/** The slice of the session the gate resolution actually reads. */
+export type UsersPageSession = Pick<
+  SessionPayload,
+  "userId" | "role" | "roles" | "isOwner"
+>;
+
 export async function getUsersPageGates(
-  session: Pick<SessionPayload, "userId" | "role" | "roles" | "isOwner">,
+  session: UsersPageSession,
 ): Promise<UsersPageGates> {
   // Read off the session, which dal.ts already refreshed from the DB — no
   // extra round-trip just to learn the caller is an admin.
@@ -42,18 +94,7 @@ export async function getUsersPageGates(
     (session.roles?.includes("admin") ?? session.role === "admin") ||
     Boolean(session.isOwner);
   try {
-    const row = (
-      await adminDrizzle.execute<{
-        username: string;
-        is_active: boolean;
-        is_owner: boolean;
-      }>(sql`
-        SELECT username, is_active, is_owner
-        FROM admin_users
-        WHERE id = ${session.userId}::uuid
-        LIMIT 1
-      `)
-    ).rows[0];
+    const row = await readGateRow(session.userId);
     const active = Boolean(row?.is_active);
     return {
       includeExcludedInSearch:

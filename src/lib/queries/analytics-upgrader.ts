@@ -44,9 +44,9 @@ import { blacklistNotInClause } from "./_blacklist";
  * also STRICTLY CHEAPER than what the tab did before — that was an
  * unbounded lifetime scan of the same table on every render.
  *
- * One statement returns both the per-day series and the window totals
- * (totals are summed from the same rows in JS), so adding the trend costs
- * no extra scan.
+ * One statement returns the per-day series, the window totals (summed from
+ * the same rows in JS) AND the window-wide distinct-player count, so the
+ * whole tab costs a single mirror read after the table probe.
  */
 
 export type UpgraderPeriod = "today" | "7d" | "30d" | "90d" | "all";
@@ -163,42 +163,45 @@ async function computeUpgraderAnalytics(
     wager: string;
     payout: string;
     bets: string;
-    players: string;
     wins: string;
+    window_players: string;
   };
-  // ONE statement for the whole tab: per-day rows, totals derived in JS.
-  // `players` is per-day distinct — summing it would double-count anyone who
-  // played on two days, so the window's unique-player count is taken from a
-  // separate aggregate over the same scan (see `totalPlayers` below).
+  // ONE statement for the whole tab: per-day rows plus the window-wide
+  // unique-player count, totals derived in JS.
+  //
+  // The window count CANNOT be summed from the daily rows (a player who
+  // played on two days would be counted twice), so it used to be a SECOND
+  // round trip repeating the exact same filtered scan. It is now a
+  // single-row `window_total` CTE cross-joined onto every day bucket: same
+  // arithmetic, same number, one read instead of two. That matters more than
+  // it looks — mirror reads pass through a process-wide admission semaphore
+  // (`src/lib/db.ts`), so a duplicated scan consumes a slot every other
+  // section on the page is queueing for.
   const rows = await queryRows<Row[]>(db,
     `WITH real_users AS (
        SELECT id FROM "user"
        WHERE role NOT IN ('admin', 'support', 'creator') ${blacklist}
+     ),
+     plays AS (
+       SELECT user_id, created_at, bet_amount, won_amount
+       FROM upgrader_games
+       WHERE user_id IN (SELECT id FROM real_users)
+         AND created_at >= NOW() - INTERVAL '${days} days'
+     ),
+     window_total AS (
+       SELECT COUNT(DISTINCT user_id)::text AS players FROM plays
      )
      SELECT
-       DATE(created_at)                                          AS bucket,
-       COALESCE(SUM(bet_amount::numeric), 0)::text               AS wager,
-       COALESCE(SUM(won_amount::numeric), 0)::text               AS payout,
-       COUNT(*)::text                                            AS bets,
-       COUNT(DISTINCT user_id)::text                             AS players,
-       COUNT(CASE WHEN won_amount::numeric > 0 THEN 1 END)::text AS wins
-     FROM upgrader_games
-     WHERE user_id IN (SELECT id FROM real_users)
-       AND created_at >= NOW() - INTERVAL '${days} days'
-     GROUP BY DATE(created_at)
+       DATE(p.created_at)                                          AS bucket,
+       COALESCE(SUM(p.bet_amount::numeric), 0)::text               AS wager,
+       COALESCE(SUM(p.won_amount::numeric), 0)::text               AS payout,
+       COUNT(*)::text                                              AS bets,
+       COUNT(CASE WHEN p.won_amount::numeric > 0 THEN 1 END)::text AS wins,
+       w.players                                                   AS window_players
+     FROM plays p
+     CROSS JOIN window_total w
+     GROUP BY DATE(p.created_at), w.players
      ORDER BY bucket`,
-  );
-
-  // Window-wide distinct players — cannot be summed from the daily rows.
-  const playerRows = await queryRows<{ players: string }[]>(db,
-    `WITH real_users AS (
-       SELECT id FROM "user"
-       WHERE role NOT IN ('admin', 'support', 'creator') ${blacklist}
-     )
-     SELECT COUNT(DISTINCT user_id)::text AS players
-     FROM upgrader_games
-     WHERE user_id IN (SELECT id FROM real_users)
-       AND created_at >= NOW() - INTERVAL '${days} days'`,
   );
 
   let cumPnl = 0;
@@ -235,7 +238,10 @@ async function computeUpgraderAnalytics(
     edge: wager > 0 ? pnl / wager : 0,
     bets,
     avgBet: bets > 0 ? wager / bets : 0,
-    uniquePlayers: toNumber(playerRows[0]?.players),
+    // Same on every row (single-row CROSS JOIN); no rows at all means no
+    // plays in the window, which is 0 players — matching the old separate
+    // aggregate exactly.
+    uniquePlayers: toNumber(rows[0]?.window_players),
     wins,
     losses: Math.max(0, bets - wins),
     hitRate: bets > 0 ? wins / bets : 0,

@@ -2,17 +2,14 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { creatorsApi, multiplierDealsApi } from "@/lib/backend-api";
+import { multiplierDealsApi } from "@/lib/backend-api";
+import { getCachedCreatorRoster } from "@/lib/cache/creator-backend-cache";
 
 // The backend exposes multiplier deals only per-creator (no global list
 // / count endpoint), so identifying creators who have one is a
 // whole-creator-base fan-out. The resolved id set is cross-request
 // cached for 5 minutes — it backs both the "Multiplier Creators" KPI
 // count and the /creators "Multiplier" tab filter.
-const PAGE_SIZE = 100;
-// 5,000 creators — well above the current/projected pool; a guard
-// against a runaway loop if `total` is ever reported wrong.
-const MAX_PAGES = 50;
 
 // Source-of-truth: the id list, cross-request cached via `unstable_cache`
 // (5-min revalidate) so spamming the Multiplier / Fill tabs doesn't fan
@@ -57,20 +54,18 @@ export async function getMultiplierCreatorCount(): Promise<number | null> {
 }
 
 async function computeIds(): Promise<string[]> {
-  // Walk every creator — first page tells us the total, then the rest
-  // in parallel (mirrors getCreatorsGlobalStats' pagination).
-  const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
-  const creators = [...firstPage.data];
-
-  const pagesNeeded = Math.min(
-    MAX_PAGES,
-    Math.ceil(firstPage.total / PAGE_SIZE),
-  );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(creatorsApi.list({ offset: p * PAGE_SIZE, limit: PAGE_SIZE }));
-  }
-  for (const page of await Promise.all(rest)) creators.push(...page.data);
+  // Roster comes from the SHARED cached walk rather than a private
+  // `creatorsApi.list` pagination of its own (2026-08-12). One /creators
+  // render previously paged the identical roster here, in
+  // fill-creator-count.ts, in creators-stats.ts AND in the shared cache —
+  // four walks of one list. This is also the resilient source: six-hour
+  // last-known-good retention plus a read-only PostgreSQL fallback, so a
+  // backend blip no longer empties the Multiplier tab.
+  //
+  // Scope note: the shared roster caps at CREATOR_LIST_CAP (500) vs the old
+  // private 5,000 — identical below 500, and at/above it the id set now
+  // agrees with the tab list that consumes it.
+  const creators = await getCachedCreatorRoster();
 
   // Per-creator: does this creator have ≥1 multiplier deal? allSettled
   // so one creator's failed lookup doesn't blank the whole set.

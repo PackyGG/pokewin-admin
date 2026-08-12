@@ -1122,12 +1122,21 @@ export const getDashboardStats = cache(async (period: DashboardPeriod = DEFAULT_
  *   • "24h"   → cutoff = now − 24h,       GGR via the rolling 60s cache.
  * So every KPI box (P&L period, GGR + its breakdown popover, Wager +
  * breakdown chips, Deposits, Withdrawals, …) reconciles to the same window.
+ *
+ * RETURN IS NARROWED ON PURPOSE. The only consumer on the render path
+ * (`computeKpiWindowPayload`) reads five fields; the deposits/withdrawals
+ * boxes come from the dedicated `getDashboardCashflowFromPostgres` read, and
+ * the lifetime/snapshot boxes moved to `/analytics` long ago. So this path
+ * runs with `includeSnapshotMetrics: false` (eight aggregates that were being
+ * computed and discarded) and exposes ONLY the fields those skipped legs
+ * cannot affect — a caller can no longer read an unpopulated field by
+ * accident. The chip-enum `getDashboardStats` still returns the full payload.
  */
 export const getDashboardKpiStats = cache(
   async (window: DashboardKpiWindow = DEFAULT_DASHBOARD_KPI_WINDOW) => {
     const now = new Date();
     const cutoff = kpiWindowToCutoff(window, now);
-    return withTiming("dashboard.getDashboardKpiStats", () =>
+    const stats = await withTiming("dashboard.getDashboardKpiStats", () =>
       dashboardStatsInner({
         cutoff,
         // Bounded canonical window for the GGR/upgrader legs — both KPI
@@ -1139,10 +1148,25 @@ export const getDashboardKpiStats = cache(
         // KPI boxes read only scalar fields — skip the four 30-day daily
         // chart scans (pure wasted cold work on this path).
         includeCharts: false,
+        // …and the eight window-independent snapshot aggregates, whose
+        // results this path discards entirely (see the doc above).
+        includeSnapshotMetrics: false,
         loadWindowMetrics: (blacklistIdNotIn) =>
           cachedKpiWindowMetrics(window, cutoff.toISOString(), blacklistIdNotIn),
       }),
     );
+    // Exactly the fields `computeKpiWindowPayload` consumes. Values are
+    // byte-identical to what the full payload carried for this window.
+    return {
+      period: stats.period,
+      periodLabel: stats.periodLabel,
+      ggr: stats.ggr,
+      wagers: stats.wagers,
+      wagersBreakdown: stats.wagersBreakdown,
+      wagersOrganic: stats.wagersOrganic,
+      queryMs: stats.queryMs,
+      generatedAt: stats.generatedAt,
+    };
   },
 );
 
@@ -1171,6 +1195,27 @@ type DashboardStatsConfig = {
    * 30-day ledger scans there is pure wasted (cold) work.
    */
   includeCharts?: boolean;
+  /**
+   * Whether to compute the window-INDEPENDENT snapshot aggregates (user
+   * counts, lifetime balance sums, unique depositors, 24h pack/battle counts,
+   * FTDs, the windowed inventory/voucher delta and the lifetime deposit
+   * counts). Defaults to `true`.
+   *
+   * The today/24h KPI path (`getDashboardKpiStats`) sets this `false`: its ONE
+   * consumer (`computeKpiWindowPayload`) reads only `periodLabel` / `ggr` /
+   * `wagers` / `wagersBreakdown` / `wagersOrganic`, so those eight reads were
+   * computed and thrown away on every dashboard render. Worse, the batch below
+   * runs at concurrency 2, so `balanceAggregates` (a full `balances` scan) sat
+   * IN FRONT of `windowMetrics` in the queue and pushed the GGR/wager leg past
+   * its 11s budget — which is what rendered "Live wager data is retrying
+   * automatically" and dropped the GGR section from the P&L tile.
+   *
+   * Skipped legs resolve to their existing neutral shape (the same trick
+   * `skipDailyCharts` already uses), so no downstream read changes meaning —
+   * and `getDashboardKpiStats` narrows its return so a caller cannot read one
+   * of the now-unpopulated fields by accident.
+   */
+  includeSnapshotMetrics?: boolean;
   /** Loader for the (cached, timeout-wrapped) headline window metrics. */
   loadWindowMetrics: (blacklistIdNotIn: string) => Promise<WindowMetrics>;
 };
@@ -1238,6 +1283,12 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // replaces them) OR the caller explicitly excluded charts.
   const includeCharts = config.includeCharts ?? true;
   const skipDailyCharts = Boolean(chartPeriod) || !includeCharts;
+  // Window-INDEPENDENT snapshot aggregates. The today/24h KPI path opts out
+  // (see `includeSnapshotMetrics`): none of the eight reads below feed a field
+  // its payload consumes, and at concurrency 2 they queued ahead of the
+  // headline GGR/wager leg. Skipped legs resolve to the neutral shape every
+  // downstream read already handles.
+  const includeSnapshots = config.includeSnapshotMetrics ?? true;
   // Canonical metric window for the headline GGR + upgrader reads, which
   // bake in the central real-customer + borrow-corrected scope (so the
   // session-window / scope fixes landing in `@/lib/metrics` propagate here
@@ -1311,12 +1362,14 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // COUNT(*) FILTER. 5-min cached — user counts don't move by more
     // than a handful per minute, so the 5-min cap is invisible.
     () => withTimingResult("dashboard.userCounts", () =>
-      cachedUserCounts(
-        blacklistIdNotIn,
-        startOfDay.toISOString(),
-        startOfWeek.toISOString(),
-        startOfMonth.toISOString(),
-      ),
+      includeSnapshots
+        ? cachedUserCounts(
+            blacklistIdNotIn,
+            startOfDay.toISOString(),
+            startOfWeek.toISOString(),
+            startOfMonth.toISOString(),
+          )
+        : Promise.resolve([] as Awaited<ReturnType<typeof cachedUserCounts>>),
     ),
     // Single balances aggregate — `available_balance` is folded in with
     // the lifetime _sums so the dashboard pays one round-trip, not two.
@@ -1324,7 +1377,11 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // by at most a few users per minute, so 5-min staleness is
     // invisible. Raw SQL keeps the blacklist cache key stable.
     () => withTimingResult("dashboard.balanceAggregates", () =>
-      cachedBalanceAggregates(blacklistIdNotIn),
+      includeSnapshots
+        ? cachedBalanceAggregates(blacklistIdNotIn)
+        // Null is the shape the read itself returns on an empty result, and
+        // the `ba` fallback a few lines below already handles it.
+        : Promise.resolve(null),
     ),
     // Daily wager + deposit + active-depositor series for the last 30
     // days in ONE ledger scan. 5-min cached — historic days don't
@@ -1421,7 +1478,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // total is > 0. 5-min cached — lifetime depositor count moves
     // slower than 5 minutes.
     () => withTimingResult("dashboard.uniqueDepositors", () =>
-      cachedUniqueDepositors(blacklistIdNotIn),
+      includeSnapshots ? cachedUniqueDepositors(blacklistIdNotIn) : Promise.resolve(0),
     ),
     // NOTE: the lifetime realized P&L snapshot (getRealizedPnlSnapshot) —
     // the single heaviest query in the codebase — is NO LONGER computed
@@ -1435,11 +1492,11 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // 60s cached — matches the dashboard's auto-refresh cadence so the
     // tile stays close to live without re-counting on every render.
     () => withTimingResult("dashboard.packsOpened24h", () =>
-      cached24hPackOpens(blacklistIdNotIn),
+      includeSnapshots ? cached24hPackOpens(blacklistIdNotIn) : Promise.resolve(0),
     ),
     // Rolling-24h battle count — 60s cached for the same reason.
     () => withTimingResult("dashboard.battlesPlayed24h", () =>
-      cached24hBattles(blacklistIdNotIn),
+      includeSnapshots ? cached24hBattles(blacklistIdNotIn) : Promise.resolve(0),
     ),
     // FTDs combined — rolling-24h figure (count + total) + per-day
     // counts/totals for the last 30 days, sharing a single
@@ -1448,7 +1505,9 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // which was one of the heavier queries on the hot path.
     () =>
       withTimingResult("dashboard.ftdCombined", () =>
-        cachedFtdCombined(blacklistIdNotIn),
+        includeSnapshots
+          ? cachedFtdCombined(blacklistIdNotIn)
+          : Promise.resolve([] as Awaited<ReturnType<typeof cachedFtdCombined>>),
       ),
     // Windowed inventory + voucher deltas for the SELECTED period.
     // The other three components of the period P&L (deposits, card-
@@ -1458,7 +1517,16 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // composite query. Each subselect is a narrow indexed range scan;
     // PG materializes the common `real_users` CTE once.
     () => withTimingResult("dashboard.windowedPeriodDelta", () =>
-      queryRows<{
+      !includeSnapshots
+        ? Promise.resolve(
+            [] as {
+              inv_obtained: string;
+              inv_disposed: string;
+              vch_issued: string;
+              vch_claimed: string;
+            }[],
+          )
+        : queryRows<{
         inv_obtained: string;
         inv_disposed: string;
         vch_issued: string;
@@ -1502,7 +1570,11 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // inside the cached fn from Date.now() — within the 5-min TTL
     // there's no meaningful drift.
     () => withTimingResult("dashboard.lifetimeDepositMetrics", () =>
-      cachedLifetimeDepositMetrics(blacklistIdNotIn),
+      includeSnapshots
+        ? cachedLifetimeDepositMetrics(blacklistIdNotIn)
+        : Promise.resolve(
+            [] as Awaited<ReturnType<typeof cachedLifetimeDepositMetrics>>,
+          ),
     ),
   ], 2);
 
@@ -2098,12 +2170,47 @@ export type GgrBreakdown = {
  * for the today/24h windows exactly as it does for the chip enum. Both KPI
  * windows are short, so this is a plain `{ since: cutoff }` window (no
  * full-history cap needed).
+ *
+ * CACHED, and that is load-bearing rather than cosmetic. `ggrBreakdownForWindow`
+ * calls `getGamingLegs`, which is FIVE mirror reads (ledger, inventory,
+ * upgrader, double-down, creator-P&L) — and the headline it sits next to
+ * reaches the very same legs through `cachedKpiWindowMetrics` →
+ * `getWindowMetrics`. Both legs of `computeKpiWindowPayload` therefore ran that
+ * fan-out CONCURRENTLY on every dashboard render, doubling the heaviest read on
+ * the page against a globally capped mirror pool. Keying on the resolved cutoff
+ * ISO with the same 60s TTL / `dashboard-activity` tag as
+ * {@link cachedKpiWindowMetrics} means the pair share a rollover boundary (the
+ * "today" key re-mints itself at 00:00 UTC) and the breakdown costs zero reads
+ * on every warm render, including the page's own 60s auto-refresh and the
+ * `/api/cron/warm` pre-warm. `blacklistIdNotIn` rides along purely as a
+ * cache-key discriminator, exactly as it does on the headline cache.
  */
+const cachedKpiGgrBreakdown = unstable_cache(
+  async (
+    window: DashboardKpiWindow,
+    cutoffIso: string,
+    blacklistIdNotIn: string,
+  ): Promise<GgrBreakdown> => {
+    // Both are cache-key discriminators only — the legs resolve their own
+    // canonical scope. `void` them so the unused-arg lint stays clean (same
+    // shape as `cachedKpiWindowMetrics`).
+    void window;
+    void blacklistIdNotIn;
+    return ggrBreakdownForWindow({ since: new Date(cutoffIso) });
+  },
+  ["dashboard-ggr-breakdown-kpi-v1-all-games"],
+  { revalidate: 60, tags: ["dashboard-activity"] },
+);
+
 export async function getGgrBreakdownForKpiWindow(
   window: DashboardKpiWindow,
 ): Promise<GgrBreakdown> {
   const cutoff = kpiWindowToCutoff(window, new Date());
-  return ggrBreakdownForWindow({ since: cutoff });
+  const blacklistIdNotIn = blacklistNotInClause(
+    "id",
+    await getExcludedUserIds(),
+  );
+  return cachedKpiGgrBreakdown(window, cutoff.toISOString(), blacklistIdNotIn);
 }
 
 /** Shared canonical-legs core for both GGR-breakdown entry points. */

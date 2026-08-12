@@ -333,69 +333,120 @@ async function computeProgramSpend(
     // every creator-funded row.
     const creatorPoolBlacklist = blacklistNotInSql("lt.user_id", blacklistIds);
 
-    const [rollupRows, dailyRows, creatorRows, creatorDailyRows] =
-      await Promise.all([
-        // 1. Per-leaf rollup — cost / events / distinct claimants.
-        queryRows<
-          { leaf: string; total: string; cnt: string; claimants: string }[]
-        >(db, sql`
+    // Two round trips, not four (and the daily-pack read now rides along
+    // instead of being awaited afterwards).
+    //
+    // The rollup and the daily series used to be separate statements over the
+    // SAME window, the same type set and the same customer scope — so the
+    // mirror scanned `ledger_transactions` twice per call, and each scan took
+    // its own admission permit. They are now one statement each: a `base` CTE
+    // pre-aggregates at the finest grain both branches need — (leaf, day,
+    // user) — and the two branches roll that up. `base` is referenced twice, so
+    // PostgreSQL materialises it once and the ledger is scanned once.
+    //
+    // The arithmetic is identical by construction: SUM over the pre-aggregated
+    // SUMs is the same total, SUM of the per-group COUNT(*) is the same event
+    // count, and COUNT(DISTINCT uid) is unchanged because every (leaf, user)
+    // pair survives the pre-aggregation. Rows whose leaf CASE yields NULL still
+    // form their own group and are still dropped in the fold below, exactly as
+    // before.
+    type RollupJson = {
+      leaf: string | null;
+      total: string;
+      cnt: string;
+      claimants: string;
+    };
+    type DailyJson = { date: string; leaf: string | null; total: string };
+    type LegJson = {
+      leg: string;
+      total: string;
+      cnt: string;
+      claimants: string;
+    };
+    type CreatorDailyJson = { date: string; total: string };
+
+    const [ledgerRows, creatorLegRows, dailyPacks] = await Promise.all([
+      // 1. Ledger sweep — per-leaf rollup + per-leaf daily series.
+      queryRows<
+        { rollup: RollupJson[] | null; daily: DailyJson[] | null }[]
+      >(db, sql`
+        WITH base AS (
           SELECT
             ${sql.raw(LEAF_CASE_SQL)} AS leaf,
-            COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
-            COUNT(*)::text AS cnt,
-            COUNT(DISTINCT lt.user_id)::text AS claimants
+            DATE(lt.created_at) AS day,
+            lt.user_id AS uid,
+            SUM(ABS(lt.amount::numeric)) AS total,
+            COUNT(*) AS cnt
           FROM ledger_transactions lt
           WHERE lt.status = 'completed'
             AND lt.type::text IN ${sql.raw(SCANNED_TYPES_SQL)}
             AND lt.user_id IN ${customerScope}
             ${dateFilter}
-          GROUP BY 1
-        `),
-        // 2. Per-leaf daily series — drives the sparklines + stacked chart.
-        queryRows<{ date: Date | string; leaf: string; total: string }[]>(db, sql`
-          SELECT
-            DATE(lt.created_at) AS date,
-            ${sql.raw(LEAF_CASE_SQL)} AS leaf,
-            COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
-          FROM ledger_transactions lt
-          WHERE lt.status = 'completed'
-            AND lt.type::text IN ${sql.raw(SCANNED_TYPES_SQL)}
-            AND lt.user_id IN ${customerScope}
-            ${dateFilter}
-          GROUP BY 1, 2
-          ORDER BY 1 ASC
-        `),
-        // 3. Creator pool rollup — blacklist-only scope, split by leg so the
-        //    program row can itemise tips vs sponsored battles.
-        queryRows<
-          { leg: string; total: string; cnt: string; claimants: string }[]
-        >(db, sql`
+          GROUP BY 1, 2, 3
+        )
+        SELECT
+          COALESCE((SELECT json_agg(r) FROM (
+            SELECT
+              b.leaf AS leaf,
+              COALESCE(SUM(b.total), 0)::text AS total,
+              COALESCE(SUM(b.cnt), 0)::text AS cnt,
+              COUNT(DISTINCT b.uid)::text AS claimants
+            FROM base b
+            GROUP BY b.leaf
+          ) r), '[]'::json) AS rollup,
+          COALESCE((SELECT json_agg(d ORDER BY d.date ASC) FROM (
+            SELECT
+              b.day AS date,
+              b.leaf AS leaf,
+              COALESCE(SUM(b.total), 0)::text AS total
+            FROM base b
+            GROUP BY b.day, b.leaf
+          ) d), '[]'::json) AS daily
+      `),
+      // 2. Creator pool — blacklist-only scope. Same shape: one scan, split by
+      //    leg for the itemised row and by day for the series.
+      queryRows<
+        { legs: LegJson[] | null; daily: CreatorDailyJson[] | null }[]
+      >(db, sql`
+        WITH base AS (
           SELECT
             lt.type::text AS leg,
-            COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total,
-            COUNT(*)::text AS cnt,
-            COUNT(DISTINCT lt.user_id)::text AS claimants
+            DATE(lt.created_at) AS day,
+            lt.user_id AS uid,
+            SUM(ABS(lt.amount::numeric)) AS total,
+            COUNT(*) AS cnt
           FROM ledger_transactions lt
           WHERE lt.status = 'completed'
             AND lt.type::text IN ${sql.raw(CREATOR_POOL_TYPES_SQL)}
             ${creatorPoolBlacklist}
             ${dateFilter}
-          GROUP BY 1
-        `),
-        // 4. Creator pool daily series (both legs combined).
-        queryRows<{ date: Date | string; total: string }[]>(db, sql`
-          SELECT
-            DATE(lt.created_at) AS date,
-            COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS total
-          FROM ledger_transactions lt
-          WHERE lt.status = 'completed'
-            AND lt.type::text IN ${sql.raw(CREATOR_POOL_TYPES_SQL)}
-            ${creatorPoolBlacklist}
-            ${dateFilter}
-          GROUP BY 1
-          ORDER BY 1 ASC
-        `),
-      ]);
+          GROUP BY 1, 2, 3
+        )
+        SELECT
+          COALESCE((SELECT json_agg(l) FROM (
+            SELECT
+              b.leg AS leg,
+              COALESCE(SUM(b.total), 0)::text AS total,
+              COALESCE(SUM(b.cnt), 0)::text AS cnt,
+              COUNT(DISTINCT b.uid)::text AS claimants
+            FROM base b
+            GROUP BY b.leg
+          ) l), '[]'::json) AS legs,
+          COALESCE((SELECT json_agg(d ORDER BY d.date ASC) FROM (
+            SELECT b.day AS date, COALESCE(SUM(b.total), 0)::text AS total
+            FROM base b
+            GROUP BY b.day
+          ) d), '[]'::json) AS daily
+      `),
+      // 3. Daily packs — inventory giveaway, no ledger row. Independent of the
+      //    two sweeps above, so it runs alongside them instead of after.
+      getDailyPacksGiveaway(period),
+    ]);
+
+    const rollupRows = ledgerRows[0]?.rollup ?? [];
+    const dailyRows = ledgerRows[0]?.daily ?? [];
+    const creatorRows = creatorLegRows[0]?.legs ?? [];
+    const creatorDailyRows = creatorLegRows[0]?.daily ?? [];
 
     // ── Fold leaves ──────────────────────────────────────────────────
     const leaves = new Map<LeafKey, LeafAgg>();
@@ -415,7 +466,9 @@ async function computeProgramSpend(
         rainTip = agg;
         continue;
       }
-      if (!(r.leaf in LEAF_TO_PROGRAM)) continue;
+      // A row whose leaf CASE fell through to NULL is not a house cost —
+      // dropped here exactly as the previous `in` check dropped it.
+      if (r.leaf === null || !(r.leaf in LEAF_TO_PROGRAM)) continue;
       leaves.set(r.leaf as LeafKey, agg);
     }
 
@@ -501,8 +554,8 @@ async function computeProgramSpend(
       );
     }
 
-    // Daily packs — inventory giveaway, no ledger row.
-    const dailyPacks = await getDailyPacksGiveaway(period);
+    // Daily packs — inventory giveaway, no ledger row. Resolved above in the
+    // same Promise.all as the two ledger sweeps.
     if (dailyPacks.giveawayPayout > 0 || dailyPacks.opens > 0) {
       bump(
         "dailyPacks",
@@ -535,6 +588,7 @@ async function computeProgramSpend(
         rainByDate.set(date, e);
         continue;
       }
+      if (d.leaf === null) continue;
       const key = LEAF_TO_PROGRAM[d.leaf as keyof typeof LEAF_TO_PROGRAM];
       if (!key) continue;
       addPoint(key, date, total);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { ImageOff, Loader2 } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { getChallengeCardSummary, type ChallengeCardSummary } from "./actions";
@@ -33,7 +33,15 @@ export function ChallengeCardSummaryPanel({
   const [summary, setSummary] = useState<ChallengeCardSummary | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  // Out-of-order guard, mirroring `ItemPicker`. `getChallengeCardSummary`
+  // includes a historical pull scan, so switching pack/card while one is in
+  // flight could let the SLOWER earlier response land last and leave another
+  // card's odds, price and profit on screen under the newly selected card's
+  // name — numbers an operator then sizes a prize against.
+  const requestIdRef = useRef(0);
+
   useEffect(() => {
+    const reqId = ++requestIdRef.current;
     if (!packId || !cardId) {
       setSummary(null);
       return;
@@ -41,9 +49,9 @@ export function ChallengeCardSummaryPanel({
     startTransition(async () => {
       try {
         const data = await getChallengeCardSummary(packId, cardId);
-        setSummary(data);
+        if (reqId === requestIdRef.current) setSummary(data);
       } catch {
-        setSummary(null);
+        if (reqId === requestIdRef.current) setSummary(null);
       }
     });
   }, [packId, cardId]);

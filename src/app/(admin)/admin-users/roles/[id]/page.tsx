@@ -8,6 +8,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
+import type { AdminRole } from "@/lib/admin-roles";
 import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -131,7 +132,11 @@ export default async function RoleDetailPage({
             </div>
           }
         >
-          <RoleHoldersList roleId={id} isSystem={data.isSystem} />
+          <RoleHoldersList
+            roleId={id}
+            isSystem={data.isSystem}
+            systemKey={data.systemKey}
+          />
         </Suspense>
       </div>
     </div>
@@ -141,11 +146,16 @@ export default async function RoleDetailPage({
 async function RoleHoldersList({
   roleId,
   isSystem,
+  systemKey,
 }: {
   roleId: string;
   isSystem: boolean;
+  systemKey: AdminRole | null;
 }) {
-  const holders = await getRoleHolders(roleId);
+  // The role's identity is already loaded above — hand it over so this panel
+  // issues ONE Admin-DB read (the holder list) instead of re-probing the same
+  // `admin_roles` row first.
+  const holders = await getRoleHolders(roleId, { isSystem, systemKey });
 
   if (holders.length === 0) {
     return (

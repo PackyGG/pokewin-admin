@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { unstable_cache } from "next/cache";
 
 import { queryMainRows } from "@/lib/drizzle-query";
@@ -345,14 +346,38 @@ const cachedTipsSponsorsSessions = unstable_cache(
   { revalidate: 120, tags: ["creator-hub"] },
 );
 
-export async function getTipsSponsorsLedgerOverview(
-  period: DashboardPeriod,
-): Promise<TipsSponsorsLedgerOverview> {
-  return cachedTipsSponsorsLedger(period);
-}
+/**
+ * ─── REQUEST-LEVEL DEDUPE (why the React `cache()` wrappers) ─────────
+ *
+ * The Tips & Sponsors page consumes each leg from SEVERAL independent
+ * Suspense boundaries: the ledger leg from `HeadlineLifetimeTile`,
+ * `ChartSection` AND `ReconciliationRow`; the sessions leg from
+ * `HeadlineSessionTiles`, `RanklistSection` AND `ReconciliationRow`. Those
+ * boundaries share no in-flight promise, and `unstable_cache` does NOT
+ * coalesce concurrent COLD callers (same reasoning as
+ * `(admin)/creators/[userId]/_queries/_pnl-cache.ts`) — so on a cache miss
+ * the page fired the ledger leg's THREE MAIN reads three times over (nine
+ * reads, nine mirror-pool permits, nine fresh connections) and ran the
+ * per-creator backend session fan-out three times in parallel.
+ *
+ * React `cache()` memoizes per request, keyed on `period`, so the three
+ * consumers of each leg de-duplicate onto a SINGLE underlying call within a
+ * render. The cross-request `unstable_cache` slots below still serve warm
+ * loads; this only removes the in-request duplication. Numbers are
+ * unchanged — a memo returns the identical value the first caller computed.
+ */
+export const getTipsSponsorsLedgerOverview = cache(
+  async function getTipsSponsorsLedgerOverview(
+    period: DashboardPeriod,
+  ): Promise<TipsSponsorsLedgerOverview> {
+    return cachedTipsSponsorsLedger(period);
+  },
+);
 
-export async function getTipsSponsorsSessionsOverview(
-  period: DashboardPeriod,
-): Promise<TipsSponsorsSessionsOverview> {
-  return cachedTipsSponsorsSessions(period);
-}
+export const getTipsSponsorsSessionsOverview = cache(
+  async function getTipsSponsorsSessionsOverview(
+    period: DashboardPeriod,
+  ): Promise<TipsSponsorsSessionsOverview> {
+    return cachedTipsSponsorsSessions(period);
+  },
+);

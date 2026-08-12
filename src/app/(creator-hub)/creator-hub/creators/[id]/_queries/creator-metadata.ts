@@ -2,6 +2,7 @@ import "server-only";
 
 import { getReadDrizzleDb } from "@/lib/db";
 import { and, asc, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
   admin_audit_events,
@@ -40,6 +41,9 @@ import {
  * LAZY: this runs only when the Creator tab is opened (the tab is its own
  * keyed Suspense boundary on the detail page), per the active-tab-only rule.
  */
+
+/** Self-join alias for the row of whoever referred THIS creator. */
+const referrerUsers = alias(mainUsers, "referrer");
 
 /** A single editable/linked social handle. */
 export type CreatorSocialRow = {
@@ -120,6 +124,14 @@ export async function getCreatorMetadata(
   const db = await getReadDrizzleDb();
 
   // ── MAIN (read-only): user record + owned affiliate codes, in parallel.
+  //
+  // The referrer's display name is resolved in the SAME statement via a LEFT
+  // JOIN on `referred_by` (a primary-key lookup) rather than a third,
+  // SERIAL round-trip that could only start once the user row came back.
+  // Under the mirror pool's global admission cap — and `maxUses: 1`, which
+  // makes every read a fresh connection — that extra hop cost a permit and a
+  // handshake for one nullable column. LEFT JOIN keeps the exact previous
+  // semantics: no referrer, or a dangling referral id, still yields null.
   const [userRows, codeRows] = await Promise.all([
     db
       .select({
@@ -134,8 +146,11 @@ export async function getCreatorMetadata(
         city: mainUsers.city,
         referred_by: mainUsers.referred_by,
         affiliate_code_active: mainUsers.affiliate_code_active,
+        referrer_username: referrerUsers.username,
+        referrer_display_username: referrerUsers.display_username,
       })
       .from(mainUsers)
+      .leftJoin(referrerUsers, eq(referrerUsers.id, mainUsers.referred_by))
       .where(eq(mainUsers.id, userId))
       .limit(1),
     // The creator's OWN codes live in affiliate_codes (NOT user.affiliate_code,
@@ -150,23 +165,12 @@ export async function getCreatorMetadata(
 
   if (!user) return null;
 
-  // Resolve the referrer's display name (best-effort; a missing/over-broad
-  // referral id just yields null rather than failing the whole tab).
-  let referredByName: string | null = null;
-  if (user.referred_by) {
-    const referrer = await db
-      .select({
-        username: mainUsers.username,
-        display_username: mainUsers.display_username,
-      })
-      .from(mainUsers)
-      .where(eq(mainUsers.id, user.referred_by))
-      .limit(1)
-      .then((rows) => rows[0] ?? null)
-      .catch(() => null);
-    referredByName =
-      referrer?.display_username ?? referrer?.username ?? null;
-  }
+  // Referrer display name — already resolved by the LEFT JOIN above, so no
+  // extra round-trip. A missing/dangling referral id yields null, exactly as
+  // the previous best-effort lookup did.
+  const referredByName = user.referred_by
+    ? (user.referrer_display_username ?? user.referrer_username ?? null)
+    : null;
 
   // ── ADMIN: socials + the onboarding audit event, in parallel.
   //

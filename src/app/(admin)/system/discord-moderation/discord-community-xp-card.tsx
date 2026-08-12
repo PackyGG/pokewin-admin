@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ux";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   COMMUNITY_RANKS,
   type CommunityLevelRole,
@@ -30,9 +31,12 @@ function roleMap(roles: CommunityLevelRole[]): Record<string, string> {
 export function DiscordCommunityXpCard({
   initialRoles,
   dashboard,
+  dashboardFailureKind = null,
 }: {
   initialRoles: CommunityLevelRole[];
-  dashboard: CommunityXpDashboard;
+  /** `null` when the stats read degraded — the rank-role editor still works. */
+  dashboard: CommunityXpDashboard | null;
+  dashboardFailureKind?: "timeout" | "error" | null;
 }) {
   const [isPending, startTransition] = useTransition();
   const [roleIds, setRoleIds] = useState(() => roleMap(initialRoles));
@@ -55,7 +59,16 @@ export function DiscordCommunityXpCard({
 
   return (
     <div className="space-y-5">
-      <DiscordCommunityXpDashboard data={dashboard} />
+      {dashboard ? (
+        <DiscordCommunityXpDashboard data={dashboard} />
+      ) : (
+        <TileErrorFallback
+          label="Community XP stats"
+          hint="The XP statistics read degraded — refresh to retry. Rank-role settings below are unaffected."
+          kind={dashboardFailureKind ?? "error"}
+          size="panel"
+        />
+      )}
 
       <Card>
         <CardHeader>

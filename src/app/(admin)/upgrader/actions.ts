@@ -14,6 +14,7 @@ import {
   type UpgraderOutputColor,
 } from "./colors";
 import { requirePageAccess } from "@/lib/dal";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getCards, getRarities, getSets } from "@/lib/queries/cards";
@@ -102,13 +103,41 @@ export async function searchCardsForUpgraderPicker(params: {
   };
 }
 
-export async function getUpgraderPickerFilters() {
+export type UpgraderPickerFilters = {
+  sets: { id: string; name: string }[];
+  rarities: string[];
+};
+
+/**
+ * Set + rarity dropdown options for the Add Cards picker.
+ *
+ * DEFERRED: the only consumer is the Add Cards DIALOG, which is closed on every
+ * catalog paint. It used to be fetched by the Catalog segment on every render
+ * (two MAIN reads — `getSets` + `getRarities` — for a hidden component), which
+ * CLAUDE.md's "drawers and modals run no heavy query before they open" rule
+ * forbids. The dialog now calls this on FIRST OPEN instead, so a Catalog render
+ * issues two fewer MAIN reads. Mirrors `cards/load-actions.ts`.
+ *
+ * Self-bounded: it is now invoked straight from the client, so the timeout +
+ * failure isolation that used to live at the old server call site moved inside.
+ * A fault degrades to empty dropdowns (the dialog still opens and its card grid
+ * still searches) — the same fallback the previous call site applied.
+ */
+export async function getUpgraderPickerFilters(): Promise<UpgraderPickerFilters> {
   await requirePageAccess("/upgrader");
-  const [sets, rarities] = await Promise.all([getSets(), getRarities()]);
-  return {
-    sets,
-    rarities: rarities.filter((r): r is string => r != null),
-  };
+  const { data } = await safeQuery(
+    async () => {
+      const [sets, rarities] = await Promise.all([getSets(), getRarities()]);
+      return {
+        sets,
+        rarities: rarities.filter((r): r is string => r != null),
+      };
+    },
+    { sets: [], rarities: [] } as UpgraderPickerFilters,
+    "upgrader.filters",
+    12_000,
+  );
+  return data;
 }
 
 // ---------------------------------------------------------------------------

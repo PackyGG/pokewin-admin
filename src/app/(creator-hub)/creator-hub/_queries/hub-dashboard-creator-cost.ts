@@ -45,46 +45,66 @@ const cachedHubCreatorCost = unstable_cache(
       const since = `NOW() - INTERVAL '${interval}'`;
 
       const sinceDate = hubPeriodToSinceDate(period);
-      let fillConverted = 0;
-      try {
-        const fillSessions = await getConvertedFillSessionsInWindow(sinceDate);
-        fillConverted = sumConvertedFillSessions(fillSessions);
-      } catch (err) {
-        console.error(
-          "[creator-hub] fill converted sessions failed (cost uses tips+LB only):",
-          err,
-        );
-      }
 
-      type MultiplierRow = { multiplier_payouts: string };
-      const multiplierRows = await queryRows<MultiplierRow[]>(db,
-        `SELECT COALESCE(SUM(v.value::numeric), 0)::text AS multiplier_payouts
-         FROM vouchers v
-         WHERE v.origin::text = 'creator_multiplier_payout'
-           AND v.created_at >= ${since}`,
-      );
+      /**
+       * ONE round-trip for the three SQL legs.
+       *
+       * These used to be three sequential `queryRows` calls. Every MAIN read
+       * takes a mirror-pool permit AND (because mirror clients are retired at
+       * `maxUses: 1`) a brand-new connection, so three serial statements cost
+       * three handshakes and three slots out of a globally capped pool — on a
+       * page that already runs a wide fan-out. Folding them into three scalar
+       * subqueries keeps each leg's plan/index usage EXACTLY as it was (same
+       * predicates, same filters) while paying for one checkout instead of
+       * three. `NOW()` is the statement/transaction timestamp, so all three
+       * windows now share one instant rather than drifting by the round-trip
+       * latency between them — strictly more consistent, same figures.
+       *
+       * The voucher leg for `creator_fill_conversion` stays in the canonical
+       * `getConvertedFillSessionsInWindow` helper (blacklist scope lives
+       * there); it is now awaited CONCURRENTLY with this aggregate instead of
+       * before it, so the cost breakdown is one wave rather than four.
+       */
+      type CostRow = {
+        multiplier_payouts: string;
+        tips: string;
+        leaderboard_gross: string;
+      };
+
+      const [fillConverted, costRows] = await Promise.all([
+        getConvertedFillSessionsInWindow(sinceDate)
+          .then(sumConvertedFillSessions)
+          .catch((err) => {
+            console.error(
+              "[creator-hub] fill converted sessions failed (cost uses tips+LB only):",
+              err,
+            );
+            return 0;
+          }),
+        queryRows<CostRow[]>(db,
+          `SELECT
+             (SELECT COALESCE(SUM(v.value::numeric), 0)
+                FROM vouchers v
+               WHERE v.origin::text = 'creator_multiplier_payout'
+                 AND v.created_at >= ${since})::text AS multiplier_payouts,
+             (SELECT COALESCE(SUM(ABS(lt.amount::numeric)), 0)
+                FROM ledger_transactions lt
+               WHERE lt.status = 'completed'
+                 AND lt.type::text = 'creator_fill_spend_tip'
+                 AND lt.created_at >= ${since})::text AS tips,
+             (SELECT COALESCE(SUM(ABS(lt.amount::numeric)), 0)
+                FROM ledger_transactions lt
+               WHERE lt.status = 'completed'
+                 AND lt.type::text = 'affiliate_leaderboard_prize'
+                 AND lt.created_at >= ${since})::text AS leaderboard_gross`,
+        ),
+      ]);
+
+      const costs = costRows[0];
       const creatorWithdrawals =
-        fillConverted + toNumber(multiplierRows[0]?.multiplier_payouts);
-
-      type TipsRow = { tips: string };
-      const tipsRows = await queryRows<TipsRow[]>(db,
-        `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS tips
-         FROM ledger_transactions
-         WHERE status = 'completed'
-           AND type::text = 'creator_fill_spend_tip'
-           AND created_at >= ${since}`,
-      );
-      const tips = toNumber(tipsRows[0]?.tips);
-
-      type LeaderboardRow = { gross: string };
-      const leaderboardRows = await queryRows<LeaderboardRow[]>(db,
-        `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS gross
-         FROM ledger_transactions
-         WHERE status = 'completed'
-           AND type::text = 'affiliate_leaderboard_prize'
-           AND created_at >= ${since}`,
-      );
-      const leaderboardGross = toNumber(leaderboardRows[0]?.gross);
+        fillConverted + toNumber(costs?.multiplier_payouts);
+      const tips = toNumber(costs?.tips);
+      const leaderboardGross = toNumber(costs?.leaderboard_gross);
 
       const lines: HubCreatorCostLine[] = [
         {

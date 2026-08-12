@@ -41,9 +41,6 @@ export type FiatOverview = {
   webhooks: number;
   failedWebhooks: number;
   latestWebhookAt: string | null;
-  fiatLockedUsers: number;
-  fiatLockedLocations: number;
-  kycRequiredUsers: number;
 };
 
 export const EMPTY_FIAT_OVERVIEW: FiatOverview = {
@@ -71,9 +68,6 @@ export const EMPTY_FIAT_OVERVIEW: FiatOverview = {
   webhooks: 0,
   failedWebhooks: 0,
   latestWebhookAt: null,
-  fiatLockedUsers: 0,
-  fiatLockedLocations: 0,
-  kycRequiredUsers: 0,
 };
 
 type RawOverview = {
@@ -101,9 +95,6 @@ type RawOverview = {
   webhooks: string;
   failed_webhooks: string;
   latest_webhook_at: string | null;
-  fiat_locked_users: string;
-  fiat_locked_locations: string;
-  kyc_required_users: string;
 };
 
 function number(value: unknown): number {
@@ -240,22 +231,7 @@ async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
           SELECT id FROM "user" WHERE role NOT IN ('admin', 'support')
         )
       ) AS provider_fees_cents,
-      w.*,
-      (
-        SELECT COUNT(*)::text
-        FROM user_feature_locks
-        WHERE cardinality(locked_deposits_fiat) > 0
-      ) AS fiat_locked_users,
-      (
-        SELECT COUNT(*)::text
-        FROM country_restrictions
-        WHERE cardinality(locked_deposits_fiat) > 0
-      ) AS fiat_locked_locations,
-      (
-        SELECT COUNT(*)::text
-        FROM user_kyc
-        WHERE kyc_required
-      ) AS kyc_required_users
+      w.*
     FROM intent_stats i
     CROSS JOIN credit_stats c
     CROSS JOIN webhook_stats w
@@ -294,15 +270,17 @@ async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
     webhooks: number(row.webhooks),
     failedWebhooks: number(row.failed_webhooks),
     latestWebhookAt: row.latest_webhook_at,
-    fiatLockedUsers: number(row.fiat_locked_users),
-    fiatLockedLocations: number(row.fiat_locked_locations),
-    kycRequiredUsers: number(row.kyc_required_users),
   };
 }
 
+// v4: the statement dropped three scalar COUNT subqueries
+// (`user_feature_locks` / `country_restrictions` / `user_kyc`) whose results
+// the Overview tab never rendered — the Access & holds tab computes the same
+// three counts itself via `getFiatAccess`. Key bumped so a v3 entry carrying
+// the retired fields cannot be served against the narrowed type.
 const cachedFiatOverview = unstable_cache(
   computeFiatOverview,
-  ["fiat-overview-v3"],
+  ["fiat-overview-v4"],
   { revalidate: 60, tags: [FIAT_CACHE_TAG] },
 );
 
@@ -522,57 +500,101 @@ type RawWebhookFailure = {
   received_at: string;
 };
 
+/**
+ * Both halves of the Webhooks tab in ONE round trip.
+ *
+ * They used to be two `db.execute` calls in a `Promise.all`. Every MAIN read
+ * passes through the process-wide mirror admission semaphore (`src/lib/db.ts`),
+ * which is sized to the mirror pool, so the cost that matters is the NUMBER of
+ * reads a render issues, not their individual speed — two statements over the
+ * same table burned two permits and queued behind every other tile on the page.
+ * Folded into two CTEs projected as JSON arrays: same two scans server-side,
+ * one permit, one wire round trip.
+ *
+ * Ordering is reproduced EXACTLY, not "improved". The summary's original
+ * `ORDER BY events DESC` sorted on the output alias, which is `COUNT(*)::text`
+ * — a TEXT sort ("9" before "10"). `json_agg(... ORDER BY s.events DESC ...)`
+ * over the same text column keeps that; casting to a number here would silently
+ * reorder a rendered table.
+ */
 async function computeFiatWebhooks(env: DbEnv): Promise<FiatWebhooks> {
   const db = readDrizzleForEnv(env);
-  const [summary, failures] = await Promise.all([
-    withTransientPostgresReadRetry(
-      () =>
-        db.execute<RawWebhookSummary>(sql`
+  const result = await withTransientPostgresReadRetry(
+    () =>
+      db.execute<{
+        summary: RawWebhookSummary[] | null;
+        failures: RawWebhookFailure[] | null;
+      }>(sql`
+        WITH summary AS (
           SELECT
-        event_type,
-        processing_status,
-        COUNT(*)::text AS events,
-        COUNT(*) FILTER (
-          WHERE COALESCE(last_error, '') <> ''
-        )::text AS with_error,
-        MAX(received_at)::text AS latest_at
-      FROM payment_webhook_events
-      GROUP BY event_type, processing_status
-      ORDER BY events DESC, event_type, processing_status
-        `),
-      { context: "fiat.webhooks.summary" },
-    ),
-    withTransientPostgresReadRetry(
-      () =>
-        db.execute<RawWebhookFailure>(sql`
+            event_type,
+            processing_status,
+            COUNT(*)::text AS events,
+            COUNT(*) FILTER (
+              WHERE COALESCE(last_error, '') <> ''
+            )::text AS with_error,
+            MAX(received_at)::text AS latest_at
+          FROM payment_webhook_events
+          GROUP BY event_type, processing_status
+        ),
+        failures AS (
           SELECT
-        event_type,
-        attempt_count::text,
-        last_error,
-        received_at::text
-      FROM payment_webhook_events
-      WHERE processing_status = 'failed'
-        AND last_error IS NOT NULL
-      ORDER BY received_at DESC
-      LIMIT 20
-        `),
-      { context: "fiat.webhooks.failures" },
-    ),
-  ]);
+            event_type,
+            attempt_count,
+            last_error,
+            received_at
+          FROM payment_webhook_events
+          WHERE processing_status = 'failed'
+            AND last_error IS NOT NULL
+          ORDER BY received_at DESC
+          LIMIT 20
+        )
+        SELECT
+          (
+            SELECT json_agg(
+              json_build_object(
+                'event_type', s.event_type,
+                'processing_status', s.processing_status,
+                'events', s.events,
+                'with_error', s.with_error,
+                'latest_at', s.latest_at
+              )
+              ORDER BY s.events DESC, s.event_type, s.processing_status
+            )
+            FROM summary s
+          ) AS summary,
+          (
+            SELECT json_agg(
+              json_build_object(
+                'event_type', f.event_type,
+                'attempt_count', f.attempt_count::text,
+                'last_error', f.last_error,
+                'received_at', f.received_at::text
+              )
+              ORDER BY f.received_at DESC
+            )
+            FROM failures f
+          ) AS failures
+      `),
+    { context: "fiat.webhooks" },
+  );
+
+  const row = result.rows[0];
+  if (!row) return EMPTY_FIAT_WEBHOOKS;
 
   return {
-    summary: summary.rows.map((row) => ({
-      eventType: row.event_type,
-      processingStatus: row.processing_status,
-      events: number(row.events),
-      withError: number(row.with_error),
-      latestAt: row.latest_at,
+    summary: (row.summary ?? []).map((entry) => ({
+      eventType: entry.event_type,
+      processingStatus: entry.processing_status,
+      events: number(entry.events),
+      withError: number(entry.with_error),
+      latestAt: entry.latest_at,
     })),
-    recentFailures: failures.rows.map((row) => ({
-      eventType: row.event_type,
-      attempts: number(row.attempt_count),
-      error: row.last_error,
-      receivedAt: row.received_at,
+    recentFailures: (row.failures ?? []).map((entry) => ({
+      eventType: entry.event_type,
+      attempts: number(entry.attempt_count),
+      error: entry.last_error,
+      receivedAt: entry.received_at,
     })),
   };
 }

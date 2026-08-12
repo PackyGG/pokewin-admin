@@ -232,8 +232,21 @@ export type PacksProfitData = {
   battles: BattlePackProfitRow[];
 };
 
+/**
+ * Which half of the deep-dive to compute.
+ *
+ * The two halves are independent per-pack attribution scans and the Games tab
+ * renders exactly ONE of them per sub-view (`?g=packs` / `?g=battles`).
+ * Computing both meant every render paid for a scan it then threw away — and
+ * under the process-wide mirror admission cap (`src/lib/db.ts`) a discarded
+ * read occupies the same slot as a rendered one. The unrequested side comes
+ * back as an empty array; callers already only read the side they render.
+ */
+export type PacksProfitSide = "packs" | "battles" | "both";
+
 async function computePackProfitability(
   period: PacksPeriod,
+  side: PacksProfitSide,
   excluded: string[],
 ): Promise<PacksProfitData> {
   const db = await getReadDrizzleDb();
@@ -265,8 +278,21 @@ async function computePackProfitability(
       AND (description IS NULL OR description NOT ILIKE '%borrow%')
   )`;
 
+  const wantPacks = side !== "battles";
+  const wantBattles = side !== "packs";
+
   const [packRows, battleRows] = await Promise.all([
-    queryRows<
+    !wantPacks
+      ? Promise.resolve(
+          [] as {
+            id: string;
+            name: string;
+            opens: string;
+            revenue: string;
+            payouts: string;
+          }[],
+        )
+      : queryRows<
       {
         id: string;
         name: string;
@@ -323,7 +349,17 @@ async function computePackProfitability(
       ORDER BY COALESCE(po.revenue::numeric, 0) DESC
       LIMIT 20
     `),
-    queryRows<
+    !wantBattles
+      ? Promise.resolve(
+          [] as {
+            id: string;
+            name: string;
+            battles_played: string;
+            revenue: string;
+            payouts: string;
+          }[],
+        )
+      : queryRows<
       {
         id: string;
         name: string;
@@ -455,24 +491,28 @@ async function computePackProfitability(
  * `analytics.ts`. The `all` window is already bounded to
  * `LIFETIME_LOOKBACK_DAYS` (365d), so no unbounded scan remains here.
  */
+// v3: `side` joined the argument list, so it participates in the cache key —
+// the packs view and the battles view get their own entries instead of
+// sharing one that always cost both scans.
 const cachedPackProfitability = unstable_cache(
   computePackProfitability,
-  ["analytics-pack-profitability-v2"],
+  ["analytics-pack-profitability-v3"],
   { revalidate: 60, tags: ["analytics"] },
 );
 
 const cachedPackProfitabilityLifetime = unstable_cache(
   computePackProfitability,
-  ["analytics-pack-profitability-lifetime-v2"],
+  ["analytics-pack-profitability-lifetime-v3"],
   { revalidate: 300, tags: ["analytics"] },
 );
 
 export async function getPackProfitability(
   period: PacksPeriod,
+  side: PacksProfitSide = "both",
 ): Promise<PacksProfitData> {
   const blacklist = await getExcludedUserIds();
   const sorted = [...blacklist].sort();
   return period === "all"
-    ? cachedPackProfitabilityLifetime(period, sorted)
-    : cachedPackProfitability(period, sorted);
+    ? cachedPackProfitabilityLifetime(period, side, sorted)
+    : cachedPackProfitability(period, side, sorted);
 }

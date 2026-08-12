@@ -15,10 +15,14 @@ export function DiscordWorkspace({
   initialModeration,
   initialRoles,
   initialXpDashboard,
+  xpDashboardFailureKind = null,
 }: {
   initialModeration: DiscordModerationSettings;
   initialRoles: CommunityLevelRole[];
-  initialXpDashboard: CommunityXpDashboard;
+  /** `null` when the read-only XP stats leg failed — the card degrades alone. */
+  initialXpDashboard: CommunityXpDashboard | null;
+  /** Serializable degrade reason for that leg; `null` on the happy path. */
+  xpDashboardFailureKind?: "timeout" | "error" | null;
 }) {
   return (
     <Tabs defaultValue="xp" className="gap-5">
@@ -28,7 +32,11 @@ export function DiscordWorkspace({
         <TabsTrigger value="commands"><TerminalSquare /> Commands</TabsTrigger>
       </TabsList>
       <TabsContent value="xp">
-        <DiscordCommunityXpCard initialRoles={initialRoles} dashboard={initialXpDashboard} />
+        <DiscordCommunityXpCard
+          initialRoles={initialRoles}
+          dashboard={initialXpDashboard}
+          dashboardFailureKind={xpDashboardFailureKind}
+        />
       </TabsContent>
       <TabsContent value="moderation">
         <DiscordModerationCard initial={initialModeration} />

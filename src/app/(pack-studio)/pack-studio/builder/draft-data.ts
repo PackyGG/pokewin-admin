@@ -33,7 +33,6 @@ export async function loadPackBuilderDraft(input: {
 }): Promise<PackBuilderInitialDraft | null> {
   const draft = await getPackBuildDraftForEdit(input);
   if (!draft) return null;
-  const history = await listPackBuildDraftRevisions(input);
 
   const requestedCards = draft.requestPayload.cards;
   if (requestedCards.some((card) => !("cardId" in card))) {
@@ -44,15 +43,25 @@ export async function loadPackBuilderDraft(input: {
     "cardId" in card ? card.cardId : "",
   );
   const uniqueCardIds = [...new Set(cardIds)];
-  const db = await getReadDrizzleDb();
-  const result =
-    uniqueCardIds.length === 0
-      ? { rows: [] as DraftCardRow[] }
-      : await db.execute<DraftCardRow>(sql`
-          SELECT id, name, image_url, price::text AS price
-          FROM cards
-          WHERE id = ANY(${pgArrayParam(uniqueCardIds)}::uuid[])
-        `);
+
+  // PERF: the ADMIN revision list and the MAIN card-metadata read are
+  // independent of each other (both only need `input` / the draft's card ids),
+  // so they go out in ONE wave. They used to run as two further SERIAL
+  // round-trips after the draft read — three waves before the Builder form
+  // could render a `?draft=` deep link. The revision read stays BELOW the
+  // `!draft` early return so a missing/foreign draft still costs one read.
+  const [history, result] = await Promise.all([
+    listPackBuildDraftRevisions(input),
+    (async () => {
+      if (uniqueCardIds.length === 0) return { rows: [] as DraftCardRow[] };
+      const db = await getReadDrizzleDb();
+      return db.execute<DraftCardRow>(sql`
+        SELECT id, name, image_url, price::text AS price
+        FROM cards
+        WHERE id = ANY(${pgArrayParam(uniqueCardIds)}::uuid[])
+      `);
+    })(),
+  ]);
   const cardById = new Map(result.rows.map((card) => [card.id, card]));
   const missingCardIds = uniqueCardIds.filter((id) => !cardById.has(id));
   if (missingCardIds.length > 0) {

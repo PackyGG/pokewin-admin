@@ -31,8 +31,10 @@ import { transition } from "@/components/ux";
 
 import {
   addUpgraderOutputs,
+  getUpgraderPickerFilters,
   searchCardsForUpgraderPicker,
   type UpgraderCardPickerItem,
+  type UpgraderPickerFilters,
 } from "./actions";
 import { RARITY_BADGE_COLORS } from "../transactions/_shared/rarity-colors";
 
@@ -59,17 +61,36 @@ const SORT_LABELS: Record<SortOption, string> = {
 
 export function AddUpgraderCardsDialog({
   existingCardIds,
-  sets,
-  rarities,
 }: {
   existingCardIds: string[];
-  sets: { id: string; name: string }[];
-  rarities: string[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [isSubmitting, startSubmitting] = useTransition();
+
+  // Set + rarity dropdown options, loaded on FIRST OPEN instead of on every
+  // catalog paint. They only feed this (closed-by-default) dialog, so fetching
+  // them with the Catalog segment cost two MAIN reads per render for a hidden
+  // component — see `getUpgraderPickerFilters`. Cached server-side, so the
+  // request is a single round trip and reopening never refetches.
+  const [filters, setFilters] = useState<UpgraderPickerFilters | null>(null);
+  const filtersRequestedRef = useRef(false);
+  useEffect(() => {
+    if (!open || filtersRequestedRef.current) return;
+    filtersRequestedRef.current = true;
+    getUpgraderPickerFilters()
+      .then(setFilters)
+      .catch(() => {
+        // Degrade to "All …" only, and allow a retry on the next open. The
+        // card grid below has its own fetch and is unaffected.
+        filtersRequestedRef.current = false;
+        setFilters({ sets: [], rarities: [] });
+      });
+  }, [open]);
+  const sets = filters?.sets ?? [];
+  const rarities = filters?.rarities ?? [];
+  const filtersLoading = open && filters === null;
 
   const [search, setSearch] = useState("");
   const [rarity, setRarity] = useState("all");
@@ -185,9 +206,22 @@ export function AddUpgraderCardsDialog({
               className="pl-8"
             />
           </div>
-          <Select value={rarity} onValueChange={(v) => v && setRarity(v)}>
+          {/* Both option lists arrive on first open (see `filters` above), so
+              they are disabled while in flight — an enabled dropdown holding
+              only "All" would read as "this catalog has no rarities/sets". */}
+          <Select
+            value={rarity}
+            onValueChange={(v) => v && setRarity(v)}
+            disabled={filtersLoading}
+          >
             <SelectTrigger className="w-[140px]">
-              <SelectValue />
+              <span className="truncate">
+                {filtersLoading
+                  ? "Loading…"
+                  : rarity === "all"
+                    ? "All Rarities"
+                    : rarity}
+              </span>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Rarities</SelectItem>
@@ -198,12 +232,18 @@ export function AddUpgraderCardsDialog({
               ))}
             </SelectContent>
           </Select>
-          <Select value={setId} onValueChange={(v) => v && setSetId(v)}>
+          <Select
+            value={setId}
+            onValueChange={(v) => v && setSetId(v)}
+            disabled={filtersLoading}
+          >
             <SelectTrigger className="w-[180px]">
               <span className="truncate">
-                {setId === "all"
-                  ? "All Sets"
-                  : (sets.find((s) => s.id === setId)?.name ?? "All Sets")}
+                {filtersLoading
+                  ? "Loading…"
+                  : setId === "all"
+                    ? "All Sets"
+                    : (sets.find((s) => s.id === setId)?.name ?? "All Sets")}
               </span>
             </SelectTrigger>
             <SelectContent>

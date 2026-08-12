@@ -8,7 +8,11 @@ import { PaginationSkeleton, TableSkeleton } from "@/components/loading-skeleton
 import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
 import { requirePageAccess } from "@/lib/dal";
+import { REWARD_QUERY_TIMEOUT_MS, safeQuery } from "@/lib/errors/safe-query";
+import type { WithdrawalListItem } from "@/lib/queries/withdrawals";
 import { getWithdrawals } from "@/lib/queries/withdrawals";
+import type { PaginatedResult } from "@/lib/types";
+import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { parsePage, parsePerPage } from "@/lib/utils/pagination";
 import { columns } from "./columns";
 import { WithdrawalsDataTable } from "./data-table";
@@ -33,15 +37,58 @@ async function WithdrawalsContent({
   minValue?: number;
   maxValue?: number;
 }) {
-  const result = await getWithdrawals({
+  // The list read is the ONLY read on this route, and it used to be awaited
+  // bare: one mirror-pool timeout threw straight past this segment into
+  // `error.tsx`, replacing the whole queue — hero, toolbar, filters and all —
+  // with the red "Couldn't load pending withdrawals" page. Wrapped in
+  // `safeQuery` it degrades to a single amber band in the table's slot while
+  // the shell and the filter controls stay usable, and the 15s budget bounds
+  // the wait instead of letting a queued read hang the segment.
+  const empty: PaginatedResult<WithdrawalListItem> = {
+    data: [],
+    total: 0,
     page,
     perPage,
-    status,
-    method,
-    search,
-    minValue: minValue && Number.isFinite(minValue) ? minValue : undefined,
-    maxValue: maxValue && Number.isFinite(maxValue) ? maxValue : undefined,
-  });
+    totalPages: 0,
+  };
+  const { data: result, error, kind } = await safeQuery(
+    () =>
+      getWithdrawals({
+        page,
+        perPage,
+        status,
+        method,
+        search,
+        minValue: minValue && Number.isFinite(minValue) ? minValue : undefined,
+        maxValue: maxValue && Number.isFinite(maxValue) ? maxValue : undefined,
+      }),
+    empty,
+    "withdrawals.list",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+
+  // On failure the table is deliberately NOT rendered: its empty state reads
+  // "No withdrawals match the current filters", which would be a lie about a
+  // read that never returned. Band + "Results unavailable" instead.
+  if (error) {
+    return (
+      <>
+        <TileErrorFallback
+          label="Withdrawal requests"
+          kind={kind ?? "error"}
+          hint="Refresh to retry — no request has been lost."
+          size="panel"
+        />
+        <DataTablePagination
+          page={result.page}
+          totalPages={result.totalPages}
+          total={result.total}
+          perPage={result.perPage}
+          degraded
+        />
+      </>
+    );
+  }
 
   return (
     <>
@@ -125,7 +172,7 @@ export default async function WithdrawalsPage({
           key={suspenseKey}
           fallback={
             <>
-              <TableSkeleton rows={12} columns={7} />
+              <TableSkeleton rows={12} columns={9} />
               <PaginationSkeleton />
             </>
           }

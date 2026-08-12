@@ -125,6 +125,31 @@ async function SetsKpiStrip() {
   );
 }
 
+/**
+ * Filter bar + its series options. `getSeriesList()` used to be awaited in the
+ * PAGE BODY, so the PageHero — and with it the whole shell — waited on a MAIN
+ * read before anything painted (shell-first rule, CLAUDE.md §2). Its only
+ * consumer is this filter bar, which already had its own <Suspense>, so the
+ * read moved down here: the page body now awaits nothing but the session, the
+ * hero flushes immediately, and the series read overlaps the KPI + list reads
+ * instead of running before them. Same options, same failure degrade (empty
+ * dropdown, bar still renders).
+ */
+async function SetsFilterSection() {
+  const { data: series } = await safeQuery(
+    () => getSeriesList(),
+    [] as string[],
+    "sets.series",
+  );
+  return (
+    <SetsFilterBar
+      seriesOptions={series
+        .filter((s): s is string => s != null)
+        .map((s) => ({ label: s, value: s }))}
+    />
+  );
+}
+
 export default async function SetsPage({
   searchParams,
 }: {
@@ -134,17 +159,6 @@ export default async function SetsPage({
   const params = await searchParams;
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
-
-  // Only the filter-bar series options are resolved in the page body — a small,
-  // safeQuery-wrapped read. The heavy KPI aggregate (`getSetsStats`) streams in
-  // its own <Suspense> child below so it never blocks first paint, and the list
-  // streams in its own boundary. (Falls back to empty series options on failure
-  // so the filter bar still renders.)
-  const { data: series } = await safeQuery(
-    () => getSeriesList(),
-    [] as string[],
-    "sets.series",
-  );
 
   const suspenseKey = `${page}|${perPage}|${params.search ?? ""}|${params.series ?? ""}|${params.sortBy ?? ""}|${params.sortOrder ?? ""}`;
 
@@ -177,11 +191,7 @@ export default async function SetsPage({
         <SectionHeading icon={Library} title="All Sets" />
         <FadeIn className="space-y-4">
           <Suspense fallback={<FilterBarSkeleton filters={1} withTrailing={false} />}>
-            <SetsFilterBar
-              seriesOptions={series
-                .filter((s): s is string => s != null)
-                .map((s) => ({ label: s, value: s }))}
-            />
+            <SetsFilterSection />
           </Suspense>
 
           <Suspense

@@ -321,15 +321,41 @@ const cachedDashboardFiatMetrics = unstable_cache(
   { revalidate: 60, tags: ["dashboard-activity", "fiat-operations"] },
 );
 
-async function loadDashboardFiatMetrics(
+/**
+ * Request-local dedupe, keyed on the RESOLVED cutoff.
+ *
+ * React `cache()` keys on argument identity, so keying the memo on the raw
+ * `now: Date` never deduped anything: `/dashboard` renders the Fiat tile with
+ * `getDashboardFiatMetrics("today")` (one argument) while
+ * `getDashboardCashflowFromPostgres` calls it as
+ * `getDashboardFiatMetrics(window, now)` with a freshly constructed Date (two
+ * arguments, never-equal identity). Two different memo entries → the heavy Whop
+ * webhook CTE (DISTINCT ON over `payment_webhook_events` plus a per-payment
+ * LATERAL into `fiat_deposit_intents`) ran TWICE per render, and on a cold
+ * `unstable_cache` both misses raced each other into the mirror pool.
+ *
+ * Keying on `(window, cutoffIso)` makes the two call sites collapse to one
+ * entry — "today" resolves to the same 00:00 UTC cutoff for both — without
+ * changing which cutoff either caller asked for.
+ */
+const loadDashboardFiatMetricsForCutoff = cache(
+  async (
+    window: DashboardKpiWindow,
+    cutoffIso: string,
+  ): Promise<DashboardFiatMetrics> => {
+    const env = await readDbEnv();
+    if (env !== "prod") return computeDashboardFiatMetrics(new Date(cutoffIso));
+    return cachedDashboardFiatMetrics(window, cutoffIso);
+  },
+);
+
+/** Request-local dedupe across the top Fiat card and the KPI/P&L branches. */
+export async function getDashboardFiatMetrics(
   window: DashboardKpiWindow,
   now: Date = new Date(),
 ): Promise<DashboardFiatMetrics> {
-  const cutoff = kpiWindowToCutoff(window, now);
-  const env = await readDbEnv();
-  if (env !== "prod") return computeDashboardFiatMetrics(cutoff);
-  return cachedDashboardFiatMetrics(window, cutoff.toISOString());
+  return loadDashboardFiatMetricsForCutoff(
+    window,
+    kpiWindowToCutoff(window, now).toISOString(),
+  );
 }
-
-/** Request-local dedupe across the top Fiat card and the KPI/P&L branches. */
-export const getDashboardFiatMetrics = cache(loadDashboardFiatMetrics);

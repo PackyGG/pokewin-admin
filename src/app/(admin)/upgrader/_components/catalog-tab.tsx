@@ -6,14 +6,12 @@ import {
   HandCoins,
   Layers,
   Palette,
-  Plus,
   Sparkles,
 } from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Button } from "@/components/ui/button";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
@@ -21,7 +19,7 @@ import { safeQuery } from "@/lib/errors/safe-query";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
-import { getUpgraderPickerFilters, listUpgraderOutputs } from "../actions";
+import { listUpgraderOutputs } from "../actions";
 import type { UpgraderOutputCard } from "@/lib/backend-api";
 import { AddUpgraderCardsDialog } from "../add-cards-dialog";
 import {
@@ -365,13 +363,11 @@ export async function UpgraderCatalogTab({
           }
           // AddCards lived in the page hero on the standalone page; it moved
           // here because it depends on this segment's data fetch
-          // (existingCardIds / sets / rarities), which the page shell can't
-          // resolve without eager-loading the pool on the Transactions tab.
-          action={
-            <Suspense fallback={<AddCardsActionFallback />}>
-              <UpgraderAddCardsAction existingCardIds={existingCardIds} />
-            </Suspense>
-          }
+          // (existingCardIds), which the page shell can't resolve without
+          // eager-loading the pool on the Transactions tab. Its set/rarity
+          // dropdown options are NOT fetched here — the dialog loads them on
+          // first open (two fewer MAIN reads per catalog render).
+          action={<AddUpgraderCardsDialog existingCardIds={existingCardIds} />}
         />
         <Suspense fallback={<Skeleton className="h-10 w-full" />}>
           <DataTableToolbar
@@ -410,50 +406,3 @@ export async function UpgraderCatalogTab({
   );
 }
 
-/**
- * Placeholder for the Add Cards trigger while its picker filters
- * (getSets + getRarities) stream in. Mirrors the dialog's trigger button
- * (same `gap-2` + Plus icon) but disabled, so the section heading keeps its
- * shape and the button doesn't pop in — it just enables once the filters
- * resolve.
- */
-function AddCardsActionFallback() {
-  return (
-    <Button className="gap-2" disabled>
-      <Plus className="size-4" />
-      Add Cards
-    </Button>
-  );
-}
-
-/**
- * Streams the Add Cards dialog independently of the catalog's main content.
- * The picker filters feed ONLY the dialog's rarity/set dropdowns, so they're
- * fetched here (behind the page's <Suspense>) instead of gating the KPI
- * strip / tier panel / grid. `existingCardIds` is derived from the already
- * resolved pool and threaded in. safeQuery degrades a filters fault to empty
- * dropdowns (dialog still opens) rather than crashing the tab — same value
- * behavior as the previous inline fallback.
- */
-async function UpgraderAddCardsAction({
-  existingCardIds,
-}: {
-  existingCardIds: string[];
-}) {
-  const filtersResult = await safeQuery(
-    () => getUpgraderPickerFilters(),
-    { sets: [], rarities: [] } as Awaited<
-      ReturnType<typeof getUpgraderPickerFilters>
-    >,
-    "upgrader.filters",
-    12_000,
-  );
-  const filters = filtersResult.data;
-  return (
-    <AddUpgraderCardsDialog
-      existingCardIds={existingCardIds}
-      sets={filters.sets}
-      rarities={filters.rarities}
-    />
-  );
-}

@@ -290,7 +290,11 @@ async function LeaderboardsBody({
         extra?: Record<string, string | number | undefined | null>,
     ) => string;
 }) {
-    const timezone = await getAdminDisplayTimeZone();
+    // NB: the admin display timezone is NOT awaited here. It is independent
+    // of everything below, and awaiting it first made it a serial prefix that
+    // delayed the start of the backend walk — the longest leg on the page. It
+    // is folded into the hydration Promise.all at the bottom instead, where
+    // it overlaps real work and costs nothing on the critical path.
 
     // Walk the whole filtered set in pages of BACKEND_PAGE_SIZE (the
     // backend rejects a larger limit), then sort + paginate in-page — the
@@ -334,30 +338,42 @@ async function LeaderboardsBody({
     // Hydrate creator usernames from MAIN so admins see who owns each row.
     const creatorIds = [...new Set(rows.map((r) => r.creator_user_id))];
     const db = await getReadDrizzleDb();
-    const creators = creatorIds.length > 0
-        ? await db
-              .select({ id: user.id, username: user.username, email: user.email })
-              .from(user)
-              .where(inArray(user.id, creatorIds))
-        : [];
-    const creatorMap = new Map(creators.map((c) => [c.id, c]));
 
-    // Admin-side sponsored % (= the house's prize-pool share) per
-    // leaderboard (admin DB). Best-effort — a failure renders every row
-    // at the 100% default. Fetched over the WHOLE active-tab set
-    // (allRows, already bounded by FETCH_CAP) — not just the visible
-    // page — so the KPI strip below can weight house cost across every
-    // row in the tab in a single query. The table only reads its own
-    // page's ids out of the map.
-    const sponsorshipMap = await getLeaderboardSponsorshipMap(
-        allRows.map((r) => r.id),
-    ).catch((e) => {
-        console.error(
-            "[leaderboards] sponsorship fetch failed (rows show 100%):",
-            e,
-        );
-        return new Map<string, number>();
-    });
+    // These three are mutually independent — a MAIN read, an ADMIN read and a
+    // cookie/settings lookup — and used to run strictly one after another, so
+    // the segment paid the sum of their latencies for no reason. Running them
+    // together makes it the max instead. Each keeps its own failure handling,
+    // so they still degrade individually.
+    const [timezone, creators, sponsorshipMap] = await Promise.all([
+        getAdminDisplayTimeZone(),
+        creatorIds.length > 0
+            ? db
+                  .select({
+                      id: user.id,
+                      username: user.username,
+                      email: user.email,
+                  })
+                  .from(user)
+                  .where(inArray(user.id, creatorIds))
+            : Promise.resolve(
+                  [] as { id: string; username: string | null; email: string }[],
+              ),
+        // Admin-side sponsored % (= the house's prize-pool share) per
+        // leaderboard (admin DB). Best-effort — a failure renders every row
+        // at the 100% default. Fetched over the WHOLE active-tab set
+        // (allRows, already bounded by FETCH_CAP) — not just the visible
+        // page — so the KPI strip below can weight house cost across every
+        // row in the tab in a single query. The table only reads its own
+        // page's ids out of the map.
+        getLeaderboardSponsorshipMap(allRows.map((r) => r.id)).catch((e) => {
+            console.error(
+                "[leaderboards] sponsorship fetch failed (rows show 100%):",
+                e,
+            );
+            return new Map<string, number>();
+        }),
+    ]);
+    const creatorMap = new Map(creators.map((c) => [c.id, c]));
 
     // KPI strip — computed over the active status-tab's full fetched set
     // (allRows), net of refunds, weighted by each row's house share %

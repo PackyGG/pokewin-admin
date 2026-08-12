@@ -17,13 +17,15 @@ import {
   parseUsersSearchParams,
   type UsersSearchParams,
 } from "./_lib/search-params";
-import { getUsersPageGates } from "./_lib/admin-gates";
+import {
+  getUsersPageGates,
+  type UsersPageSession,
+} from "./_lib/admin-gates";
 import { BulkBanButton } from "./bulk-ban-button";
 import { BulkUnbanButton } from "./bulk-unban-button";
 import { UsersDataTable } from "./data-table";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   PageHero,
   PageHeroIdentity,
@@ -40,6 +42,7 @@ import {
 import {
   KpiStripSkeleton,
   PaginationSkeleton,
+  ToolbarSkeleton,
 } from "@/components/loading-skeletons";
 import { SkeletonTable } from "@/components/ux";
 
@@ -86,13 +89,13 @@ export default async function UsersPage({
   // execute. See ./_lib/search-params.ts.
   const params = parseUsersSearchParams(await searchParams);
 
-  // ONE consolidated, fail-closed Admin DB read for the page's render-cosmetic
-  // gate flags — down to just the excluded-users search override now that the
-  // Deleted-users and Export buttons are gone. Replaces three sequential
-  // unguarded lookups that could crash the whole page to error.tsx on an
-  // Admin DB hiccup. See ./_lib/admin-gates.ts — every action re-verifies
-  // server-side.
-  const gates = await getUsersPageGates(session);
+  // NOTE: the render-cosmetic gate flags are NOT read here. `getUsersPageGates`
+  // is an Admin DB round-trip, and awaiting it in the page body delayed the
+  // hero/section shell behind it — the shell-first rule this repo mandates.
+  // Both consumers (the toolbar's bulk-ban controls, the table's
+  // excluded-search override) now await it inside their OWN Suspense leg, and
+  // the read is React-`cache`d + wall-clock bounded in ./_lib/admin-gates.ts so
+  // the two legs still cost exactly one bounded query between them.
 
   // Key the table leg on every param that changes its result so a param
   // change (search keystroke commit, sort shortcut, page click) unmounts
@@ -195,22 +198,12 @@ export default async function UsersPage({
               </p>
             )
           )}
-          <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-            {/* No `filters` — the All Roles / All Statuses dropdowns were
-                removed (owner, 2026-07-23). The `?role=` / `?status=` params
-                themselves still work and are still validated: "Top user net
-                worth" pins role=user, and the Banned KPI tile links to
-                status=banned. Either one raises the toolbar's own "Clear"
-                chip, so a filter set that way can always be undone. */}
-            <DataTableToolbar
-              searchPlaceholder="Search username, email, user ID, Discord ID — or c:CODE for a code's owner (e.g. c:packygg)"
-            >
-              {gates.canBulkBan && <BulkBanButton />}
-              {gates.canBulkBan && <BulkUnbanButton />}
-              <SortByPnlLosersButton />
-              <SortByPnlWinnersButton />
-              <SortByUserNetWorthButton />
-            </DataTableToolbar>
+          {/* Same skeleton loading.tsx paints for this row (h-9 search box,
+              no filter pills) — this leg now genuinely suspends on the gate
+              read, so the fallback has to match or the toolbar jumps 4px on
+              swap-in. */}
+          <Suspense fallback={<ToolbarSkeleton filters={0} />}>
+            <UsersToolbarSection session={session} />
           </Suspense>
           <Suspense
             key={tableKey}
@@ -222,10 +215,7 @@ export default async function UsersPage({
               </div>
             }
           >
-            <UsersTableSection
-              params={params}
-              includeExcludedInSearch={gates.includeExcludedInSearch}
-            />
+            <UsersTableSection params={params} session={session} />
           </Suspense>
         </FadeIn>
       </div>
@@ -330,17 +320,43 @@ async function UsersKpiStrip() {
 }
 
 /**
- * Table leg — owns the list query, the ALWAYS-VISIBLE failure band, the
- * table, and the pagination. All props are plain serializables (no
+ * Toolbar leg — the search box plus the sort shortcuts. Owns its own gate
+ * read so the page shell never waits on the Admin DB to paint. The read is
+ * request-deduped with the table leg's (see ./_lib/admin-gates.ts), so this
+ * split costs no extra query.
+ */
+async function UsersToolbarSection({ session }: { session: UsersPageSession }) {
+  const gates = await getUsersPageGates(session);
+  return (
+    // No `filters` — the All Roles / All Statuses dropdowns were removed
+    // (owner, 2026-07-23). The `?role=` / `?status=` params themselves still
+    // work and are still validated: "Top user net worth" pins role=user, and
+    // the Banned KPI tile links to status=banned. Either one raises the
+    // toolbar's own "Clear" chip, so a filter set that way can always be
+    // undone.
+    <DataTableToolbar searchPlaceholder="Search username, email, user ID, Discord ID — or c:CODE for a code's owner (e.g. c:packygg)">
+      {gates.canBulkBan && <BulkBanButton />}
+      {gates.canBulkBan && <BulkUnbanButton />}
+      <SortByPnlLosersButton />
+      <SortByPnlWinnersButton />
+      <SortByUserNetWorthButton />
+    </DataTableToolbar>
+  );
+}
+
+/**
+ * Table leg — owns the gate read, the list query, the ALWAYS-VISIBLE failure
+ * band, the table, and the pagination. All props are plain serializables (no
  * function props across the RSC boundary).
  */
 async function UsersTableSection({
   params,
-  includeExcludedInSearch,
+  session,
 }: {
   params: UsersSearchParams;
-  includeExcludedInSearch: boolean;
+  session: UsersPageSession;
 }) {
+  const { includeExcludedInSearch } = await getUsersPageGates(session);
   const { page, perPage } = params;
   const isSearch = Boolean(params.search?.trim());
 

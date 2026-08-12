@@ -10,7 +10,11 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
-import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import {
+  safeQuery,
+  REWARD_QUERY_TIMEOUT_MS,
+  type SafeQueryResult,
+} from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { FadeIn } from "@/components/fade-in";
 import { CardImage } from "@/components/card-image";
@@ -22,7 +26,12 @@ import {
   type PacksPeriod,
   type TopPack24hRow,
 } from "@/lib/queries/analytics-packs";
-import { getPackAndBattleStats } from "@/lib/queries/analytics";
+import {
+  getBattleModeStats,
+  getPackPopularityStats,
+  type BattleModeStats,
+  type PackPopularityStats,
+} from "@/lib/queries/analytics";
 import { BattleModesSection, PackPopularitySection } from "./sections";
 import type { AnalyticsPeriod } from "./types";
 
@@ -74,44 +83,66 @@ export async function PacksBattlesTab({
         : "30d";
 
   const sort = parseSort(sortKey);
-  // `getPackProfitability` powers the profitability tables below; the
-  // battle-mode / pack-popularity breakdowns at the top of this tab are
-  // sourced from the slim `getPackAndBattleStats` helper. Previously
-  // this called the full `getAnalyticsData(heroPeriod)` bundle (11
-  // raws — incl. PERCENTILE_CONT median, multi-day GROUP BY revenue,
-  // visitors count, etc.) purely to consume two of its return fields.
-  // Slim variant runs the 6 raws that actually feed those two
-  // sections, dropping the rest entirely.
-  // Each leg degrades independently via safeQuery — a single failed
+  // ACTIVE SUB-VIEW ONLY. `?g=packs` and `?g=battles` render disjoint
+  // sections, so each render fetches only the reads it will actually paint:
+  //
+  //   • profitability — one attribution scan (`side`) instead of both
+  //   • the top-of-tab breakdown — `getBattleModeStats` (5 scans) OR
+  //     `getPackPopularityStats` (1 scan), never both
+  //   • the rolling-24h leaderboard — packs view only; it is not rendered on
+  //     the battles view, so fetching it there was a discarded read
+  //
+  // Before this, the battles view issued 9 reads and displayed 6 of them.
+  // Under the process-wide mirror admission cap (`src/lib/db.ts`) the
+  // discarded ones queued ahead of the visible ones, which is how a tile ends
+  // up rendering "Couldn't load this section".
+  //
+  // Each leg still degrades independently via safeQuery — a single failed
   // scan turns its own section into a panel fallback instead of taking
   // the whole tab down through the route error boundary.
-  const [profitabilityResult, overviewResult, topPacks24hResult] =
+  const idle = { data: null, error: null } as const;
+  const [profitabilityResult, battleStatsResult, packStatsResult, topPacks24hResult] =
     await Promise.all([
       safeQuery(
-        () => getPackProfitability(period),
+        () =>
+          getPackProfitability(
+            period,
+            showPacks && showBattles ? "both" : showPacks ? "packs" : "battles",
+          ),
         null,
         "analytics.packs.profitability",
         REWARD_QUERY_TIMEOUT_MS,
       ),
-      safeQuery(
-        () => getPackAndBattleStats(heroPeriod),
-        null,
-        "analytics.packs.overview",
-        REWARD_QUERY_TIMEOUT_MS,
-      ),
-      safeQuery(
-        () => getTopOpenedPacks24h(10),
-        null,
-        "analytics.packs.top24h",
-        REWARD_QUERY_TIMEOUT_MS,
-      ),
+      showBattles
+        ? safeQuery(
+            () => getBattleModeStats(heroPeriod),
+            null,
+            "analytics.packs.battleStats",
+            REWARD_QUERY_TIMEOUT_MS,
+          )
+        : Promise.resolve(idle as SafeQueryResult<BattleModeStats | null>),
+      showPacks
+        ? safeQuery(
+            () => getPackPopularityStats(heroPeriod),
+            null,
+            "analytics.packs.packStats",
+            REWARD_QUERY_TIMEOUT_MS,
+          )
+        : Promise.resolve(idle as SafeQueryResult<PackPopularityStats | null>),
+      showPacks
+        ? safeQuery(
+            () => getTopOpenedPacks24h(10),
+            null,
+            "analytics.packs.top24h",
+            REWARD_QUERY_TIMEOUT_MS,
+          )
+        : Promise.resolve(idle as SafeQueryResult<TopPack24hRow[] | null>),
     ]);
   const data = profitabilityResult.data;
-  const overview = overviewResult.data;
+  const battleStats = battleStatsResult.data;
+  const packStats = packStatsResult.data;
   const topPacks24h = topPacks24hResult.data;
 
-  // own surface flag is in `comparison` mode; never awaited, swallows its own
-  // errors, and never affects the rendered Postgres payload.
   const sortFn = (a: {
     revenue: number;
     grossMargin: number;
@@ -149,18 +180,31 @@ export async function PacksBattlesTab({
           <TopPacks24hPanel rows={topPacks24h} />
         )}
 
-        {overviewResult.error || !overview ? (
-          <TileErrorFallback
-            label="Battle modes & pack popularity"
-            hint="The pack/battle stats query failed — other sections still rendered. Refresh to retry."
-            size="panel"
-          />
-        ) : (
-          <div className="space-y-4">
-            {showBattles && <BattleModesSection stats={overview.battleStats} />}
-            {showPacks && <PackPopularitySection stats={overview.packStats} />}
-          </div>
-        )}
+        {/* Each breakdown owns its own failure now that they are separate
+            reads: a failed battle scan no longer blanks the pack popularity
+            panel beside it (and vice versa). */}
+        <div className="space-y-4">
+          {showBattles &&
+            (battleStatsResult.error || !battleStats ? (
+              <TileErrorFallback
+                label="Battle modes"
+                hint="The battle stats query failed — other sections still rendered. Refresh to retry."
+                size="panel"
+              />
+            ) : (
+              <BattleModesSection stats={battleStats} />
+            ))}
+          {showPacks &&
+            (packStatsResult.error || !packStats ? (
+              <TileErrorFallback
+                label="Pack popularity"
+                hint="The pack popularity query failed — other sections still rendered. Refresh to retry."
+                size="panel"
+              />
+            ) : (
+              <PackPopularitySection stats={packStats} />
+            ))}
+        </div>
 
         <div className="flex items-start gap-3 rounded-xl border bg-muted/20 p-4">
           <div className="rounded-md bg-primary/10 p-1.5">

@@ -399,22 +399,26 @@ async function UserDetailBody({
   // Security-sensitive capabilities scope later reads, but must not get
   // ahead of core detail. Both fail closed: an ADMIN error hides privileged
   // controls/data without blanking the account page.
-  const [ultraLossbackResult, permissionsResult] = await Promise.all([
-    safeQuery(
-      () => canUseUltraLossbackFresh(viewerSession),
-      false,
-      "users.detail.ultraLossbackGate",
-    ),
+  //
+  // These are only KICKED here. They used to be a separate `await` gate ahead
+  // of the hero-metadata gate below, which forced two serial ADMIN round-trip
+  // layers into the streamed body even though not one of those reads depends
+  // on another. Everything now resolves in the single gate further down; the
+  // few band promises that genuinely need `viewerCanSeeUltraLossback` chain
+  // off this promise instead of off a resolved value.
+  const ultraLossbackPromise = safeQuery(
+    () => canUseUltraLossbackFresh(viewerSession),
+    false,
+    "users.detail.ultraLossbackGate",
+  );
+  const permissionsPromise =
     sessionRole === "admin"
       ? Promise.resolve({ data: null, error: null, kind: null } as const)
       : safeQuery(
           () => getUserPermissions(sessionUserId),
           [],
           "users.detail.permissions",
-        ),
-  ]);
-  const viewerCanSeeUltraLossback = ultraLossbackResult.data;
-  const permissions = permissionsResult.data;
+        );
 
   // Every band promise below resolves to a WHOLE SafeQueryResult
   // ({ data, error }) — nothing unwraps `.then(r => r.data)` anymore, so
@@ -479,21 +483,22 @@ async function UserDetailBody({
   // includes adjustments. See getUserFinancialTransactionsCached.
   const financialTxPromise: Promise<SafeQueryResult<UserTxPage>> | null =
     wantsFinancialTx
-      ? viewerIsOwnerPromise.then((ownerRes) =>
-          safeQuery(
-            () =>
-              getUserFinancialTransactionsCached(
-                id,
-                1,
-                10,
-                FINANCIAL_TYPES,
-                ownerRes.data,
-                viewerCanSeeUltraLossback,
-              ),
-            EMPTY_TX_PAGE,
-            "users.detail.financialTx",
-            USER_DETAIL_QUERY_TIMEOUT_MS,
-          ),
+      ? Promise.all([viewerIsOwnerPromise, ultraLossbackPromise]).then(
+          ([ownerRes, ultraRes]) =>
+            safeQuery(
+              () =>
+                getUserFinancialTransactionsCached(
+                  id,
+                  1,
+                  10,
+                  FINANCIAL_TYPES,
+                  ownerRes.data,
+                  ultraRes.data,
+                ),
+              EMPTY_TX_PAGE,
+              "users.detail.financialTx",
+              USER_DETAIL_QUERY_TIMEOUT_MS,
+            ),
         )
       : null;
   // Inventory tab: owned grid page + disposed "Sold & Exchanged" page.
@@ -577,15 +582,17 @@ async function UserDetailBody({
   // than a silent empty log.
   const auditPromise =
     initialTab === "audit"
-      ? safeQuery(
-          () => getUserAdminAuditFeed(
-            id,
-            canViewProtectedActors,
-            viewerCanSeeUltraLossback,
+      ? ultraLossbackPromise.then((ultraRes) =>
+          safeQuery(
+            () => getUserAdminAuditFeed(
+              id,
+              canViewProtectedActors,
+              ultraRes.data,
+            ),
+            EMPTY_USER_ADMIN_AUDIT,
+            "users.detail.adminAudit",
+            USER_DETAIL_QUERY_TIMEOUT_MS,
           ),
-          EMPTY_USER_ADMIN_AUDIT,
-          "users.detail.adminAudit",
-          USER_DETAIL_QUERY_TIMEOUT_MS,
         )
       : null;
   // Consumed only by Overview's transaction drill-down and Account's full
@@ -609,17 +616,25 @@ async function UserDetailBody({
 
   // ── AWAITED BODY GATE ──────────────────────────────────────────────
   //
-  // Core detail is already resolved above. This second gate contains the
-  // narrow fresh-balance overlay plus small hero metadata/capability reads.
-  // Every leg is independently wrapped, so one failed section falls back
-  // without rejecting the streamed body.
+  // Core detail is already resolved above. This is the ONLY remaining gate:
+  // the viewer-capability reads, the narrow fresh-balance overlay, and the
+  // small hero metadata reads. None of them depends on another, so they all
+  // belong in one layer — splitting the capabilities into an earlier `await`
+  // (as this did until 2026-08-12) just made the streamed body pay two serial
+  // round-trip layers for reads that could have run side by side. Every leg is
+  // independently wrapped, so one failed section falls back without rejecting
+  // the streamed body.
   const [
+    ultraLossbackResult,
+    permissionsResult,
     freshBalancesResult,
     creatorHistoryResult,
     mothaCanEditResult,
     viewerIsOwnerResult,
     userTagsResult,
   ] = await Promise.all([
+    ultraLossbackPromise,
+    permissionsPromise,
     // Narrow, uncached consistency read against MAIN's primary. If it fails,
     // the page falls back to the cached aggregate instead of losing the user
     // detail surface.
@@ -651,6 +666,8 @@ async function UserDetailBody({
     safeQuery(() => getUserTags(id), [], "users.detail.tags"),
   ]);
 
+  const viewerCanSeeUltraLossback = ultraLossbackResult.data;
+  const permissions = permissionsResult.data;
   const creatorHistory = creatorHistoryResult.data;
 
   // "Ever a creator?" = currently creator, OR an audit role-change to

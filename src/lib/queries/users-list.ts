@@ -731,30 +731,47 @@ async function fetchColumnSortUserIds(
   // 2026-06-11). If `user` ever grows past ~500k rows, switch the
   // UNFILTERED total to a `pg_class.reltuples` estimate; filtered counts
   // stay exact.
-  const [orderedRows, totalCount] = await Promise.all([
-    queryMainRows<{ id: string }[]>(
-      `
-      SELECT u.id
+  //
+  // ONE round trip, not two. `COUNT(*) OVER ()` is evaluated over the full
+  // filtered join result BEFORE LIMIT/OFFSET, so it returns exactly what the
+  // separate `SELECT COUNT(*) FROM "user" u <where>` statement returned:
+  // `balances.user_id` carries `balances_user_id_unique`, so the optional
+  // LEFT JOIN can never fan a user row out into several. The mirror pool is
+  // globally admission-controlled (src/lib/db.ts), so removing a statement
+  // frees a permit for another leg of the same render — worth more than the
+  // parallelism the old `Promise.all` bought.
+  const orderedRows = await queryMainRows<
+    { id: string; total_count: string }[]
+  >(
+    `
+      SELECT u.id, (COUNT(*) OVER ())::text AS total_count
       FROM "user" u
       ${balanceJoin}
       ${whereClause.sql}
       ${orderSql}
       LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
     `,
-      ...whereClause.params,
-    ),
-    queryMainRows<{ c: string }[]>(
-      `
+    ...whereClause.params,
+  );
+
+  if (orderedRows.length > 0) {
+    return {
+      ids: orderedRows.map((r) => r.id),
+      total: Number(orderedRows[0].total_count),
+    };
+  }
+
+  // Empty slice — the window count came back with no row to ride on. That is
+  // either "0 matches" (total really is 0) or "page past the end" (total is
+  // non-zero and the pagination control needs it to clamp). One extra
+  // statement resolves which, and only on a page that renders no rows.
+  const totalCount = await queryMainRows<{ c: string }[]>(
+    `
       SELECT COUNT(*)::text AS c FROM "user" u ${whereClause.sql}
     `,
-      ...whereClause.params,
-    ),
-  ]);
-
-  return {
-    ids: orderedRows.map((r) => r.id),
-    total: Number(totalCount[0]?.c ?? 0),
-  };
+    ...whereClause.params,
+  );
+  return { ids: [], total: Number(totalCount[0]?.c ?? 0) };
 }
 
 const cachedFilteredColumnSortUserIds = unstable_cache(
@@ -799,34 +816,50 @@ async function computeRankedUserIds(
 
   // COUNT(*) stays EXACT — see fetchColumnSortUserIds for the upgrade path
   // (switch the unfiltered total to a reltuples estimate past ~500k rows).
-  const [orderedRows, totalCount] = await Promise.all([
-    queryMainRows<{ id: string }[]>(
-      `
+  //
+  // ONE round trip: `(SELECT COUNT(*) FROM filtered)` is an uncorrelated
+  // scalar over the SAME `filtered` CTE the slice is built from, so it is
+  // byte-for-byte the number the separate `COUNT(*) FROM "user" u <where>`
+  // statement produced — no join fan-out to reason about, because it counts
+  // the pre-join cohort directly. `filtered` is referenced more than once so
+  // PostgreSQL materialises it and the count is a scan of an already-built
+  // tuplestore. Saves a mirror permit per render under the global admission
+  // cap in src/lib/db.ts.
+  const orderedRows = await queryMainRows<
+    { id: string; total_count: string }[]
+  >(
+    `
       WITH filtered AS (
         SELECT u.id
           FROM "user" u
           ${whereClause.sql}
       )${aggregateCtes}
-      SELECT f.id
+      SELECT f.id, (SELECT COUNT(*) FROM filtered)::text AS total_count
         FROM filtered f
         ${rankingJoins}
        ORDER BY (${orderExpr}) ${orderSql} NULLS LAST, f.id ${orderSql}
        LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
     `,
-      ...whereClause.params,
-    ),
-    queryMainRows<{ c: string }[]>(
-      `
+    ...whereClause.params,
+  );
+
+  if (orderedRows.length > 0) {
+    return {
+      ids: orderedRows.map((r) => r.id),
+      total: Number(orderedRows[0].total_count),
+    };
+  }
+
+  // Empty slice — same reasoning as fetchColumnSortUserIds: distinguish
+  // "0 matches" from "page past the end" with one extra statement, paid only
+  // on a page that renders no rows.
+  const totalCount = await queryMainRows<{ c: string }[]>(
+    `
       SELECT COUNT(*)::text AS c FROM "user" u ${whereClause.sql}
     `,
-      ...whereClause.params,
-    ),
-  ]);
-
-  return {
-    ids: orderedRows.map((r) => r.id),
-    total: Number(totalCount[0]?.c ?? 0),
-  };
+    ...whereClause.params,
+  );
+  return { ids: [], total: Number(totalCount[0]?.c ?? 0) };
 }
 
 /**
@@ -982,22 +1015,6 @@ type UserListItem = {
   signupIpSharedCount: number;
 };
 
-/** One grouped `user` row per distinct signup_ip on the current page. */
-type SharedIpRow = { signup_ip: string; n: string | number };
-
-/** One grouped `fingerprints` row per user on the current page. */
-type DeviceRow = {
-  user_id: string;
-  suspected_alt: boolean | null;
-  visitor_id: string | null;
-};
-
-/** Earliest `account` row per user on the current page — the signup provider. */
-type SignupProviderRow = {
-  user_id: string;
-  provider: string | null;
-};
-
 type UserListRow = {
   id: string;
   username: string | null;
@@ -1048,9 +1065,116 @@ type UserListRow = {
   } | null;
 };
 
-async function fetchUserListRows(ids: string[]): Promise<UserListRow[]> {
+/**
+ * The base row PLUS the three best-effort display enrichments (device
+ * fingerprint, signup provider, shared-signup-IP cluster size).
+ *
+ * `has_device` is false when NO `fingerprints` row exists for the user —
+ * i.e. capture never happened, which is a coverage gap, not a clean bill of
+ * health. It is carried as its own column because a LEFT JOIN can't be
+ * distinguished from "row exists but every column is NULL" otherwise.
+ */
+type UserListPageRow = UserListRow & {
+  has_device: boolean;
+  suspected_alt: boolean | null;
+  visitor_id: string | null;
+  signup_provider: string | null;
+  signup_ip_shared_count: number | string | null;
+};
+
+/**
+ * ONE statement for the whole page slice.
+ *
+ * This used to be four separate mirror reads issued per render — the base
+ * `user`+`balances` row fetch, then a `Promise.all` over the fingerprint,
+ * signup-provider and shared-signup-IP lookups. Every one of them is keyed
+ * on the SAME ≤200 ids, so they were four checkouts of a globally
+ * admission-controlled pool (src/lib/db.ts) doing one page's worth of work.
+ * Folding them into CTEs on a single statement returns byte-identical values
+ * and gives three permits back to the rest of the render; under a global
+ * concurrency cap that is worth far more than the parallelism it costs.
+ *
+ * The semantics of each leg are preserved exactly:
+ *  • `dev`  — one grouped `fingerprints` row per user (index-backed:
+ *             idx_fingerprints_user_id). `bool_or` for the alt flag, newest
+ *             `visitor_id` by `created_at DESC`, same as before.
+ *  • `prov` — `DISTINCT ON (userId) … ORDER BY userId, created_at ASC NULLS
+ *             LAST` = the EARLIEST linked account, the definition
+ *             users-detail.ts and insights-rewards/signup/source.ts share.
+ *  • `ips`  — cluster size per distinct signup_ip on this page, converted to
+ *             "how many OTHERS" (n − 1, floored at 0) right in SQL. NULL
+ *             signup_ip stays 0. `user.signup_ip` is still unindexed on prod
+ *             so this remains a sequential scan; it wants
+ *             `CREATE INDEX ON "user" (signup_ip)` in the backend repo.
+ */
+async function fetchUserListPageRows(
+  ids: string[],
+): Promise<UserListPageRow[]> {
   if (ids.length === 0) return [];
-  return queryMainRows<UserListRow[]>(
+  return queryMainRows<UserListPageRow[]>(
+    `WITH base AS (
+       SELECT u.id, u.username, u.email, u.image, u.role::text AS role,
+              u.is_banned, u.is_locked, u.country, u.country_code, u.signup_ip,
+              u.affiliate_code, u.created_at,
+              CASE WHEN b.user_id IS NULL THEN NULL ELSE jsonb_build_object(
+                'locked_balance', b.locked_balance::text,
+                'total_wagered', b.total_wagered::text
+              ) END AS balances
+         FROM "user" u
+         LEFT JOIN balances b ON b.user_id = u.id
+        WHERE u.id = ANY($1::text[])
+     ), dev AS (
+       SELECT user_id,
+              bool_or(suspected_alt_triggered) AS suspected_alt,
+              (array_agg(visitor_id ORDER BY created_at DESC))[1] AS visitor_id
+         FROM fingerprints
+        WHERE user_id = ANY($1::text[])
+        GROUP BY user_id
+     ), prov AS (
+       SELECT DISTINCT ON (a."userId")
+              a."userId" AS user_id,
+              a."providerId" AS provider
+         FROM account a
+        WHERE a."userId" = ANY($1::text[])
+        ORDER BY a."userId", a.created_at ASC NULLS LAST
+     ), ips AS (
+       SELECT signup_ip, COUNT(*) AS n
+         FROM "user"
+        WHERE signup_ip IN (
+                SELECT signup_ip FROM base WHERE signup_ip IS NOT NULL
+              )
+        GROUP BY signup_ip
+     )
+     SELECT base.*,
+            (dev.user_id IS NOT NULL) AS has_device,
+            dev.suspected_alt,
+            dev.visitor_id,
+            prov.provider AS signup_provider,
+            CASE
+              WHEN base.signup_ip IS NULL THEN 0
+              ELSE GREATEST(COALESCE(ips.n, 1) - 1, 0)::int
+            END AS signup_ip_shared_count
+       FROM base
+       LEFT JOIN dev ON dev.user_id = base.id
+       LEFT JOIN prov ON prov.user_id = base.id
+       LEFT JOIN ips ON ips.signup_ip = base.signup_ip`,
+    ids,
+  );
+}
+
+/**
+ * Base-row-only fallback. The merged statement above is one failure domain,
+ * where the three enrichment legs each used to swallow their own error and
+ * degrade a single cell. This restores that contract at the page level: if
+ * the merged read throws, retry the plain row fetch so the list still
+ * renders with the enrichment columns showing "unknown" — the behaviour
+ * before the merge — rather than blanking the whole table.
+ */
+async function fetchUserListRowsBaseOnly(
+  ids: string[],
+): Promise<UserListPageRow[]> {
+  if (ids.length === 0) return [];
+  const rows = await queryMainRows<UserListRow[]>(
     `SELECT u.id, u.username, u.email, u.image, u.role::text AS role,
             u.is_banned, u.is_locked, u.country, u.country_code, u.signup_ip,
             u.affiliate_code, u.created_at,
@@ -1063,6 +1187,14 @@ async function fetchUserListRows(ids: string[]): Promise<UserListRow[]> {
       WHERE u.id = ANY($1::text[])`,
     ids,
   );
+  return rows.map((row) => ({
+    ...row,
+    has_device: false,
+    suspected_alt: null,
+    visitor_id: null,
+    signup_provider: null,
+    signup_ip_shared_count: 0,
+  }));
 }
 
 /**
@@ -1073,125 +1205,28 @@ async function fetchUserListRows(ids: string[]): Promise<UserListRow[]> {
  * exact-match searches and on the computed-sort pages whenever its mode
  * routing skipped the batch. Now every render:
  *
- *  • `calculateUsersPnlBatch` (6 parallel PK-IN queries, canonical
- *    null-safe official_stream / remove_locked carve-outs) — a failure
- *    THROWS so the page-level safeQuery shows the visible failure band.
- *    Money columns are the page's core content; silently falling back to
- *    the balances row would render numbers that are confidently wrong.
- *  • best-effort enrichment legs (device fingerprint, signup provider,
- *    shared signup IP) — each degrades its own cell, never the render.
+ *  • `calculateUsersPnlBatch` (one CTE statement, canonical null-safe
+ *    official_stream / remove_locked carve-outs) — a failure THROWS so the
+ *    page-level safeQuery shows the visible failure band. Money columns are
+ *    the page's core content; silently falling back to the balances row
+ *    would render numbers that are confidently wrong.
+ *  • the display enrichments (device fingerprint, signup provider, shared
+ *    signup IP) now arrive ALREADY JOINED on the row (see
+ *    fetchUserListPageRows), so this function no longer issues reads of its
+ *    own — it is pure mapping over data the caller already fetched.
  *
  * The per-page deposit-COUNT groupBy that used to run here is gone with
  * the "# Deposits" column (owner, 2026-07-22). The `depositCount` SORT
  * still works: its ranking runs in the `dc` CTE inside
  * computeRankedUserIds, which never depended on this hydration.
  */
-async function hydrateUserListPage(
-  users: UserListRow[],
+function hydrateUserListPage(
+  users: UserListPageRow[],
+  pnlByUserId: Map<string, UserPnl>,
   total: number,
   page: number,
   perPage: number,
-): Promise<PaginatedResult<UserListItem>> {
-  const userIds = users.map((u) => u.id);
-  const signupIps = [
-    ...new Set(users.map((u) => u.signup_ip).filter((ip): ip is string => !!ip)),
-  ];
-
-  const [
-    pnlByUserId,
-    suspectedAltRows,
-    signupProviderRows,
-    sharedIpRows,
-  ] = await Promise.all([
-    userIds.length > 0
-      ? calculateUsersPnlBatch(userIds)
-      : Promise.resolve(new Map<string, UserPnl>()),
-    // Device-fingerprint state, scoped to just this page's ids (index-backed:
-    // idx_fingerprints_user_id). ONE grouped query carries both facts: a row
-    // exists ⇒ the device was captured; suspected_alt says whether the alt
-    // heuristic fired. Deliberately not two queries — the row set is the same
-    // and a second round-trip would buy nothing. Best-effort: a failure
-    // degrades every row on this page to "unknown" rather than breaking the
-    // list render.
-    userIds.length > 0
-      ? queryMainRows<DeviceRow[]>(
-          `
-          SELECT
-            user_id,
-            bool_or(suspected_alt_triggered) AS suspected_alt,
-            -- Newest visitor_id: a user can accumulate several across
-            -- devices / storage clears; the latest is the one worth showing.
-            (array_agg(visitor_id ORDER BY created_at DESC))[1] AS visitor_id
-          FROM fingerprints
-          WHERE user_id = ANY($1::text[])
-          GROUP BY user_id
-        `,
-          userIds,
-        ).catch((e) => {
-          console.error("[getUsers] device fingerprint lookup failed:", e);
-          return [] as DeviceRow[];
-        })
-      : Promise.resolve([] as DeviceRow[]),
-    // Signup provider (HOW the user signed up), scoped to just this page's
-    // ids. `DISTINCT ON (userId) … ORDER BY userId, created_at ASC NULLS
-    // LAST` = the EARLIEST linked account, the same definition
-    // users-detail.ts resolves for the single-user page and the same one
-    // insights-rewards/signup/source.ts uses for its provider breakdown —
-    // one meaning of "signup source" across the admin, not three.
-    // Index-backed: Bitmap Index Scan on idx_account_user_id, 0.58 ms for a
-    // 20-id page (read-only EXPLAIN ANALYZE against prod, 2026-07-22).
-    // Best-effort like the fingerprint leg above: a failure degrades this
-    // page's rows to "—" rather than breaking the list render.
-    userIds.length > 0
-      ? queryMainRows<SignupProviderRow[]>(
-          `
-          SELECT DISTINCT ON (a."userId")
-                 a."userId" AS user_id,
-                 a."providerId" AS provider
-            FROM account a
-           WHERE a."userId" = ANY($1::text[])
-           ORDER BY a."userId", a.created_at ASC NULLS LAST
-        `,
-          userIds,
-        ).catch((e) => {
-          console.error("[getUsers] signup provider lookup failed:", e);
-          return [] as SignupProviderRow[];
-        })
-      : Promise.resolve([] as SignupProviderRow[]),
-    // Shared-signup-IP counts, scoped to the distinct IPs on THIS page.
-    // WARNING: `user.signup_ip` is NOT indexed (verified against prod), so
-    // this is a sequential scan — tolerable at ~16.5k users, one scan per
-    // page load, but it wants `CREATE INDEX ON "user" (signup_ip)` in the
-    // backend repo before the table grows much further.
-    // Best-effort like the legs above: a failure degrades every row on this
-    // page to "unique" rather than breaking the list render.
-    signupIps.length > 0
-      ? queryMainRows<SharedIpRow[]>(
-          `
-          SELECT signup_ip, COUNT(*) AS n
-            FROM "user"
-           WHERE signup_ip = ANY($1::text[])
-           GROUP BY signup_ip
-        `,
-          signupIps,
-        ).catch((e) => {
-          console.error("[getUsers] shared signup_ip lookup failed:", e);
-          return [] as SharedIpRow[];
-        })
-      : Promise.resolve([] as SharedIpRow[]),
-  ]);
-
-  // Present in the map ⇒ a fingerprint row exists for that user (device was
-  // captured). The row carries the alt flag and the newest visitor_id.
-  const deviceByUserId = new Map(suspectedAltRows.map((r) => [r.user_id, r]));
-  // Count of OTHERS on the same IP, so a unique signup reads as 0, not 1.
-  const othersOnIp = new Map(
-    sharedIpRows.map((r) => [r.signup_ip, Math.max(0, Number(r.n) - 1)]),
-  );
-  const signupProviderByUserId = new Map(
-    signupProviderRows.map((r) => [r.user_id, r.provider]),
-  );
-
+): PaginatedResult<UserListItem> {
   return {
     data: users.map((u) => {
       const lockedBalance = toNumber(u.balances?.locked_balance);
@@ -1230,13 +1265,16 @@ async function hydrateUserListPage(
         totalWagered,
         pnl,
         createdAt: new Date(u.created_at).toISOString(),
-        suspectedAlt: deviceByUserId.get(u.id)?.suspected_alt === true,
-        hasDeviceId: deviceByUserId.has(u.id),
-        deviceVisitorId: deviceByUserId.get(u.id)?.visitor_id ?? null,
-        signupIpSharedCount: u.signup_ip
-          ? (othersOnIp.get(u.signup_ip) ?? 0)
-          : 0,
-        signupProvider: signupProviderByUserId.get(u.id) ?? null,
+        suspectedAlt: u.suspected_alt === true,
+        // A `fingerprints` row exists ⇒ the device was captured. Carried as
+        // its own column because the merged LEFT JOIN can't otherwise tell
+        // "no row" from "row with NULL columns".
+        hasDeviceId: u.has_device === true,
+        deviceVisitorId: u.visitor_id ?? null,
+        // Already "how many OTHERS" (n − 1, floored at 0, and 0 for a NULL
+        // signup_ip) — the subtraction moved into SQL with the merge.
+        signupIpSharedCount: Number(u.signup_ip_shared_count ?? 0),
+        signupProvider: u.signup_provider ?? null,
       };
     }),
     total,
@@ -1449,13 +1487,29 @@ export async function getUsers(params: {
             perPage,
           });
 
-  const unordered = await fetchUserListRows(idPage.ids);
+  // The row+enrichment statement and the PnL batch both key off the SAME
+  // resolved id slice, so they no longer run in sequence — the row fetch used
+  // to be awaited first only because the shared-signup-IP leg needed the
+  // signup_ips off it, and that leg now derives them inside its own CTE.
+  // Two concurrent mirror reads instead of one-then-four.
+  const [unordered, pnlByUserId] = await Promise.all([
+    fetchUserListPageRows(idPage.ids).catch(async (e) => {
+      // Enrichment is best-effort by contract (see fetchUserListRowsBaseOnly).
+      // The base rows are not — if this one fails too it throws, and the
+      // page-level safeQuery renders the visible failure band.
+      console.error("[getUsers] merged page-row read failed:", e);
+      return fetchUserListRowsBaseOnly(idPage.ids);
+    }),
+    idPage.ids.length > 0
+      ? calculateUsersPnlBatch(idPage.ids)
+      : Promise.resolve(new Map<string, UserPnl>()),
+  ]);
   const byId = new Map(unordered.map((user) => [user.id, user]));
   const users = idPage.ids
     .map((id) => byId.get(id))
-    .filter((user): user is UserListRow => Boolean(user));
+    .filter((user): user is UserListPageRow => Boolean(user));
 
-  return hydrateUserListPage(users, idPage.total, page, perPage);
+  return hydrateUserListPage(users, pnlByUserId, idPage.total, page, perPage);
 }
 
 // ─── Global KPI stats for the /users page hero strip ──────────────────

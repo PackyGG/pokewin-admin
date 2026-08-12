@@ -35,21 +35,30 @@ function UserSearchInput({
   const [searching, setSearching] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Out-of-order guard, mirroring `ItemPicker` on /challenges. `searchUsers`
+  // is a leading-wildcard ILIKE on MAIN; under the mirror's read admission
+  // cap a slow earlier request can resolve AFTER a newer one and repaint the
+  // dropdown with results for a query the operator has already moved past —
+  // on a form that mints real, redeemable value for whoever is picked.
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    const reqId = ++requestIdRef.current;
     if (query.length < 2) {
       setResults([]);
+      setSearching(false);
       return;
     }
     setSearching(true);
     debounceRef.current = setTimeout(async () => {
       try {
         const res = await searchUsers(query);
+        if (reqId !== requestIdRef.current) return;
         setResults(res);
         setShowResults(true);
       } finally {
-        setSearching(false);
+        if (reqId === requestIdRef.current) setSearching(false);
       }
     }, 300);
     return () => {

@@ -93,7 +93,22 @@ test("released feature reads recover from transient mirror connection failures",
 
   assert.match(sources[0], /fiat\.overview/);
   assert.match(sources[0], /fiat\.access/);
-  assert.match(sources[0], /fiat\.webhooks\.summary/);
+  // The webhook summary and the recent-failures list used to be two retried
+  // reads (`fiat.webhooks.summary` / `…failures`); they are now two CTEs
+  // projected out of ONE retried round trip, so only `fiat.webhooks` remains.
+  // Prefix-match the context so a later re-split cannot silently void this pin,
+  // and prove BOTH halves still come out of that single retried statement.
+  assert.match(sources[0], /context: "fiat\.webhooks/);
+  assert.match(sources[0], /\) AS summary,/);
+  assert.match(sources[0], /\) AS failures/);
+  // Recovery must cover every fiat read, not just the ones named above: each
+  // labelled query context belongs to a retry wrapper, so a newly added read
+  // cannot quietly skip the transient-failure path.
+  assert.equal(
+    sources[0].match(/withTransientPostgresReadRetry\(/g)?.length,
+    sources[0].match(/\{ context: "/g)?.length,
+    "every labelled fiat read must be wrapped in the transient-read retry",
+  );
   assert.match(sources[1], /keno\.operations/);
   assert.match(sources[2], /dashboard\.keno/);
   assert.match(sources[3], /notifications\.recipient-search/);

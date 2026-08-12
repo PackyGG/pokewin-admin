@@ -140,12 +140,28 @@ async function computeDailyPacksGiveaway(
           AND ui.obtained_at <  sw.win_end
       )`;
 
-    // ── Per-pack rollup ──────────────────────────────────────────────
-    // One row per reward pack: distinct opens (sessions), distinct
-    // claimers, Σ card value handed out, Σ wager collected on those
-    // opens. Cards join through the originating session id, so both
-    // source_type='pack' and source_type='reward' rows are captured.
-    type PackRow = {
+    // ── ONE round trip for all three result sets ─────────────────────
+    // This used to be three separate statements (per-pack rollup, top-line
+    // totals, daily series) issued back-to-back. Each one re-ran the SAME
+    // `reward_cards` scan — the user_inventory ⋈ game_sessions ⋈ packs join
+    // plus the creator-session anti-join — so the mirror paid for that join
+    // three times, and because they were awaited sequentially they also held
+    // three mirror admission permits one after the other. Under the
+    // process-wide read semaphore that is the expensive part: total reads per
+    // render, not per-read latency.
+    //
+    // They are now one statement. `reward_cards` is a CTE referenced by every
+    // branch, so PostgreSQL materialises it ONCE (a CTE referenced more than
+    // once is materialised by default) and all three aggregations read that
+    // single result. Each branch's SQL is otherwise byte-for-byte the previous
+    // statement's: same scope, same cutoff, same on-stream exclusion, same
+    // expressions, same `::text` casts, same ordering (per-pack still orders on
+    // the TEXT `giveaway_payout` exactly as before, so row order is unchanged).
+    // The per-pack and totals branches keep their own wager de-duplication via
+    // `per_session_wager`; a session maps to exactly one pack, so carrying
+    // `pack_id` in that DISTINCT yields the identical session set the totals
+    // branch used to build without it.
+    type PackJson = {
       pack_id: string;
       name: string;
       slug: string;
@@ -155,12 +171,24 @@ async function computeDailyPacksGiveaway(
       giveaway_payout: string;
       wager: string;
     };
-    const packRows = await queryRows<PackRow[]>(db, sql`WITH ${sql.raw(sessionWindowsCte)},
+    type DailyJson = { date: string; payout: string };
+    type MergedRow = {
+      packs: PackJson[] | null;
+      daily: DailyJson[] | null;
+      opens: string;
+      claimers: string;
+      cards: string;
+      giveaway_payout: string;
+      wager: string;
+    };
+    const mergedRows = await queryRows<MergedRow[]>(db, sql`WITH ${sql.raw(sessionWindowsCte)},
         reward_cards AS (
           SELECT
+            ui.id             AS inv_id,
             gs.game_id        AS pack_id,
             ui.user_id        AS user_id,
             ui.source_id      AS session_id,
+            DATE(ui.obtained_at) AS obtained_date,
             ui.value_at_obtained::numeric AS card_value
           FROM user_inventory ui
           JOIN game_sessions gs ON gs.id = ui.source_id AND gs.game_type = 'pack'
@@ -176,84 +204,54 @@ async function computeDailyPacksGiveaway(
           SELECT DISTINCT rc.session_id, rc.pack_id, gs.bet_amount::numeric AS bet_amount
           FROM reward_cards rc
           JOIN game_sessions gs ON gs.id = rc.session_id
-        )
-        SELECT
-          p.id::text AS pack_id,
-          p.name AS name,
-          p.slug AS slug,
-          p.image_url AS image_url,
-          COALESCE((SELECT COUNT(DISTINCT rc.session_id) FROM reward_cards rc WHERE rc.pack_id = p.id), 0)::text AS opens,
-          COALESCE((SELECT COUNT(DISTINCT rc.user_id) FROM reward_cards rc WHERE rc.pack_id = p.id), 0)::text AS claimers,
-          COALESCE((SELECT SUM(rc.card_value) FROM reward_cards rc WHERE rc.pack_id = p.id), 0)::text AS giveaway_payout,
-          COALESCE((SELECT SUM(psw.bet_amount) FROM per_session_wager psw WHERE psw.pack_id = p.id), 0)::text AS wager
-        FROM packs p
-        WHERE p.pack_type = 'reward'
-        ORDER BY giveaway_payout DESC`,
-    );
-
-    // ── Top-line totals ──────────────────────────────────────────────
-    // Distinct opens / claimers across ALL reward packs (a user opening
-    // two different tiers is one claimer overall, so we can't just sum
-    // the per-pack claimer counts). Card count + payout + wager too.
-    type TotalRow = {
-      opens: string;
-      claimers: string;
-      cards: string;
-      giveaway_payout: string;
-      wager: string;
-    };
-    const totalRows = await queryRows<TotalRow[]>(db, sql`WITH ${sql.raw(sessionWindowsCte)},
-        reward_cards AS (
-          SELECT
-            ui.id             AS inv_id,
-            ui.user_id        AS user_id,
-            ui.source_id      AS session_id,
-            ui.value_at_obtained::numeric AS card_value
-          FROM user_inventory ui
-          JOIN game_sessions gs ON gs.id = ui.source_id AND gs.game_type = 'pack'
-          JOIN packs p ON p.id = gs.game_id AND p.pack_type = 'reward'
-          WHERE ui.user_id IN ${scope}
-            ${uiCutoff}
-            ${notOnStream}
         ),
-        per_session_wager AS (
-          SELECT DISTINCT rc.session_id, gs.bet_amount::numeric AS bet_amount
+        -- Per-pack rollup: one row per reward pack — distinct opens
+        -- (sessions), distinct claimers, Σ card value handed out, Σ wager
+        -- collected on those opens. Cards join through the originating
+        -- session id, so both source_type='pack' and source_type='reward'
+        -- rows are captured. Packs with no activity in the window still get
+        -- a zero row (the scan is driven by the packs table, not the cards).
+        per_pack AS (
+          SELECT
+            p.id::text AS pack_id,
+            p.name AS name,
+            p.slug AS slug,
+            p.image_url AS image_url,
+            COALESCE((SELECT COUNT(DISTINCT rc.session_id) FROM reward_cards rc WHERE rc.pack_id = p.id), 0)::text AS opens,
+            COALESCE((SELECT COUNT(DISTINCT rc.user_id) FROM reward_cards rc WHERE rc.pack_id = p.id), 0)::text AS claimers,
+            COALESCE((SELECT SUM(rc.card_value) FROM reward_cards rc WHERE rc.pack_id = p.id), 0)::text AS giveaway_payout,
+            COALESCE((SELECT SUM(psw.bet_amount) FROM per_session_wager psw WHERE psw.pack_id = p.id), 0)::text AS wager
+          FROM packs p
+          WHERE p.pack_type = 'reward'
+        ),
+        -- Per-day giveaway cost = value of cards handed out that day. The
+        -- near-zero wager is intentionally NOT subtracted here (see the
+        -- dailySeries doc on the return type) so the curve is the pure
+        -- giveaway and stays non-negative.
+        per_day AS (
+          SELECT
+            rc.obtained_date AS date,
+            COALESCE(SUM(rc.card_value), 0)::text AS payout
           FROM reward_cards rc
-          JOIN game_sessions gs ON gs.id = rc.session_id
+          GROUP BY rc.obtained_date
         )
         SELECT
-          COALESCE((SELECT COUNT(DISTINCT session_id) FROM reward_cards), 0)::text AS opens,
-          COALESCE((SELECT COUNT(DISTINCT user_id) FROM reward_cards), 0)::text AS claimers,
-          COALESCE((SELECT COUNT(inv_id) FROM reward_cards), 0)::text AS cards,
-          COALESCE((SELECT SUM(card_value) FROM reward_cards), 0)::text AS giveaway_payout,
-          COALESCE((SELECT SUM(bet_amount) FROM per_session_wager), 0)::text AS wager`,
+          COALESCE((SELECT json_agg(pp ORDER BY pp.giveaway_payout DESC) FROM per_pack pp), '[]'::json) AS packs,
+          COALESCE((SELECT json_agg(pd ORDER BY pd.date ASC) FROM per_day pd), '[]'::json) AS daily,
+          -- Top-line totals: distinct opens / claimers across ALL reward
+          -- packs (a user opening two different tiers is one claimer
+          -- overall, so the per-pack claimer counts can't just be summed).
+          COALESCE((SELECT COUNT(DISTINCT rc.session_id) FROM reward_cards rc), 0)::text AS opens,
+          COALESCE((SELECT COUNT(DISTINCT rc.user_id) FROM reward_cards rc), 0)::text AS claimers,
+          COALESCE((SELECT COUNT(rc.inv_id) FROM reward_cards rc), 0)::text AS cards,
+          COALESCE((SELECT SUM(rc.card_value) FROM reward_cards rc), 0)::text AS giveaway_payout,
+          COALESCE((SELECT SUM(psw.bet_amount) FROM per_session_wager psw), 0)::text AS wager`,
     );
 
-    // ── Daily series ─────────────────────────────────────────────────
-    // Per-day giveaway cost = value of cards handed out that day. The
-    // near-zero wager is intentionally NOT subtracted here (see the
-    // dailySeries doc on the return type) so the curve is the pure
-    // giveaway and stays non-negative.
-    type DailyRow = { date: Date; payout: string };
-    const dailyRows = await queryRows<DailyRow[]>(db, sql`WITH ${sql.raw(sessionWindowsCte)},
-        reward_cards AS (
-          SELECT
-            DATE(ui.obtained_at) AS date,
-            ui.value_at_obtained::numeric AS card_value
-          FROM user_inventory ui
-          JOIN game_sessions gs ON gs.id = ui.source_id AND gs.game_type = 'pack'
-          JOIN packs p ON p.id = gs.game_id AND p.pack_type = 'reward'
-          WHERE ui.user_id IN ${scope}
-            ${uiCutoff}
-            ${notOnStream}
-        )
-        SELECT
-          rc.date AS date,
-          COALESCE(SUM(rc.card_value), 0)::text AS payout
-        FROM reward_cards rc
-        GROUP BY rc.date
-        ORDER BY rc.date ASC`,
-    );
+    const merged = mergedRows[0];
+    const packRows = merged?.packs ?? [];
+    const dailyRows = merged?.daily ?? [];
+    const totalRows = merged ? [merged] : [];
 
     const packs: DailyPackRow[] = packRows.map((r) => {
       const giveawayPayout = toNumber(r.giveaway_payout);

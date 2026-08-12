@@ -7,7 +7,6 @@ import {
   sessionIsAdmin,
   sessionIsOwner,
 } from "@/lib/dal";
-import type { SessionPayload } from "@/lib/session";
 import { pageAccessGranted } from "@/lib/admin-pages";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { CreatePackButton } from "./create-pack-button";
@@ -33,30 +32,25 @@ type CatalogCaps = {
   canDelete: boolean;
 };
 
+/** Full capabilities — the `session.role === "admin"` short-circuit. */
+const ADMIN_CATALOG_CAPS: CatalogCaps = {
+  canCreate: true,
+  canToggle: true,
+  canDelete: true,
+};
+
 /**
- * Resolve the Catalog tab's pack-creator capabilities — lifted verbatim from
- * the old standalone /packs page. Real admins always pass; non-admins read
- * their effective `allowed_pages` via a safeQuery so an Admin-DB blip degrades
- * to "no capabilities" rather than crashing the page.
+ * Derive the Catalog tab's pack-creator capabilities from an ALREADY-RESOLVED
+ * permission list. Pure — it issues no read of its own, so the page can share a
+ * single `getUserPermissions()` result between this and the Transactions-tab
+ * visibility gate (they used to run the identical Admin-DB read twice per
+ * render, serialized, because `caps` was awaited after the tab-access check).
  */
-async function resolveCatalogCaps(session: SessionPayload): Promise<CatalogCaps> {
-  const isAdmin = session.role === "admin";
-  if (isAdmin) {
-    return {
-      canCreate: true,
-      canToggle: true,
-      canDelete: true,
-    };
-  }
-  const { data: perms } = await safeQuery(
-    () => getUserPermissions(session.userId),
-    [] as string[],
-    "packs.list.perms",
-  );
+function catalogCapsFrom(permissions: string[]): CatalogCaps {
   return {
-    canCreate: hasCapability(perms, "__can_create_pack"),
-    canToggle: hasCapability(perms, "__can_toggle_pack_active"),
-    canDelete: hasCapability(perms, "__can_delete_pack"),
+    canCreate: hasCapability(permissions, "__can_create_pack"),
+    canToggle: hasCapability(permissions, "__can_toggle_pack_active"),
+    canDelete: hasCapability(permissions, "__can_delete_pack"),
   };
 }
 
@@ -102,19 +96,36 @@ export default async function PacksPage({
   // (same as requirePageAccess), otherwise the original /transactions/packs
   // grant. Drives the tab-chip visibility; the segment re-enforces it.
   const isPrivileged = sessionIsAdmin(session) || sessionIsOwner(session);
-  let canViewTransactions = isPrivileged;
-  if (!isPrivileged) {
-    const { data: allowed } = await safeQuery(
-      () => getUserPermissions(session.userId),
-      [] as string[],
-      "packs.tx-access",
-    );
-    canViewTransactions = pageAccessGranted(allowed, "/transactions/packs");
-  }
+  // The Catalog caps keep their ORIGINAL, narrower short-circuit
+  // (`session.role === "admin"`) — an owner-without-admin-role still resolves
+  // its capabilities from the grant list, exactly as before.
+  const isRoleAdmin = session.role === "admin";
+  const catalogActive = tab === "catalog";
 
-  // Resolve the Catalog caps once when the Catalog tab is active, so both the
-  // hero action and the catalog body read the same flags (no double work).
-  const caps = tab === "catalog" ? await resolveCatalogCaps(session) : null;
+  // ONE Admin-DB permission read for both consumers. Previously the tab-access
+  // gate and `resolveCatalogCaps` each issued their own
+  // `getUserPermissions(session.userId)` — the same row, fetched twice and
+  // serialized (caps was awaited after the gate). Same inputs, same flags, one
+  // round trip; skipped entirely when neither consumer needs it.
+  const needsPermissions = !isPrivileged || (catalogActive && !isRoleAdmin);
+  const { data: permissions } = needsPermissions
+    ? await safeQuery(
+        () => getUserPermissions(session.userId),
+        [] as string[],
+        "packs.permissions",
+      )
+    : { data: [] as string[] };
+
+  const canViewTransactions =
+    isPrivileged || pageAccessGranted(permissions, "/transactions/packs");
+
+  // Resolved once when the Catalog tab is active, so both the hero action and
+  // the catalog body read the same flags (no double work).
+  const caps: CatalogCaps | null = !catalogActive
+    ? null
+    : isRoleAdmin
+      ? ADMIN_CATALOG_CAPS
+      : catalogCapsFrom(permissions);
 
   return (
     <div className="space-y-6">

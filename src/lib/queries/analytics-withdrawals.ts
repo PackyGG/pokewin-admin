@@ -160,10 +160,11 @@ async function computeWithdrawnCoinsBreakdown(
  * `computeWithdrawnCoinsBreakdown`; mirrors the `getAnalyticsData` cache
  * idiom in `analytics.ts`.
  *
- * NOTE: the `all` window is still an UNBOUNDED lifetime scan (money-exact
- * "total withdrawn" — capping it would change a displayed number, so it is
- * left for owner sign-off). The cache + the caller's `safeQuery` timeout
- * keep a cold lifetime fill from hanging the segment.
+ * The `all` window is NOT an unbounded scan: `intervalSqlForPeriod` caps it at
+ * LIFETIME_LOOKBACK_DAYS (365d), so every variant carries a date bound. An
+ * older note here claimed otherwise — it predated the cap and is corrected
+ * rather than deleted so nobody "re-fixes" a bound that already exists (or,
+ * worse, changes the cap and moves a displayed money figure).
  */
 const cachedWithdrawnCoinsBreakdown = unstable_cache(
   computeWithdrawnCoinsBreakdown,

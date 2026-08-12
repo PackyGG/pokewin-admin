@@ -80,11 +80,90 @@ async function getPromoStripStats(): Promise<{
  * (active-tab-only). Its own filter params (`?status=`, `?region=`, `?page=`)
  * don't collide with the top-level `?tab=`.
  */
-export async function PromoCodesTab({
+export function PromoCodesTab({
   params,
 }: {
   params: Record<string, string | undefined>;
 }) {
+  return (
+    <div className="space-y-6">
+      {/* The KPI strip is its own streamed child. It used to be awaited in the
+          tab body, which meant the code LIST below could not even start its
+          query until the aggregate strip had returned — two heavy reads in
+          series behind one boundary. Splitting them lets both reads start in
+          the same tick and lets the table paint as soon as it is ready. */}
+      <Suspense fallback={<StripSkeleton />}>
+        <PromoStrip />
+      </Suspense>
+
+      <div className="space-y-3">
+        <SectionHeading
+          icon={Ticket}
+          title="All Codes"
+          action={<CreatePromoCodeButton />}
+        />
+        {/* Selection provider wraps BOTH the toolbar (outside the keyed
+            Suspense, so the search input stays mounted/focused while the
+            table streams) AND the table (inside it). */}
+        <PromoCodesSelectionProvider>
+          <div className="space-y-4">
+            <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+              <DataTableToolbar
+                searchPlaceholder="Find exact promo code..."
+                filters={[
+                  {
+                    name: "Status",
+                    paramKey: "status",
+                    options: [
+                      { label: "Active", value: "active" },
+                      { label: "Expired", value: "expired" },
+                    ],
+                  },
+                ]}
+              >
+                <PromoCodesQuickSelect />
+              </DataTableToolbar>
+            </Suspense>
+            {/* Keyed on the table inputs so a filter / page change re-shows
+                the table skeleton instead of blocking on the previous
+                render. */}
+            <Suspense
+              key={`${params.search ?? ""}|${params.status ?? ""}|${params.region ?? ""}|${params.page ?? "1"}|${params.perPage ?? "20"}`}
+              fallback={
+                <>
+                  <TableSkeleton rows={12} columns={7} />
+                  <PaginationSkeleton />
+                </>
+              }
+            >
+              <PromoCodesListAsync params={params} />
+            </Suspense>
+          </div>
+        </PromoCodesSelectionProvider>
+      </div>
+    </div>
+  );
+}
+
+/** Fallback matching the strip's own shape (4-up tiles + 2-up money row). */
+function StripSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-24 animate-pulse rounded-xl border bg-muted/20" />
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <div key={i} className="h-24 animate-pulse rounded-xl border bg-muted/20" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+async function PromoStrip() {
   // Stats stay stable across the region / status filter — admins get a fixed
   // read-out of the promo-code pool while they refine the table on screen.
   // Both stats reads share ONE prod-only 60s cache entry (getPromoStripStats)
@@ -95,6 +174,7 @@ export async function PromoCodesTab({
     () => getPromoStripStats(),
     null as Awaited<ReturnType<typeof getPromoStripStats>> | null,
     "promoCodes.stripStats",
+    REWARD_QUERY_TIMEOUT_MS,
   );
   const stats = strip?.listStats ?? null;
   const money = strip?.moneyStats ?? null;
@@ -153,52 +233,6 @@ export async function PromoCodesTab({
           icon={Wallet}
           accent="blue"
         />
-      </div>
-
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Ticket}
-          title="All Codes"
-          action={<CreatePromoCodeButton />}
-        />
-        {/* Selection provider wraps BOTH the toolbar (outside the keyed
-            Suspense, so the search input stays mounted/focused while the
-            table streams) AND the table (inside it). */}
-        <PromoCodesSelectionProvider>
-          <div className="space-y-4">
-            <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-              <DataTableToolbar
-                searchPlaceholder="Find exact promo code..."
-                filters={[
-                  {
-                    name: "Status",
-                    paramKey: "status",
-                    options: [
-                      { label: "Active", value: "active" },
-                      { label: "Expired", value: "expired" },
-                    ],
-                  },
-                ]}
-              >
-                <PromoCodesQuickSelect />
-              </DataTableToolbar>
-            </Suspense>
-            {/* Keyed on the table inputs so a filter / page change re-shows
-                the table skeleton instead of blocking on the previous
-                render. */}
-            <Suspense
-              key={`${params.search ?? ""}|${params.status ?? ""}|${params.region ?? ""}|${params.page ?? "1"}|${params.perPage ?? "20"}`}
-              fallback={
-                <>
-                  <TableSkeleton rows={12} columns={7} />
-                  <PaginationSkeleton />
-                </>
-              }
-            >
-              <PromoCodesListAsync params={params} />
-            </Suspense>
-          </div>
-        </PromoCodesSelectionProvider>
       </div>
     </div>
   );

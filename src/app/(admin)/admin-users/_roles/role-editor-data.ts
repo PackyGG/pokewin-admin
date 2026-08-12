@@ -8,9 +8,7 @@ import {
   type AdminRole,
 } from "@/lib/admin-roles";
 import { ROLE_BASELINES } from "@/lib/role-baselines";
-import { getRoleLimits } from "@/lib/role-limits";
 import type { RoleLimits } from "@/lib/permissions/types";
-import { EMPTY_ROLE_LIMITS } from "@/lib/permissions/types";
 
 // ---------------------------------------------------------------------------
 // Read-only data layer for the per-role editor (RoleV2 P4).
@@ -75,6 +73,13 @@ export async function getRoleEditorData(
 ): Promise<RoleEditorData | null> {
   await requireAdmin();
 
+  // ONE read for the role row, its holder count AND its six limit columns.
+  // The limits used to come from a second `getRoleLimits(id)` round trip that
+  // re-read the SAME `admin_roles` row for six columns this statement was
+  // already positioned on — a pure redundant read against a `max: 4` Admin
+  // pool. Selected `::text` so numerics arrive as strings (node-postgres does
+  // not narrow numeric to a JS number) and `Number()` reproduces `getRoleLimits`
+  // exactly; NULL stays null.
   const row = (await adminDrizzle.execute<{
     id: string;
     name: string;
@@ -84,9 +89,18 @@ export async function getRoleEditorData(
     capabilities: string[];
     landing_route: string | null;
     holder_count: string;
+    balance_limit_daily: string | null;
+    balance_limit_weekly: string | null;
+    balance_limit_monthly: string | null;
+    issuance_limit_daily: string | null;
+    issuance_limit_weekly: string | null;
+    issuance_limit_monthly: string | null;
   }>(sql`
     SELECT r.id::text, r.name, r.description, r.is_system, r.system_key,
            r.capabilities, r.landing_route,
+           r.balance_limit_daily::text, r.balance_limit_weekly::text,
+           r.balance_limit_monthly::text, r.issuance_limit_daily::text,
+           r.issuance_limit_weekly::text, r.issuance_limit_monthly::text,
            COUNT(u.id)::text AS holder_count
     FROM admin_roles r
     LEFT JOIN admin_users u ON u.role_id = r.id
@@ -99,17 +113,28 @@ export async function getRoleEditorData(
     row.system_key && isAdminRole(row.system_key) ? row.system_key : null;
   const bypass = systemKey ? (ROLE_BASELINES[systemKey]?.bypass ?? false) : false;
 
-  // Per-role limit columns (typed). Falls back to the all-null set defensively
-  // (the row exists, so getRoleLimits returns a value, but keep it total).
-  const limits = (await getRoleLimits(id)) ?? {
-    balanceAdjustment: { ...EMPTY_ROLE_LIMITS.balanceAdjustment },
-    issuance: { ...EMPTY_ROLE_LIMITS.issuance! },
+  const holderCount = Number(row.holder_count);
+
+  // Per-role limit columns (typed) — identical shape and conversion to
+  // `getRoleLimits`, just sourced from the row we already have.
+  const num = (v: string | null): number | null => (v === null ? null : Number(v));
+  const limits: RoleLimits = {
+    balanceAdjustment: {
+      daily: num(row.balance_limit_daily),
+      weekly: num(row.balance_limit_weekly),
+      monthly: num(row.balance_limit_monthly),
+    },
+    issuance: {
+      daily: num(row.issuance_limit_daily),
+      weekly: num(row.issuance_limit_weekly),
+      monthly: num(row.issuance_limit_monthly),
+    },
   };
 
   const affectedUserCount = await countAffectedUsers(
-    id,
     systemKey,
     Boolean(row.is_system),
+    holderCount,
   );
 
   return {
@@ -122,7 +147,7 @@ export async function getRoleEditorData(
     capabilities: row.capabilities,
     landingRoute: row.landing_route ?? null,
     limits,
-    holderCount: Number(row.holder_count),
+    holderCount,
     affectedUserCount,
   };
 }
@@ -138,9 +163,16 @@ export async function getRoleEditorData(
  * The `admin` built-in returns 0 (it's read-only and never re-materialized).
  */
 async function countAffectedUsers(
-  id: string,
   systemKey: AdminRole | null,
   isSystem: boolean,
+  /**
+   * `COUNT(u.id)` over `admin_users u ON u.role_id = r.id` — already computed
+   * by the caller's single row read. For a CUSTOM role that is, term for term,
+   * the same population as this function's own
+   * `SELECT COUNT(*) FROM admin_users WHERE role_id = id`, so the custom branch
+   * reuses it instead of paying a second round trip for the identical number.
+   */
+  holderCount: number,
 ): Promise<number> {
   if (isSystem && systemKey) {
     if (systemKey === "admin") return 0;
@@ -157,13 +189,9 @@ async function countAffectedUsers(
     `);
     return Number(result.rows[0]?.count ?? 0);
   }
-  // Custom role: assigned users (role_id link).
-  const result = await adminDrizzle.execute<{ count: string }>(sql`
-    SELECT COUNT(*)::text AS count
-    FROM admin_users
-    WHERE role_id = ${id}::uuid
-  `);
-  return Number(result.rows[0]?.count ?? 0);
+  // Custom role: assigned users (role_id link) — identical to the caller's
+  // already-fetched holder count, so no second read is issued.
+  return holderCount;
 }
 
 /** One admin who holds this role, for the "Assigned admins" panel. */
@@ -180,20 +208,34 @@ export type RoleHolder = {
  *   • custom row            → every admin_user with `role_id = id`.
  * Read-only, admin-gated. Capped to a sensible count for the panel; the exact
  * total is shown via `holderCount` on `RoleEditorData`.
+ *
+ * `known` lets a caller that already loaded the role (the editor page renders
+ * this panel from the same `RoleEditorData`) skip the identity probe — it is
+ * the identical `is_system` / `system_key` pair, read one statement earlier.
+ * Omit it and the probe runs as before.
  */
-export async function getRoleHolders(id: string): Promise<RoleHolder[]> {
+export async function getRoleHolders(
+  id: string,
+  known?: { isSystem: boolean; systemKey: AdminRole | null },
+): Promise<RoleHolder[]> {
   await requireAdmin();
 
-  const role = (await adminDrizzle.execute<{
-    is_system: boolean;
-    system_key: string | null;
-  }>(sql`
-    SELECT is_system, system_key
-    FROM admin_roles
-    WHERE id = ${id}::uuid
-    LIMIT 1
-  `)).rows[0];
-  if (!role) return [];
+  let role: { is_system: boolean; system_key: string | null };
+  if (known) {
+    role = { is_system: known.isSystem, system_key: known.systemKey };
+  } else {
+    const probed = (await adminDrizzle.execute<{
+      is_system: boolean;
+      system_key: string | null;
+    }>(sql`
+      SELECT is_system, system_key
+      FROM admin_roles
+      WHERE id = ${id}::uuid
+      LIMIT 1
+    `)).rows[0];
+    if (!probed) return [];
+    role = probed;
+  }
 
   const systemKey: AdminRole | null =
     role.system_key && isAdminRole(role.system_key) ? role.system_key : null;

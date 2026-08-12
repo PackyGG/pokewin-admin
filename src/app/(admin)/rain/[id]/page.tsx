@@ -48,6 +48,9 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
+import { InlineError } from "@/components/entity-surface/inline-error";
+import { Skeleton } from "@/components/ui/skeleton";
+import { KpiStripSkeleton } from "@/components/loading-skeletons";
 import { RainDetailsCard } from "./rain-detail-cards";
 
 export const metadata = { title: "Rain Detail" };
@@ -76,23 +79,82 @@ export default async function RainDetailPage({
   const entriesPage = Number(sp.page) || 1;
   const entriesPerPage = Number(sp.perPage) || 20;
 
-  // Header is the only critical-path read: it decides 404 and feeds the
-  // hero + KPI strip + Details panel. It is cached (prod-only, see
-  // rain-detail-cache.ts) so it resolves from the warmed entry on every
-  // entries `?page=` change instead of re-querying the summary boxes. The
-  // heavier tips list + paginated entries stream independently below.
-  const data = await getRainHeaderCached(id);
-
-  if (!data) notFound();
-
-  const isActive = data.status === "active";
-
+  // Shell-first (CLAUDE.md §2): NOTHING is awaited in this body. The hero +
+  // back control paint from the route params, and all three reads (header,
+  // tips, entries) sit in async children behind their own <Suspense>. The
+  // header used to be awaited here, so every navigation held the whole route
+  // — hero included — behind one DB round trip, and an unguarded throw took
+  // the page to `error.tsx`.
   return (
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity backHref="/rewards?tab=rain" />
       </PageHero>
 
+      <Suspense fallback={<RainHeaderSkeleton />}>
+        <HeaderSection id={id} />
+      </Suspense>
+
+      {/* Tips stream independently of the entries cursor — no re-fetch on
+          pagination. */}
+      <Suspense
+        fallback={
+          <div className="space-y-3">
+            <SectionHeadingSkeleton titleWidth={100} />
+            <TableSkeleton rows={6} columns={4} />
+          </div>
+        }
+      >
+        <TipsSection id={id} />
+      </Suspense>
+
+      {/* Entries are server-side paginated; the Suspense key re-renders ONLY
+          this section as the admin pages. */}
+      <Suspense
+        key={`${entriesPage}|${entriesPerPage}`}
+        fallback={
+          <div className="space-y-3">
+            <SectionHeadingSkeleton titleWidth={100} />
+            <TableSkeleton rows={10} columns={3} />
+            <PaginationSkeleton />
+          </div>
+        }
+      >
+        <EntriesSection id={id} page={entriesPage} perPage={entriesPerPage} />
+      </Suspense>
+    </div>
+  );
+}
+
+/**
+ * Hero KPI strip + Details panel. This is the read that decides 404, so it is
+ * wrapped in `safeQueryOrNull`: a clean `null` (rain does not exist) is a real
+ * Not Found, while a slow/failed read renders a retryable band instead of
+ * masquerading as a 404 or throwing the route to `error.tsx`. Cached prod-only
+ * (see rain-detail-cache.ts) so it resolves from the warmed entry on every
+ * entries `?page=` change instead of re-querying the summary boxes.
+ */
+async function HeaderSection({ id }: { id: string }) {
+  const { data, error } = await safeQueryOrNull(
+    () => getRainHeaderCached(id),
+    "rain.detail.header",
+    SECTION_TIMEOUT_MS,
+  );
+
+  if (!data) {
+    if (!error) notFound();
+    return (
+      <InlineError
+        title="Rain lookup is temporarily unavailable"
+        hint="The database did not return this rain within the critical-path budget. Retry the page — this is not a Not Found result."
+      />
+    );
+  }
+
+  const isActive = data.status === "active";
+
+  return (
+    <FadeIn className="space-y-6">
       {/* Rain payouts go FROM us TO the winning user → user wins → ROSE.
           Tips that fund the pool come FROM users (deposits/wagers feeding
           the pool) → emerald. Participation count is neutral → blue. */}
@@ -158,34 +220,19 @@ export default async function RainDetailPage({
           )}
         </FadeIn>
       </div>
+    </FadeIn>
+  );
+}
 
-      {/* Tips stream independently of the entries cursor — no re-fetch on
-          pagination. */}
-      <Suspense
-        fallback={
-          <div className="space-y-3">
-            <SectionHeadingSkeleton titleWidth={100} />
-            <TableSkeleton rows={6} columns={4} />
-          </div>
-        }
-      >
-        <TipsSection id={id} />
-      </Suspense>
-
-      {/* Entries are server-side paginated; the Suspense key re-renders ONLY
-          this section as the admin pages. */}
-      <Suspense
-        key={`${entriesPage}|${entriesPerPage}`}
-        fallback={
-          <div className="space-y-3">
-            <SectionHeadingSkeleton titleWidth={100} />
-            <TableSkeleton rows={10} columns={3} />
-            <PaginationSkeleton />
-          </div>
-        }
-      >
-        <EntriesSection id={id} page={entriesPage} perPage={entriesPerPage} />
-      </Suspense>
+/** Hero KPI strip + Details panel placeholder while the header read runs. */
+function RainHeaderSkeleton() {
+  return (
+    <div className="space-y-6">
+      <KpiStripSkeleton count={4} />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={80} />
+        <Skeleton className="h-56 rounded-2xl" />
+      </div>
     </div>
   );
 }

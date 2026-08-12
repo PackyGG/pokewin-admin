@@ -2,7 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { creatorsApi } from "@/lib/backend-api";
+import { getCachedCreatorRoster } from "@/lib/cache/creator-backend-cache";
 
 // Fill (weekly) deal creator count — backs the tab-aware KPI tile on
 // /creators when the Fill tab is active. The backend's
@@ -19,31 +19,30 @@ import { creatorsApi } from "@/lib/backend-api";
 // `unstable_cache` (5-min revalidate) so spamming the Fill / Multiplier
 // tabs doesn't fan into the backend on every flip. Mirrors the in-memory
 // 5-min cache on multiplier-creator-count.ts (same TTL, same intent).
-const PAGE_SIZE = 100;
-// 5,000 creators — well above the current/projected pool; a guard
-// against a runaway loop if `total` is ever reported wrong.
-const MAX_PAGES = 50;
-
+//
+// ─── 2026-08-12: walks the SHARED roster, not its own ─────────────────
+//
+// This used to page `creatorsApi.list` itself, so one /creators render fired
+// this walk AND the identical walk inside `getCachedCreatorRoster()` (which
+// `getCreatorsListForTab` uses to build the Fill tab's rows from the very
+// same `total_deals_count > 0` predicate). Two full roster walks, one
+// predicate, one screen.
+//
+// Reading the shared roster instead collapses them to one and — more
+// importantly for the "Couldn't load this section" tiles — inherits that
+// cache's resilience: a six-hour last-known-good retention plus a read-only
+// PostgreSQL fallback (`pageCreatorRosterFromPostgres`). A backend blip used
+// to blank this tile to "—"; now it keeps serving.
+//
+// Scope note: the shared roster is capped at CREATOR_LIST_CAP (500) where the
+// old private walk capped at 5,000. Nothing changes below 500 creators, and
+// at/above it the count now MATCHES the Fill tab list it labels (which was
+// already reading the 500-capped roster) instead of silently exceeding it.
 async function computeFillCreatorIds(): Promise<string[]> {
-  // First page tells us the total — then fan out the rest in parallel.
-  const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
+  const roster = await getCachedCreatorRoster();
   const ids: string[] = [];
-  for (const c of firstPage.data) {
+  for (const c of roster) {
     if (c.total_deals_count > 0) ids.push(c.id);
-  }
-
-  const pagesNeeded = Math.min(
-    MAX_PAGES,
-    Math.ceil(firstPage.total / PAGE_SIZE),
-  );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(creatorsApi.list({ offset: p * PAGE_SIZE, limit: PAGE_SIZE }));
-  }
-  for (const page of await Promise.all(rest)) {
-    for (const c of page.data) {
-      if (c.total_deals_count > 0) ids.push(c.id);
-    }
   }
   return ids;
 }

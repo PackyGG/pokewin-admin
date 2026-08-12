@@ -36,10 +36,34 @@ import {
 } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { EmptyState } from "@/components/empty-state";
-import { TableSkeleton } from "@/components/loading-skeletons";
+import {
+  KpiStripSkeleton,
+  SectionHeadingSkeleton,
+  TableSkeleton,
+} from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
+import { InlineError } from "@/components/entity-surface/inline-error";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 
 export const metadata = { title: "Promo Code Detail" };
 
+/**
+ * Both reads on this route are indexed single-code lookups, so the bound only
+ * guards a hung connection / mirror pool starvation — the failure mode that
+ * used to throw the WHOLE route into `error.tsx`.
+ */
+const DETAIL_TIMEOUT_MS = 10_000;
+
+/**
+ * Shell-first (CLAUDE.md §2): the hero + back/delete controls paint from the
+ * route params alone, and every DB read lives in an async child behind its own
+ * <Suspense>. Nothing is awaited in this body.
+ *
+ * `DeletePromoCodeButton` takes the route id rather than `data.id`: the detail
+ * row is looked up by `id = $1::uuid`, so the two are the same code, and the
+ * delete action compares as `uuid` (case/format-insensitive). Passing the route
+ * id keeps the control off the read's critical path.
+ */
 export default async function PromoCodeDetailPage({
   params,
 }: {
@@ -49,12 +73,46 @@ export default async function PromoCodeDetailPage({
   const { id } = await params;
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
-  // Header read only (config + REAL redemption count). The redemption ROWS
-  // stream separately below so this shell + KPI strip paint immediately
-  // (shell-first, per docs/BACKEND_QUERY_SYSTEM.md §3).
-  const data = await getPromoCodeDetail(id);
 
-  if (!data) notFound();
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <PageHeroIdentity
+          backHref="/rewards?tab=promo-codes"
+          action={<DeletePromoCodeButton promoCodeId={id} />}
+        />
+      </PageHero>
+
+      <Suspense fallback={<PromoCodeDetailBodySkeleton />}>
+        <PromoCodeDetailBody id={id} />
+      </Suspense>
+    </div>
+  );
+}
+
+/**
+ * The config + REAL redemption count. Wrapped in `safeQueryOrNull` so a slow /
+ * failing lookup degrades to a retryable band instead of throwing this route
+ * into `error.tsx` — and, critically, so a transient DB failure can no longer
+ * masquerade as a 404. Only a clean `null` (the code genuinely does not exist)
+ * is a Not Found.
+ */
+async function PromoCodeDetailBody({ id }: { id: string }) {
+  const { data, error } = await safeQueryOrNull(
+    () => getPromoCodeDetail(id),
+    "promoCodes.detail",
+    DETAIL_TIMEOUT_MS,
+  );
+
+  if (!data) {
+    if (!error) notFound();
+    return (
+      <InlineError
+        title="Promo code lookup is temporarily unavailable"
+        hint="The database did not return this code within the critical-path budget. Retry the page — this is not a Not Found result."
+      />
+    );
+  }
 
   const isExpired = data.expiresAt && new Date(data.expiresAt) < new Date();
   // Remaining / "n / max" derive from the REAL unbounded count, not a capped
@@ -62,14 +120,7 @@ export default async function PromoCodeDetailPage({
   const redemptionsLeft = Math.max(0, data.maxUses - data.redemptionCount);
 
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          backHref="/rewards?tab=promo-codes"
-          action={<DeletePromoCodeButton promoCodeId={data.id} />}
-        />
-      </PageHero>
-
+    <FadeIn className="space-y-6">
       <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">
         {/* Promo codes give users credit → house pays out → rose per
             CLAUDE.md house-POV rule. */}
@@ -205,12 +256,37 @@ export default async function PromoCodeDetailPage({
           <RedemptionsTable id={data.id} />
         </Suspense>
       </div>
-    </div>
+    </FadeIn>
   );
 }
 
 async function RedemptionsTable({ id }: { id: string }) {
-  const { rows, totalCount, truncated } = await getPromoCodeRedemptionRows(id);
+  // safeQueryOrNull, not a bare await: an unwrapped throw here escaped the
+  // <Suspense> above (Suspense catches suspension, NOT errors) and took the
+  // whole route to `error.tsx` — blanking the hero, KPI strip and both panels
+  // that had already rendered. A failing/slow redemption read now degrades to
+  // this one section.
+  const { data: result, kind } = await safeQueryOrNull(
+    () => getPromoCodeRedemptionRows(id),
+    "promoCodes.redemptionRows",
+    DETAIL_TIMEOUT_MS,
+  );
+
+  if (!result) {
+    return (
+      <InlineError
+        compact
+        title={
+          kind === "timeout"
+            ? "Redemptions took too long to load"
+            : "Couldn't load redemptions"
+        }
+        hint="The counts above are unaffected. Retry to reload just this list."
+      />
+    );
+  }
+
+  const { rows, totalCount, truncated } = result;
 
   return (
     <FadeIn className="rounded-2xl border bg-card/60 overflow-x-auto">
@@ -254,5 +330,25 @@ async function RedemptionsTable({ id }: { id: string }) {
         </TableBody>
       </Table>
     </FadeIn>
+  );
+}
+
+/**
+ * Everything below the hero while the detail read resolves. Mirrors
+ * `loading.tsx` minus the hero (which is already painted by the page body).
+ */
+function PromoCodeDetailBodySkeleton() {
+  return (
+    <div className="space-y-6">
+      <KpiStripSkeleton count={4} />
+      <div className="grid gap-4 md:grid-cols-2">
+        <Skeleton className="h-72 rounded-2xl" />
+        <Skeleton className="h-72 rounded-2xl" />
+      </div>
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={140} />
+        <TableSkeleton rows={8} columns={3} />
+      </div>
+    </div>
   );
 }

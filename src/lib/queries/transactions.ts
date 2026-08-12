@@ -1,6 +1,6 @@
 import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { readDrizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv, type MainDrizzleDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -500,6 +500,92 @@ type GetTransactionsParams = {
 };
 
 /**
+ * Battle borrow lookup — for any battle_bet / battle_sponsorship row that
+ * has a linked PF result with a battle_id, we need the
+ * `battles.borrow_percentage` to render the badge. One round trip batched
+ * across the visible page; cheaper than fanning out a per-row include.
+ *
+ * CRITICAL: this lookup is AUXILIARY — the page's whole job is to show the
+ * ledger, and the borrow badge is a nice-to-have on top. If this single
+ * round trip fails (DB blip, schema drift on the battles table, replica
+ * lag, anything), the WHOLE /transactions page used to crash — the admin
+ * saw the route-level error boundary ("Couldn't load the ledger") instead
+ * of the rows. It degrades gracefully instead: rows still render, the badge
+ * is just absent for that page load. Logged so we still notice in Vercel
+ * function logs.
+ */
+async function loadBattleBorrowMap(
+  rawDb: MainDrizzleDb,
+  battleIds: string[],
+): Promise<Map<string, number>> {
+  const borrowByBattle = new Map<string, number>();
+  if (battleIds.length === 0) return borrowByBattle;
+  try {
+    const battles = await queryRows<
+      { id: string; borrow_percentage: number | null }[]
+    >(
+      rawDb,
+      `SELECT id, borrow_percentage
+         FROM battles WHERE id = ANY($1::uuid[])`,
+      battleIds,
+    );
+    for (const b of battles) {
+      borrowByBattle.set(b.id, b.borrow_percentage ?? 0);
+    }
+  } catch (e) {
+    console.error(
+      "[getTransactions] battle borrow lookup failed (non-fatal — rows still render without badge):",
+      e,
+    );
+  }
+  return borrowByBattle;
+}
+
+/**
+ * Per-session voucher excess — mirrors getUserTransactions'
+ * `voucherValueByGameSession`. Battle / pack excess gets parked as a
+ * `vouchers` row whose `origin_id` is the originating game_session id. That
+ * value is part of what the user WON (invariant: inventory = cards +
+ * vouchers), so it has to be added to `payout` alongside the card value —
+ * otherwise a high-multiplier hit that paid out mostly as a voucher reads
+ * as a tiny loss. Batched across the page's session ids in one round trip
+ * (no N+1).
+ *
+ * Auxiliary lookup — same graceful-degrade convention as the borrow map
+ * above: a failure must not crash the whole /transactions page.
+ */
+async function loadVoucherValueBySession(
+  rawDb: MainDrizzleDb,
+  sessionIds: string[],
+): Promise<Map<string, number>> {
+  const voucherValueBySession = new Map<string, number>();
+  if (sessionIds.length === 0) return voucherValueBySession;
+  try {
+    const vouchers = await queryRows<
+      { origin_id: string | null; value: string }[]
+    >(
+      rawDb,
+      `SELECT origin_id, value::text
+         FROM vouchers WHERE origin_id = ANY($1::uuid[])`,
+      sessionIds,
+    );
+    for (const v of vouchers) {
+      if (!v.origin_id) continue;
+      voucherValueBySession.set(
+        v.origin_id,
+        (voucherValueBySession.get(v.origin_id) ?? 0) + toNumber(v.value),
+      );
+    }
+  } catch (e) {
+    console.error(
+      "[getTransactions] voucher excess lookup failed (non-fatal — payout falls back to card value only):",
+      e,
+    );
+  }
+  return voucherValueBySession;
+}
+
+/**
  * Does the actual list work. Takes the resolved DB env + user-scope
  * filter as its leading args so it never resolves request state /
  * `excludeStaffAndBlacklisted()` (both request-scoped: they read the
@@ -747,98 +833,33 @@ async function computeTransactions(
     total = Number(counts[0]?.total ?? 0);
   }
 
-  // Battle borrow lookup — for any battle_bet / battle_sponsorship row
-  // that has a linked PF result with a battle_id, we need the
-  // battles.borrow_percentage to render the badge. One round-trip
-  // batched across the visible page; cheaper than fanning out
-  // out a per-row include.
-  //
-  // CRITICAL: this lookup is AUXILIARY — the page's whole job is to
-  // show the ledger, and the borrow badge is a nice-to-have on top.
-  // If this single round-trip fails (DB blip, schema drift on the
-  // battles table, replica lag, anything), the WHOLE /transactions
-  // page used to crash — admin sees the route-level error boundary
-  // ("Couldn't load the ledger") instead of the rows. Wrap in
-  // try/catch and degrade gracefully: rows still render, badge is
-  // just absent for that page-load. Logged so we still notice in
-  // Vercel function logs.
+  // Auxiliary enrichment for the visible page: battle borrow %, per-session
+  // voucher excess, and upgrader target multipliers. All three are derived
+  // from `transactions` alone and none reads the others' output, so they run
+  // as ONE parallel wave rather than three back-to-back round trips — under
+  // the mirror's global read-admission cap a serial chain is what pushes the
+  // tail past each leg's safeQuery budget and blanks the table.
   const battleIds = new Set<string>();
-  for (const t of transactions) {
-    const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
-    for (const pf of gs?.provably_fair_results ?? []) {
-      if (pf.battle_id) battleIds.add(pf.battle_id);
-    }
-  }
-  const battleBorrowMap = new Map<string, number>();
-  if (battleIds.size > 0) {
-    try {
-      const battles = await queryRows<
-        { id: string; borrow_percentage: number | null }[]
-      >(
-        rawDb,
-        `SELECT id, borrow_percentage
-           FROM battles WHERE id = ANY($1::uuid[])`,
-        [...battleIds],
-      );
-      for (const b of battles) {
-        battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
-      }
-    } catch (e) {
-      console.error(
-        "[getTransactions] battle borrow lookup failed (non-fatal — rows still render without badge):",
-        e,
-      );
-    }
-  }
-
-  // Per-session voucher excess — mirrors getUserTransactions'
-  // `voucherValueByGameSession`. Battle / pack excess gets parked as a
-  // `vouchers` row whose `origin_id` is the originating game_session id.
-  // That value is part of what the user WON (invariant: inventory =
-  // cards + vouchers), so it has to be added to `payout` alongside the
-  // card value — otherwise a high-multiplier hit that paid out mostly as
-  // a voucher reads as a tiny loss. Batched across the page's session
-  // ids in one round-trip (no N+1).
-  //
-  // Auxiliary lookup — same graceful-degrade convention as the borrow
-  // map above: a failure must not crash the whole /transactions page.
   const sessionIds = new Set<string>();
   for (const t of transactions) {
     const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
     if (gs?.id) sessionIds.add(gs.id);
-  }
-  const voucherValueBySession = new Map<string, number>();
-  if (sessionIds.size > 0) {
-    try {
-      const vouchers = await queryRows<
-        { origin_id: string | null; value: string }[]
-      >(
-        rawDb,
-        `SELECT origin_id, value::text
-           FROM vouchers WHERE origin_id = ANY($1::uuid[])`,
-        [...sessionIds],
-      );
-      for (const v of vouchers) {
-        if (!v.origin_id) continue;
-        voucherValueBySession.set(
-          v.origin_id,
-          (voucherValueBySession.get(v.origin_id) ?? 0) + toNumber(v.value),
-        );
-      }
-    } catch (e) {
-      console.error(
-        "[getTransactions] voucher excess lookup failed (non-fatal — payout falls back to card value only):",
-        e,
-      );
+    for (const pf of gs?.provably_fair_results ?? []) {
+      if (pf.battle_id) battleIds.add(pf.battle_id);
     }
   }
-
   const upgraderBetLedgerIds = transactions
     .filter((t) => t.type === "upgrader_bet")
     .map((t) => t.id);
-  const upgraderTargetByLedgerId = await fetchUpgraderTargetByLedgerTxIds(
-    upgraderBetLedgerIds,
-  );
+
+  const [battleBorrowMap, voucherValueBySession, upgraderTargetByLedgerId] =
+    await Promise.all([
+      loadBattleBorrowMap(rawDb, [...battleIds]),
+      loadVoucherValueBySession(rawDb, [...sessionIds]),
+      // Already degrades internally (returns an empty Map and logs) — see
+      // upgrader-target-batch.ts.
+      fetchUpgraderTargetByLedgerTxIds(upgraderBetLedgerIds),
+    ]);
 
   return {
     data: transactions.map((t) => {
@@ -997,6 +1018,109 @@ export async function getTransactions(
 }
 
 /**
+ * Battle-link facts for one game session: enough to answer "which battle,
+ * if any, does this transaction belong to". Either read from the session
+ * fan-out that already ran, or fetched by {@link fetchBattleLink}.
+ */
+type BattleLink = {
+  gameType: string;
+  gameId: string | null;
+  /** First PF row on the session carrying a battle_id, by cursor ASC. */
+  battleId: string | null;
+};
+
+/**
+ * Focused fallback lookup, used ONLY when the detail read's own session
+ * fan-out did not already cover this session id (i.e. an `upgrader_bet`
+ * whose canonical session was remapped off `bet_ledger_tx_id`). On every
+ * other transaction the caller passes the facts it already holds and this
+ * round trip is skipped entirely — see {@link resolveBattleInfo}.
+ */
+async function fetchBattleLink(
+  gameSessionId: string,
+): Promise<BattleLink | null> {
+  const [row] = await queryMainRows<
+    { game_type: string; game_id: string | null; battle_id: string | null }[]
+  >(
+    `SELECT gs.game_type::text AS game_type, gs.game_id,
+            (
+              SELECT pf.battle_id
+                FROM provably_fair_results pf
+               WHERE pf.game_session_id = gs.id
+                 AND pf.battle_id IS NOT NULL
+               ORDER BY pf.cursor ASC
+               LIMIT 1
+            ) AS battle_id
+       FROM game_sessions gs
+      WHERE gs.id = $1::uuid
+      LIMIT 1`,
+    gameSessionId,
+  );
+  return row
+    ? { gameType: row.game_type, gameId: row.game_id, battleId: row.battle_id }
+    : null;
+}
+
+/**
+ * Resolve the transaction's linked battle and whether that battle is
+ * password-protected. Fallback chain is unchanged:
+ *   1) session.game_type === "battle" → session.game_id is the battle
+ *   2) any pf row on the session carrying battle_id
+ *   3) tx.metadata.battle_id (older / out-of-session rows)
+ *
+ * `knownLink` carries the caller's already-loaded session facts:
+ *   • a {@link BattleLink} — the session read returned this row;
+ *   • `null` — the session read ran for this id and found no row;
+ *   • `undefined` — the session read did not cover this id, so fetch it.
+ * Only the last case costs a round trip.
+ *
+ * The password read is a BOOLEAN check only — the plaintext is never
+ * carried in the return. Admins fetch it on demand via
+ * `revealBattlePassword`, which audit-logs every reveal. Matches the
+ * SSR-safe pattern getBattleDetail uses. A failure here is non-fatal.
+ */
+async function resolveBattleInfo(
+  txGameSessionId: string | null,
+  metadata: unknown,
+  knownLink: BattleLink | null | undefined,
+): Promise<{ battleId: string | null; hasPassword: boolean }> {
+  let battleId: string | null = null;
+  if (txGameSessionId) {
+    const link =
+      knownLink !== undefined
+        ? knownLink
+        : await fetchBattleLink(txGameSessionId);
+    if (link?.gameType === "battle" && link.gameId) {
+      battleId = link.gameId;
+    } else if (link?.battleId) {
+      battleId = link.battleId;
+    }
+  }
+  if (!battleId && metadata && typeof metadata === "object") {
+    const meta = metadata as Record<string, unknown>;
+    if (typeof meta.battle_id === "string") battleId = meta.battle_id;
+  }
+
+  let hasPassword = false;
+  if (battleId) {
+    try {
+      const [battle] = await queryMainRows<{ password: string | null }[]>(
+        `SELECT password FROM battles WHERE id = $1::uuid LIMIT 1`,
+        battleId,
+      );
+      hasPassword = battle?.password != null && battle.password.length > 0;
+    } catch (e) {
+      console.error(
+        "[getTransactionDetail] battle password lookup failed (non-fatal):",
+        e,
+      );
+    }
+  }
+
+  return { battleId, hasPassword };
+}
+
+/**
  * Actual transaction-detail read (~10+ Main-DB round-trips: the ledger row,
  * the game session + its PF results, packs / battle packs, related ledger
  * rows, session vouchers, upgrader won-amount + inventory, cards, and the
@@ -1147,6 +1271,14 @@ async function computeTransactionDetail(id: string) {
     }
   }
 
+  // Battle link + password. Resolved through `resolveBattleInfo`, which is
+  // kicked off as EARLY as the facts allow and awaited at the very end, so
+  // the battles read overlaps the packs / related / cards waves instead of
+  // adding two more strictly serial round trips to the tail of the fan-out.
+  let battleInfoPromise:
+    | Promise<{ battleId: string | null; hasPassword: boolean }>
+    | undefined;
+
   if (resolvedSessionId) {
     // Narrow `provably_fair_results` columns to just what downstream uses.
     // The PF table is wide (client_seed, server_seed, server_seed_hash,
@@ -1188,6 +1320,36 @@ async function computeTransactionDetail(id: string) {
       ),
     ]);
     const baseSession = sessionRows[0];
+
+    // The battle-link lookup used to re-SELECT `game_sessions` (game_type,
+    // game_id) plus the first PF `battle_id` for `tx.game_session_id` — data
+    // the two reads above ALREADY returned whenever the session id they ran
+    // for is that same id. Hand those facts straight over instead of paying a
+    // second round trip for the same row; `undefined` is reserved for the one
+    // case they don't cover (an `upgrader_bet` remapped onto a different
+    // canonical session via `bet_ledger_tx_id`), where the focused query
+    // still runs. `pfRows` is ordered by cursor ASC, so the first row with a
+    // battle_id is exactly what the old correlated subquery returned.
+    const knownBattleLink: BattleLink | null | undefined =
+      resolvedSessionId === tx.game_session_id
+        ? baseSession
+          ? {
+              gameType: baseSession.game_type,
+              gameId: baseSession.game_id,
+              battleId: pfRows.find((pf) => pf.battle_id)?.battle_id ?? null,
+            }
+          : null
+        : undefined;
+    battleInfoPromise = resolveBattleInfo(
+      tx.game_session_id,
+      tx.metadata,
+      knownBattleLink,
+    );
+    // The awaited handle below still rejects; this only stops an early
+    // rejection from surfacing as an unhandled rejection if a later wave
+    // throws first.
+    battleInfoPromise.catch(() => {});
+
     const session = baseSession
       ? {
           ...baseSession,
@@ -1532,65 +1694,14 @@ async function computeTransactionDetail(id: string) {
     }
   }
 
-  // Resolve a linked battle id for the transaction so the detail page
-  // can offer a Watch link AND (for admins on private battles) the
-  // password reveal row. Same fallback chain as getUserTransactions:
-  //   1) session.game_type === "battle" → session.game_id is the battle
-  //   2) any pf row on the session carrying battle_id
-  //   3) tx.metadata.battle_id (older / out-of-session rows)
-  // Returns null on any non-battle transaction.
-  let battleId: string | null = null;
-  if (tx.game_session_id) {
-    // We need pf.battle_id and game_type — issue a focused lookup so
-    // we don't have to re-shape the heavy session/PF select above.
-    const [linkedSession] = await queryMainRows<
-      { game_type: string; game_id: string | null; battle_id: string | null }[]
-    >(
-      `SELECT gs.game_type::text AS game_type, gs.game_id,
-              (
-                SELECT pf.battle_id
-                  FROM provably_fair_results pf
-                 WHERE pf.game_session_id = gs.id
-                   AND pf.battle_id IS NOT NULL
-                 ORDER BY pf.cursor ASC
-                 LIMIT 1
-              ) AS battle_id
-         FROM game_sessions gs
-        WHERE gs.id = $1::uuid
-        LIMIT 1`,
-      tx.game_session_id,
-    );
-    if (linkedSession?.game_type === "battle" && linkedSession.game_id) {
-      battleId = linkedSession.game_id;
-    } else if (linkedSession?.battle_id) {
-      battleId = linkedSession.battle_id;
-    }
-  }
-  if (!battleId && tx.metadata && typeof tx.metadata === "object") {
-    const meta = tx.metadata as Record<string, unknown>;
-    if (typeof meta.battle_id === "string") battleId = meta.battle_id;
-  }
-
-  // Boolean only — the plaintext password is NEVER carried in the
-  // return. Admins fetch it on demand via revealBattlePassword which
-  // audit-logs every reveal (`battle_password_viewed`). Matches the
-  // SSR-safe pattern getBattleDetail uses.
-  let hasPassword = false;
-  if (battleId) {
-    try {
-      const [battle] = await queryMainRows<{ password: string | null }[]>(
-        `SELECT password FROM battles WHERE id = $1::uuid LIMIT 1`,
-        battleId,
-      );
-      hasPassword =
-        battle?.password != null && battle.password.length > 0;
-    } catch (e) {
-      console.error(
-        "[getTransactionDetail] battle password lookup failed (non-fatal):",
-        e,
-      );
-    }
-  }
+  // Linked battle id (Watch link) + whether it is password-protected (the
+  // admin-only reveal row). Started above the moment the session facts were
+  // known so it ran alongside the packs / related / cards waves; on a
+  // transaction with no session at all there was nothing to overlap, so it
+  // starts here. Fallback chain and failure behaviour live in
+  // `resolveBattleInfo`, unchanged.
+  const { battleId, hasPassword } = await (battleInfoPromise ??
+    resolveBattleInfo(tx.game_session_id, tx.metadata, undefined));
 
   return {
     id: tx.id,

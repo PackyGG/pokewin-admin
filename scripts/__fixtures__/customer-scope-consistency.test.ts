@@ -29,14 +29,56 @@ test("race overview and rakeback lapsed use canonical customer roles", () => {
 test("battle stats use canonical roles and the dynamic blacklist", () => {
   const source = read("src/lib/queries/analytics.ts");
 
-  assert.equal(
-    source.match(/const battleCustomerIds = /g)?.length,
-    2,
-    "both analytics bundles must define the same battle customer scope",
+  // The Overview bundle dropped its `battleStats` leg (never rendered — see the
+  // `analytics-data-v3` cache note), so there is no second `battleCustomerIds`
+  // left to compare against. The old `=== 2` was never about the count: it was
+  // there so no bundle could roll its own, weaker battle scope. Pin that
+  // directly — at least one definition must exist, and EVERY definition that
+  // exists must be canonical roles + the dynamic blacklist.
+  const scopeDefinitions = source.match(/const battleCustomerIds = .*/g) ?? [];
+  assert.ok(
+    scopeDefinitions.length >= 1,
+    "analytics.ts must still define the battle customer scope",
   );
+  for (const definition of scopeDefinitions) {
+    assert.match(
+      definition,
+      canonicalRoles,
+      `battle customer scope is not canonical: ${definition}`,
+    );
+    assert.match(
+      definition,
+      /\$\{blacklistIdNotIn\}/,
+      `battle customer scope drops the dynamic blacklist: ${definition}`,
+    );
+  }
+
+  // …and every `battles` scan must go through that shared scope rather than an
+  // unscoped WHERE of its own. This is what "battle stats use canonical roles"
+  // means at the query level, and it is what the two-bundle comparison was
+  // standing in for.
+  assert.match(
+    source,
+    /const battleStaffExcl = `user_id IN \$\{battleCustomerIds\}`/,
+  );
+  assert.match(
+    source,
+    /const battleStaffExclAliased = `b\.user_id IN \$\{battleCustomerIds\}`/,
+  );
+  const battleScans = source.match(/FROM battles\b/g)?.length ?? 0;
+  const scopedWheres =
+    source.match(/\$\{battleDateWhere(?:Aliased)?\}/g)?.length ?? 0;
+  assert.ok(battleScans > 0, "analytics.ts must still read the battles table");
+  assert.equal(
+    scopedWheres,
+    battleScans,
+    "every battles scan must carry the scoped WHERE built from battleCustomerIds",
+  );
+
   assert.match(source, canonicalRoles);
   assert.match(source, /\$\{blacklistIdNotIn\}/);
   assert.doesNotMatch(source, /role != 'admin'/);
+  assert.doesNotMatch(source, /role NOT IN \('admin', 'support'\)/);
 });
 
 test("creator referral analytics exclude creator-role referrals", () => {

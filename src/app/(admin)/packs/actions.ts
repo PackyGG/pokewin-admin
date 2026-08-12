@@ -833,30 +833,15 @@ const EMPTY_GAMES_PAGE = {
   totalPages: 0,
 };
 
-/** Lightweight identity read for modal header when the pack isn't on the list page. */
-export async function fetchPackListSeed(packId: string) {
-  await requirePageAccess("/packs");
-  const db = await getPrimaryDrizzleDb();
-  const result = await db.execute<{
-    id: string; name: string; slug: string; image_url: string | null;
-    price: string; active: boolean; pack_type: string;
-  }>(sql`
-    SELECT id, name, slug, image_url, price::text AS price, active, pack_type
-    FROM packs WHERE id = ${packId}::uuid
-  `);
-  const pack = result.rows[0];
-  if (!pack) return null;
-  return {
-    id: pack.id,
-    name: pack.name,
-    slug: pack.slug,
-    imageUrl: pack.image_url,
-    priceUsd: Number(pack.price),
-    active: pack.active,
-    packType: pack.pack_type as string | null,
-  };
-}
-
+/**
+ * `fetchPackListSeed` used to live here: a second identity read of the same
+ * `packs` row the detail fetch already returns, issued in parallel from
+ * `PackDetailView` purely to paint the hero image a few hundred ms earlier. It
+ * was removed because it duplicated `getPackDetail`'s own columns and — unlike
+ * every other read on this surface — ran on the PRIMARY MAIN pool (max 3,
+ * shared with the mutation flows) rather than the read mirror. Do not
+ * reintroduce a "seed" read: derive the header from the core detail.
+ */
 export async function fetchPackDetailCore(packId: string) {
   await requirePageAccess("/packs");
   const { data } = await safeQuery(

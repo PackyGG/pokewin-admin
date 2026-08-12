@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { ArrowLeftRight } from "lucide-react";
-import { getAnalyticsData } from "@/lib/queries/analytics";
+import { getAnalyticsData, type AnalyticsData } from "@/lib/queries/analytics";
 import {
   getDailyPnl,
   getPackBattlePurePnl,
@@ -11,7 +11,11 @@ import {
   getTopDepositors,
   type LeaderboardPeriod,
 } from "@/lib/queries/analytics-top";
-import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import {
+  safeQuery,
+  REWARD_QUERY_TIMEOUT_MS,
+  type SafeQueryResult,
+} from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SectionHeading } from "@/components/modern-panels";
@@ -49,27 +53,34 @@ import { toAcquisitionWindow, type AnalyticsPeriod } from "./types";
  *      Cost Breakdown / Rewards deep dives, linked from the headings.
  *   5. Day-by-day money table — the spreadsheet nobody should have to build.
  *
- * One heavy read (`getAnalyticsData`) feeds every synchronous section, so a
- * chart never disagrees with the number beside it; the independent scans
- * (daily P&L, withdrawal rails, pure margin, leaderboard) stream behind
- * their own Suspense legs so one slow leg never blanks the page.
+ * ONE heavy read (`getAnalyticsData`) still feeds every section derived from
+ * it, so a chart can never disagree with the number beside it — but this
+ * component no longer AWAITS it before rendering. It starts the read and
+ * hands the same promise to the sections that consume it; the independent
+ * scans (daily P&L, withdrawal rails, pure margin, leaderboard) sit in their
+ * own Suspense legs and now begin immediately instead of queueing behind the
+ * bundle. Two things follow, both of them the reported symptom:
+ *
+ *   • the money-flow and cash-out-by-rail sections paint as soon as THEIR
+ *     read lands, rather than after the slowest read on the page;
+ *   • if the overview bundle fails or blows its 15s budget, only the
+ *     sections built from it degrade. Previously a single failure there
+ *     replaced the ENTIRE core of the page — including sections whose own
+ *     data had already arrived — with one "Couldn't load this section" panel.
+ *
+ * Awaiting one shared promise in several children is still exactly one query;
+ * `safeQuery` resolves rather than rejects, so no leg can produce an
+ * unhandled rejection.
  */
-export async function CoreSections({ period }: { period: AnalyticsPeriod }) {
-  const { data, error } = await safeQuery(
+type AnalyticsResult = Promise<SafeQueryResult<AnalyticsData | null>>;
+
+export function CoreSections({ period }: { period: AnalyticsPeriod }) {
+  const analytics = safeQuery(
     () => getAnalyticsData(period),
     null,
     "analytics.overview",
     REWARD_QUERY_TIMEOUT_MS,
   );
-  if (error || !data) {
-    return (
-      <TileErrorFallback
-        label="Analytics overview"
-        hint="The overview metrics query failed — refresh or switch period to retry."
-        size="panel"
-      />
-    );
-  }
 
   const deepDive = (tab: string) =>
     period === "30d"
@@ -78,7 +89,9 @@ export async function CoreSections({ period }: { period: AnalyticsPeriod }) {
 
   return (
     <div className="space-y-6">
-      <TrafficStrip data={data} />
+      <Suspense fallback={<Skeleton className="h-24 w-full rounded-xl" />}>
+        <TrafficLeg analytics={analytics} />
+      </Suspense>
 
       {/* ── Money in & out ─────────────────────────────────────────── */}
 
@@ -97,14 +110,60 @@ export async function CoreSections({ period }: { period: AnalyticsPeriod }) {
 
       {/* Concentration needs the depositor leaderboard — same treatment. */}
       <Suspense fallback={<Skeleton className="h-40 w-full rounded-xl" />}>
-        {/* PERIOD deposits, not the lifetime balance-sheet total — the
-            leaderboard above it is windowed, so a lifetime denominator would
-            print a share that is wrong by the ratio of the two. */}
-        <ConcentrationLeg period={period} deposits={periodDeposits(data)} />
+        <ConcentrationLeg period={period} analytics={analytics} />
       </Suspense>
 
       {/* ── Revenue ────────────────────────────────────────────────── */}
 
+      <Suspense fallback={<Skeleton className="h-64 w-full rounded-xl" />}>
+        <RevenueLeg analytics={analytics} gamesHref={deepDive("games")} />
+      </Suspense>
+
+      {/* ── Costs ──────────────────────────────────────────────────── */}
+
+      <Suspense fallback={<Skeleton className="h-64 w-full rounded-xl" />}>
+        <CostLeg
+          analytics={analytics}
+          costHref={deepDive("cost-breakdown")}
+          rewardsHref={deepDive("rewards")}
+        />
+      </Suspense>
+    </div>
+  );
+}
+
+/**
+ * Compact per-section fallback for the shared overview bundle. Named so the
+ * operator can tell WHICH part of the page is missing rather than losing the
+ * whole scroll to one anonymous panel.
+ */
+function OverviewLegFallback({ label }: { label: string }) {
+  return (
+    <TileErrorFallback
+      label={label}
+      hint="The overview metrics query failed — refresh or switch period to retry."
+      size="panel"
+    />
+  );
+}
+
+async function TrafficLeg({ analytics }: { analytics: AnalyticsResult }) {
+  const { data } = await analytics;
+  if (!data) return <OverviewLegFallback label="Traffic" />;
+  return <TrafficStrip data={data} />;
+}
+
+async function RevenueLeg({
+  analytics,
+  gamesHref,
+}: {
+  analytics: AnalyticsResult;
+  gamesHref: string;
+}) {
+  const { data } = await analytics;
+  if (!data) return <OverviewLegFallback label="Revenue" />;
+  return (
+    <div className="space-y-6">
       <HeadlineSection data={data} />
 
       <FadeIn>
@@ -117,23 +176,37 @@ export async function CoreSections({ period }: { period: AnalyticsPeriod }) {
       {/* Measured hold needs the pure-margin windows — its own leg so the
           sections above paint without waiting on that scan. */}
       <Suspense fallback={<Skeleton className="h-64 w-full rounded-xl" />}>
-        <GameMixLeg data={data} gamesHref={deepDive("games")} />
+        <GameMixLeg data={data} gamesHref={gamesHref} />
       </Suspense>
+    </div>
+  );
+}
 
-      {/* ── Costs ──────────────────────────────────────────────────── */}
-
+async function CostLeg({
+  analytics,
+  costHref,
+  rewardsHref,
+}: {
+  analytics: AnalyticsResult;
+  costHref: string;
+  rewardsHref: string;
+}) {
+  const { data } = await analytics;
+  if (!data) return <OverviewLegFallback label="Costs" />;
+  return (
+    <div className="space-y-6">
       <CostStackSection
         data={data}
         action={
           <span className="flex items-center gap-3 text-xs">
             <Link
-              href={deepDive("cost-breakdown")}
+              href={costHref}
               className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
             >
               Full cost breakdown →
             </Link>
             <Link
-              href={deepDive("rewards")}
+              href={rewardsHref}
               className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
             >
               Rewards →
@@ -283,7 +356,7 @@ async function GameMixLeg({
   data,
   gamesHref,
 }: {
-  data: Awaited<ReturnType<typeof getAnalyticsData>>;
+  data: AnalyticsData;
   gamesHref: string;
 }) {
   const { data: pure } = await safeQuery(
@@ -333,23 +406,38 @@ function leaderboardWindowFor(
 
 async function ConcentrationLeg({
   period,
-  deposits,
+  analytics,
 }: {
   period: AnalyticsPeriod;
-  deposits: number;
+  analytics: AnalyticsResult;
 }) {
   const window = leaderboardWindowFor(period);
-  if (!window) {
+  // The leaderboard read is period-gated, so start it BEFORE awaiting the
+  // shared bundle — for 7d / 30d / lifetime the two then overlap instead of
+  // running back to back.
+  const leaderboard = window
+    ? safeQuery(
+        () => getTopDepositors(window.key),
+        null,
+        "analytics.overview.concentration",
+        REWARD_QUERY_TIMEOUT_MS,
+      )
+    : null;
+
+  const { data } = await analytics;
+  if (!data) return <OverviewLegFallback label="Depositor concentration" />;
+
+  // PERIOD deposits, not the lifetime balance-sheet total — the leaderboard
+  // is windowed, so a lifetime denominator would print a share that is wrong
+  // by the ratio of the two.
+  const deposits = periodDeposits(data);
+
+  if (!leaderboard || !window) {
     return (
       <ConcentrationSection deposits={deposits} top={null} windowLabel={null} />
     );
   }
-  const { data: top } = await safeQuery(
-    () => getTopDepositors(window.key),
-    null,
-    "analytics.overview.concentration",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
+  const { data: top } = await leaderboard;
   return (
     <ConcentrationSection
       deposits={deposits}

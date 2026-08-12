@@ -83,6 +83,12 @@ export function RepinCustomButton({
   const [failures, setFailures] = React.useState<RetuneFailure[]>([]);
   const [fatalError, setFatalError] = React.useState<string | null>(null);
   const stopRef = React.useRef(false);
+  // Re-entrancy latch for `run()`. The confirm button is only gated on
+  // `phase === "ready"`, and `run()` awaits `authorizeReprice` BEFORE anything
+  // flips the phase or closes the dialog — so a second click landing inside
+  // that window started a SECOND per-pack write loop over the same packs. A ref
+  // (not state) because it must be true synchronously, inside the same click.
+  const runningRef = React.useRef(false);
 
   const total = plan?.toReprice.length ?? 0;
   // Non-empty is enough client-side: the value is either a 6-digit TOTP or a
@@ -110,6 +116,11 @@ export function RepinCustomButton({
 
   async function run() {
     if (!plan || total === 0) return;
+    if (runningRef.current) return;
+    runningRef.current = true;
+    // Disable the confirm button for the whole 2FA round-trip too, not just
+    // from the moment the loop starts.
+    setPhase("running");
     const rows = plan.toReprice;
     // Re-pass the SAME target selector the dry-run used so the write plans each
     // pack identically — never the dry-run's number. The server re-reads fresh
@@ -122,6 +133,10 @@ export function RepinCustomButton({
       token = res.token;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "2FA verification failed.");
+      // Nothing was written — hand the dialog back so the operator can retype
+      // the code and retry.
+      runningRef.current = false;
+      setPhase("ready");
       return;
     }
 
@@ -172,6 +187,7 @@ export function RepinCustomButton({
         setFatalError(message);
         setCurrentName("");
         setPhase("done");
+        runningRef.current = false;
         toast.error(`Run aborted: ${message}`);
         router.refresh();
         return;
@@ -181,6 +197,7 @@ export function RepinCustomButton({
     setCurrentName("");
     setTally({ done, failed });
     setPhase("done");
+    runningRef.current = false;
     if (stopRef.current) {
       toast.message(`Stopped — re-priced ${done}${failed ? `, ${failed} failed` : ""}.`);
     } else if (failed > 0) {
@@ -192,6 +209,7 @@ export function RepinCustomButton({
   }
 
   function closeProgress() {
+    runningRef.current = false;
     setProgressOpen(false);
     setPhase("idle");
     setPlan(null);

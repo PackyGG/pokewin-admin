@@ -207,31 +207,49 @@ function countTokens(tokens: readonly string[]): {
  * meaningless and the card renders "Full access" instead.
  */
 export async function getRolesOverview(): Promise<RolesOverview> {
-  // ── 1. Holder counts per built-in enum role (one grouped query) ───────────
-  const roleGroups = (await adminDrizzle.execute<{
-    role: string;
-    count: string;
-  }>(sql`
-    SELECT role::text AS role, COUNT(*)::text AS count
-    FROM admin_users GROUP BY role
-  `)).rows;
-  const holdersByRole = new Map<string, number>();
-  for (const g of roleGroups) holdersByRole.set(g.role, Number(g.count));
+  // TWO ADMIN-DB round trips, issued together.
+  //
+  // This used to be THREE sequential awaits: a `GROUP BY role` tally, the role
+  // rows, then a second pass over `admin_users` for the override count. The
+  // tally and the override pass read the SAME table, so the tally is now
+  // derived in code from the single `admin_users` read (staff-sized table —
+  // one row per admin), and the two remaining reads run in parallel. The Admin
+  // pool is `max: 4` per instance with no admission control, so a narrower,
+  // shorter fan-out is what keeps this tab off the pool's connect queue.
+  const [allUsers, allRoleRows] = await Promise.all([
+    // Every admin_user. `role` feeds the per-role holder tally (previously the
+    // dedicated GROUP BY); the remaining columns feed the per-user override
+    // count below, which only considers non-admin rows.
+    adminDrizzle.execute<{
+      id: string; role: string; roles: string[]; role_id: string | null;
+      allowed_pages: string[];
+    }>(sql`
+      SELECT id::text, role::text AS role, roles::text[] AS roles,
+             role_id::text, allowed_pages
+      FROM admin_users
+    `).then((r) => r.rows),
+    // Every admin_roles row (system + custom) in one read.
+    adminDrizzle.execute<{
+      id: string; name: string; description: string | null; is_system: boolean;
+      system_key: string | null; capabilities: string[]; landing_route: string | null;
+      updated_at: Date | string; user_count: string;
+    }>(sql`
+      SELECT r.id::text, r.name, r.description, r.is_system, r.system_key,
+             r.capabilities, r.landing_route, r.updated_at,
+             COUNT(u.id)::text AS user_count
+      FROM admin_roles r
+      LEFT JOIN admin_users u ON u.role_id = r.id
+      GROUP BY r.id
+      ORDER BY r.name ASC
+    `).then((r) => r.rows),
+  ]);
 
-  // ── 2. Every admin_roles row (system + custom) in one read ────────────────
-  const allRoleRows = (await adminDrizzle.execute<{
-    id: string; name: string; description: string | null; is_system: boolean;
-    system_key: string | null; capabilities: string[]; landing_route: string | null;
-    updated_at: Date | string; user_count: string;
-  }>(sql`
-    SELECT r.id::text, r.name, r.description, r.is_system, r.system_key,
-           r.capabilities, r.landing_route, r.updated_at,
-           COUNT(u.id)::text AS user_count
-    FROM admin_roles r
-    LEFT JOIN admin_users u ON u.role_id = r.id
-    GROUP BY r.id
-    ORDER BY r.name ASC
-  `)).rows;
+  // Byte-identical to the retired `SELECT role, COUNT(*) … GROUP BY role`:
+  // one bucket per distinct `role` column value across every admin_users row.
+  const holdersByRole = new Map<string, number>();
+  for (const u of allUsers) {
+    holdersByRole.set(u.role, (holdersByRole.get(u.role) ?? 0) + 1);
+  }
 
   // Index the system rows by their enum key so each built-in's id / edited caps
   // can be looked up; collect the custom rows separately for the merge.
@@ -300,18 +318,10 @@ export async function getRolesOverview(): Promise<RolesOverview> {
   // ── 4. KPI counts ─────────────────────────────────────────────────────────
   const adminCount = holdersByRole.get("admin") ?? 0;
 
-  // Per-user override count: read every NON-admin admin_user (roles column
-  // degrades to [] pre-migration via readAdminUsersWithRoles) and compare
-  // their effective set to their baseline-implied set.
-  const nonAdminUsers = (await adminDrizzle.execute<{
-    id: string; role: string; roles: string[]; role_id: string | null;
-    allowed_pages: string[];
-  }>(sql`
-    SELECT id::text, role::text AS role, roles::text[] AS roles,
-           role_id::text, allowed_pages
-    FROM admin_users
-    WHERE role <> 'admin'
-  `)).rows;
+  // Per-user override count: every NON-admin admin_user (the old query's
+  // `WHERE role <> 'admin'`, applied here to the single read above) compared
+  // against their baseline-implied set.
+  const nonAdminUsers = allUsers.filter((u) => u.role !== "admin");
 
   let overrideUserCount = 0;
   for (const u of nonAdminUsers as Array<{

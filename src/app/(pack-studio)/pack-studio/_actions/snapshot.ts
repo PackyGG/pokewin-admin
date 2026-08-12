@@ -5,12 +5,10 @@ import { revalidateTag } from "next/cache";
 import { sql } from "drizzle-orm";
 import { requirePackStudioAccess } from "@/lib/require-pack-studio-access";
 import { adminDrizzle } from "@/lib/admin-db";
-import { getReadDrizzleDb } from "@/lib/db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getPacksPoolComposition } from "@/lib/queries/packs";
 import { computePackRiskFromAggregates } from "@/app/(admin)/insights/edge-calc/risk";
 import {
-  PACK_STUDIO_CASH_PACK_TYPES,
   buildPackCompliance,
   readMaxWinCap,
   autoTargetEdge,
@@ -38,10 +36,9 @@ export type SnapshotResult = {
  * the ADMIN DB.
  *
  * Data flow (respects the strict dual-DB boundary):
- *   • READS the MAIN game DB read-only — a tiny `id` SELECT for active cash
- *     packs, then the SCALABLE aggregate composition via
- *     `getPacksPoolComposition({ packIds })` (grouped SQL sums; never fetches
- *     each card row of each pack).
+ *   • READS the MAIN game DB read-only — ONE scalable aggregate composition via
+ *     `getPacksPoolComposition()` (grouped SQL sums over the active cash packs;
+ *     never fetches each card row of each pack).
  *   • Maps each aggregate row through `computePackRiskFromAggregates` (the same
  *     pure engine the Edge Calc surface uses).
  *   • WRITES only the ADMIN DB: upserts `pack_risk_scores` (one row per pack)
@@ -59,35 +56,32 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
     "Not authorized to run the pack-risk snapshot.",
   );
 
+  // Both config reads resolve through the request-cached `readPackSystemConfig`,
+  // so this is ONE admin_settings round-trip, not two.
   const maxWinCap = await readMaxWinCap();
   // Resolve the per-pack edge-curve config ONCE up-front (mirrors `readMaxWinCap`)
   // so every pack's `belowTargetEdge` flag is checked against ITS OWN curve target
   // — `autoTargetEdge({price, maxWin}, edgeCurveCfg)` — not the flat 10.99% floor.
   const edgeCurveCfg = await readEdgeCurveConfig();
 
-  // ── Resolve in-scope pack ids (active cash packs) from MAIN, read-only ──
-  // Active `official` cash packs (`PACK_STUDIO_CASH_PACK_TYPES`). We resolve the
-  // id set here, then feed it to the SAME scalable aggregate path via the
-  // `packIds` overload. The `packs` table is small (~hundreds of rows) so this
-  // filtered id read is a cheap seq scan (the planner declines an index at
-  // this cardinality — verified read-only EXPLAIN), matching the Foundation's
-  // own composition query.
-  const db = await getReadDrizzleDb();
-  // SAFETY INVARIANT: `included` is built ONLY from `PACK_STUDIO_CASH_PACK_TYPES`,
-  // a hardcoded module constant of trusted string literals — never user input.
-  // The current query still binds the resulting array. If this list ever
-  // becomes settings-derived, keep it parameterized as `pack_type = ANY($1)`
-  // bind before doing so.
-  const idResult = await db.execute<{ id: string }>(sql`
-    SELECT id
-    FROM packs
-    WHERE pack_type::text = ANY(${pgArrayParam([...PACK_STUDIO_CASH_PACK_TYPES])}::text[])
-      AND price > 0
-      AND active = true
-  `);
-  const packIds = idResult.rows.map((r) => r.id);
+  // ── In-scope packs (active cash packs) from MAIN, read-only ──
+  // Scalable aggregate composition (grouped SQL sums — no per-card fetch).
+  //
+  // PERF: this used to issue a separate pack-id read first — filtered on
+  // `pack_type = ANY(PACK_STUDIO_CASH_PACK_TYPES) AND price > 0 AND active` —
+  // and feed those ids to the `packIds` overload. That id read was redundant:
+  // `getPacksPoolComposition()` with no argument applies the IDENTICAL scope
+  // predicate (`REPRICE_INCLUDED_PACK_TYPES` is the same `["official"]` list,
+  // plus the same `price > 0 AND active = true`), so the two forms select the
+  // same pack set. Dropping it removes one MAIN round-trip — and one slot of
+  // the process-wide read admission cap — from every snapshot run.
+  //
+  // The two scope constants are pinned equal by
+  // `scripts/__fixtures__/perf-pack-studio.test.ts`; if one is ever widened the
+  // guardrail fails rather than silently changing what gets scored.
+  const compositions = await getPacksPoolComposition();
 
-  if (packIds.length === 0) {
+  if (compositions.length === 0) {
     await createAdminAuditEvent({
       adminUserId: session.userId,
       eventType: "pack_risk_snapshot",
@@ -99,9 +93,6 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
     revalidateTag("pack-studio-overview");
     return { count: 0, computedAt: new Date().toISOString() };
   }
-
-  // Scalable aggregate composition (grouped SQL sums — no per-card fetch).
-  const compositions = await getPacksPoolComposition({ packIds });
 
   const computedAt = new Date();
 

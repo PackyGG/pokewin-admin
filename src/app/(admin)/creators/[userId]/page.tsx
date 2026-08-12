@@ -42,7 +42,7 @@ import { CreatorDealCostPanel } from "./creator-deal-cost-panel";
 
 import { parseCreatorDetailSearchParams } from "./_lib/search-params";
 import { getCreatorDealData } from "./_queries/get-creator-deal-data";
-import { getCodeAndWagerByUser } from "../_queries/code-and-wager-by-user";
+import { getMomentum3dByUser } from "../_queries/momentum-3d-by-user";
 import { DealTabs } from "./_components/deal-tabs";
 import { DealsTab } from "./_components/deals-tab";
 import { DealsSubTabs } from "./_components/deals-sub-tabs";
@@ -122,20 +122,22 @@ export default async function CreatorDetailPage({
     32_000,
   );
 
-  // Per-creator 3-day momentum (Item F, 2026-06-05) — the SAME query the
-  // list cards' MomentumRow uses (`getCodeAndWagerByUser` from
-  // ../_queries/code-and-wager-by-user.ts), narrowed to this one creator.
-  // Mirrored exactly so the Momentum (3d) tile on the detail KPI strip
-  // surfaces the same `deposits_3d` + `wagers_3d` numbers the admin sees
-  // on the list card, with no fabricated re-computation. Five small
-  // indexed scans (acu by affiliate_user_id, last 3 days), each well
-  // under 1s — well below the strip's 15s budget. Kicked off here
-  // (non-blocking) so it runs in parallel with the heavy
-  // getCreatorDetail() aggregate and the KpiStrip awaits both inside its
-  // Suspense boundary. safeQueryOrNull degrades the tile to "—" if the
-  // query throws or hangs, without crashing the strip.
+  // Per-creator 3-day momentum (Item F, 2026-06-05) — the SAME numbers the
+  // list cards' MomentumRow shows, so the two surfaces tell one story.
+  //
+  // 2026-08-12: this used to call `getCodeAndWagerByUser([userId])`, which
+  // fires SIX round-trips (five MAIN + one ADMIN) of which this page used
+  // exactly two fields — and whose wager leg was an UNBOUNDED lifetime acu
+  // scan. `getMomentum3dByUser` is the same two figures under the same
+  // filters as ONE 3-day-bounded indexed read. Identical values, 5 fewer
+  // reads on a page that is already the heaviest MAIN consumer in the area.
+  //
+  // Kicked off here (non-blocking) so it overlaps the heavy
+  // getCreatorDetail() aggregate; the KpiStrip awaits both inside its own
+  // Suspense boundary. safeQueryOrNull degrades the tile to "—" if the read
+  // throws or hangs, without crashing the strip.
   const momentum3dPromise = safeQueryOrNull(
-    () => getCodeAndWagerByUser([userId]),
+    () => getMomentum3dByUser([userId]),
     "creators.detail.momentum3d",
     10_000,
   );
@@ -283,7 +285,7 @@ type ProfileResultPromise = Promise<{
 // the heavy profile aggregate so both render in one frame; the strip
 // degrades the Momentum tile to "—" if this query fails.
 type Momentum3dResultPromise = Promise<{
-  data: Awaited<ReturnType<typeof getCodeAndWagerByUser>> | null;
+  data: Awaited<ReturnType<typeof getMomentum3dByUser>> | null;
   error: string | null;
 }>;
 
@@ -303,7 +305,7 @@ async function CreatorKpiStrip({
     profileResultPromise,
     momentum3dPromise,
   ]);
-  // Both 3d momentum legs from getCodeAndWagerByUser. The userId we
+  // Both 3d momentum legs from getMomentum3dByUser. The userId we
   // fetched is the page's `params.userId`; the strip is rendered inside
   // the same Server Component so `profile` already carries that same id
   // implicitly. Default to 0 when the map lookup misses (creator has
@@ -428,9 +430,9 @@ async function CreatorKpiStrip({
         />
         {/* Momentum (3d) — rolling 3-day wagers headline + deposits
             sub-line. Mirrors the list-card MomentumRow EXACTLY (same
-            getCodeAndWagerByUser query, same `wagers3dUsd` /
-            `deposits3dUsd` source) so the two surfaces tell the same
-            story. House-POV emerald: wagers + deposits are money
+            filters, same `wagers3dUsd` / `deposits3dUsd` source — see
+            `_queries/momentum-3d-by-user.ts`) so the two surfaces tell
+            the same story. House-POV emerald: wagers + deposits are money
             flowing from this creator's referred players TO us. The
             tile renders even on dormant creators (with $0 / "—") so
             the strip layout stays stable; the sub-line only mentions

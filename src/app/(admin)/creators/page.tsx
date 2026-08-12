@@ -347,8 +347,12 @@ async function CreatorsKpiStrip({
       `creators.${tab}-count`,
       BACKEND_READ_TIMEOUT_MS,
     ),
-    // Global creator stats (Converted/withdrawn + counts) — backend
-    // creatorsApi.list walk. null fallback → the Converted tile renders "—".
+    // Converted / withdrawn totals — MAIN-DB voucher aggregates only. This
+    // used to ride behind a full backend creator-roster walk whose four
+    // count outputs nothing on this page ever read (see creators-stats.ts);
+    // dropping that walk removed ~N backend round-trips per cold slot AND
+    // the tile's dependency on the backend being up. null fallback → the
+    // Converted tile renders "—".
     safeQueryOrNull(
       () => getCreatorsGlobalStats(),
       "creators.global-stats",
@@ -387,10 +391,15 @@ async function CreatorsKpiStrip({
   // (rather than throwing), so safeQuery's `.error` stays null on a backend
   // outage. A real count is always a number, so `tabCount == null` is itself
   // the "couldn't load" signal — OR the safeQuery error (a timeout we raced).
-  // getCreatorsGlobalStats / getLeaderboardCostTotal DO throw their backend-
-  // walk failures, so their `.error` flag is authoritative.
+  // getLeaderboardCostTotal DOES throw its backend-walk failure, so its
+  // `.error` flag is authoritative.
+  //
+  // `getCreatorsGlobalStats` is no longer a backend read at all (it is two
+  // MAIN-DB voucher aggregates — see creators-stats.ts), so its failure flag
+  // must NOT claim the backend is down; it now only fires when the DB read
+  // itself failed or blew the wall-clock budget, and the hint says so.
   const tabCountBackendDown = tabCountResult.error !== null || tabCount == null;
-  const statsBackendDown = statsResult.error !== null;
+  const statsReadFailed = statsResult.error !== null;
   const leaderboardBackendDown = leaderboardCostResult.error !== null;
 
   // Tab-aware tile contents — flips label, icon, and accent based on
@@ -478,7 +487,11 @@ async function CreatorsKpiStrip({
         titleAdornment={
           <InfoHint text="Lifetime stream earnings minted into end-of-session payout vouchers (creator_fill_conversion) across ALL creators — not just live-deal creators. The breakdown shows how much of that has actually been withdrawn off-platform vs still in flight." />
         }
-        headerRight={statsBackendDown ? <BackendUnavailableHint /> : undefined}
+        headerRight={
+          statsReadFailed ? (
+            <BackendUnavailableHint text="This figure couldn't load — the database read for the converted-voucher totals failed or took too long. It isn't a backend outage; reload to retry." />
+          ) : undefined
+        }
       >
         <CreatorsPlainHero
           value={stats ? stats.convertedTotal : null}

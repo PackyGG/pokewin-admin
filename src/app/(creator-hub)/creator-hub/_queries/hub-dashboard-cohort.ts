@@ -432,6 +432,34 @@ const cachedHubChartScans = (
   );
 
 /**
+ * Does this database carry `upgrader_games`?
+ *
+ * It has to be resolved OUTSIDE `cachedHubChartScans` because it is part of
+ * that entry's cache key. Un-memoized it was therefore a full extra MAIN read
+ * on EVERY Creator Hub dashboard render — and under the mirror pool's
+ * `maxUses: 1` a "trivial" `to_regclass` still costs a permit plus a fresh
+ * connection handshake, on the busiest page in the Hub.
+ *
+ * Whether a table exists changes only on a deploy/migration, so an hour-long
+ * entry is generous and still self-heals. Keyed on `env` so the prod and dev
+ * mirrors are probed independently, and pinned to the env-resolved client
+ * (never the request-scoped resolver, which would fall back to "prod" inside
+ * the cache scope). `to_regclass` returns NULL rather than erroring for a
+ * missing relation, so the probe cannot throw on a pre-upgrader DB.
+ */
+const cachedUpgraderTableProbe = (env: DbEnv) =>
+  unstable_cache(
+    async (): Promise<boolean> => {
+      const probe = await readDrizzleForEnv(env).execute<{
+        exists: string | null;
+      }>(sql`SELECT to_regclass('public.upgrader_games')::text AS exists`);
+      return probe.rows[0]?.exists != null;
+    },
+    ["hub-upgrader-table-probe-v1", env],
+    { revalidate: 3600, tags: ["creator-hub"] },
+  );
+
+/**
  * Fixed-30d chart series (wagers / deposits / sign-ups & FTDs) — the Trends
  * band's only data source. Single cache entry: a period-chip flip elsewhere
  * on the page never invalidates or re-runs these scans.
@@ -439,7 +467,6 @@ const cachedHubChartScans = (
 export async function getHubCohortCharts(): Promise<HubCohortCharts> {
   return withTiming("creator-hub.cohort-charts", async () => {
     const env = await readDbEnv();
-    const probeDb = readDrizzleForEnv(env);
     const scope = await getMetricsScope();
     const excluded = await getExcludedUserIds();
 
@@ -451,10 +478,7 @@ export async function getHubCohortCharts(): Promise<HubCohortCharts> {
     const exclLedger = scope.exclStaffSessionFrag({ tsCol: "created_at" });
     const upgBlacklist = blacklistNotInClause("u_ug.id", excluded);
 
-    const upgProbe = await probeDb.execute<{ exists: string | null }>(sql`
-      SELECT to_regclass('public.upgrader_games')::text AS exists
-    `);
-    const hasUpgrader = upgProbe.rows[0]?.exists != null;
+    const hasUpgrader = await cachedUpgraderTableProbe(env)();
 
     return cachedHubChartScans(
       env,

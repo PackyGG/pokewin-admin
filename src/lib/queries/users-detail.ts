@@ -3,16 +3,50 @@ import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import * as mainSchema from "@/lib/db-schema/main/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import { isUserId, isUuid } from "@/lib/utils/ids";
-import { filterLedgerTxTypesLive } from "./_ledger-tx-types";
 import { calculateUserPnl } from "./pnl";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
 import { logError } from "@/lib/errors/logger";
+import { isPostgresError } from "@/lib/postgres-errors";
 import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
-import { hasWagerProgressColumns } from "./users-wager-progress";
 
 const TIP_RECENT_LIMIT = 10;
+
+/**
+ * Hard wall-clock budget for the OPTIONAL leaderboard-title lookups in
+ * {@link enrichLeaderboardWins}.
+ *
+ * Those lookups are cosmetic — they only turn "Leaderboard win" into
+ * "Leaderboard win — <title>". They are also the single riskiest thing in this
+ * whole aggregate: `backendApi`'s timeout is 8s PER ATTEMPT and GETs retry on
+ * 429/503, and `affiliateLeaderboardsApi.get` additionally falls back to a
+ * per-id PostgreSQL read when the backend errors. One stalled backend could
+ * therefore burn far more than the caller's 15s `safeQuery` budget and blank
+ * the ENTIRE user-detail band ("User details failed to load") over a missing
+ * subtitle. Capping the fan-out here guarantees the tip/prize numbers always
+ * render; a backend slower than this just degrades the titles to null, which
+ * is exactly what the existing per-id 404 fallback already does.
+ *
+ * Same defence the wager-progress read applies via WAGER_BACKEND_BUDGET_MS
+ * (`src/lib/queries/users-wager-progress.ts`).
+ */
+const LEADERBOARD_TITLE_BUDGET_MS = 3_000;
+
+/** Resolve `null` if `p` doesn't settle within `ms` (never rejects). */
+function withBudget<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout>;
+  const cap = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([
+    p.then(
+      (v) => v,
+      () => null,
+    ),
+    cap,
+  ]).finally(() => clearTimeout(timer));
+}
 
 function toIso(value: string | Date): string {
   return value instanceof Date
@@ -316,12 +350,18 @@ async function enrichLeaderboardWins(
   // a failed backend round-trip must not 500 the user detail page.
   const titleById = new Map<string, string>();
   if (needTitle.size > 0) {
-    const results = await Promise.allSettled(
-      Array.from(needTitle).map((id) =>
-        affiliateLeaderboardsApi.get(id).then((r) => ({ id, title: r.title })),
+    // Bounded by LEADERBOARD_TITLE_BUDGET_MS — see the const's doc comment.
+    // `null` (budget blown) leaves every title unresolved, which the mapping
+    // below already tolerates.
+    const results = await withBudget(
+      Promise.allSettled(
+        Array.from(needTitle).map((id) =>
+          affiliateLeaderboardsApi.get(id).then((r) => ({ id, title: r.title })),
+        ),
       ),
+      LEADERBOARD_TITLE_BUDGET_MS,
     );
-    for (const r of results) {
+    for (const r of results ?? []) {
       if (r.status === "fulfilled") {
         titleById.set(r.value.id, r.value.title);
       }
@@ -476,8 +516,17 @@ type UserDetailCoreRow = {
   deposit_count: string | number | null;
   deposit_total: string | null;
   fiat_deposit_total: string | null;
+  /** Lifetime completed wager stakes, per type — see `ledger_agg` below. */
+  pack_opening_total: string | null;
+  battle_bet_total: string | null;
+  battle_sponsorship_total: string | null;
   withdrawal_count: string | number | null;
   owned_codes: { code: string; created_at: Date | string }[];
+  owned_code_referral_counts: {
+    upper_code: string;
+    referral_count: string | number | null;
+  }[];
+  battle_limits: typeof mainSchema.user_battle_limits.$inferSelect | null;
   total_referred: string | number | null;
   total_wager_volume_usd: string | null;
   fingerprint_signal: {
@@ -508,17 +557,42 @@ type UserDetailCoreRow = {
  * these scalar, user-scoped subqueries on one connection without changing any
  * of their result semantics.
  *
- * Expensive ledger/P&L scans remain separate so they can be observed and
- * degraded independently. The optional battle-limits table also remains a
- * separate best-effort lookup because dev databases may lag that migration.
+ * Since 2026-08-12 it also absorbs three more legs that used to be their own
+ * acquisitions: the lifetime wager breakdown (same table, same
+ * (user_id, type, status) index as the deposit aggregate — now one `ledger_agg`
+ * CTE), the per-owned-code referral counts (same `codes` CTE and same
+ * `idx_acu_upper_code` as `total_referred`), and the optional
+ * `user_battle_limits` row. All three are index-served:
+ *   • `idx_ledger_tx_user_type_status_created_at` covers `ledger_agg`,
+ *   • `idx_acu_upper_code` covers both affiliate_code_usages aggregates,
+ *   • `user_battle_limits` is a PK/user_id lookup.
+ *
+ * Expensive ledger/P&L scans (`calculateUserPnl`, `getUserTips`) remain
+ * separate so they can be observed and degraded independently.
  */
-async function getUserDetailCore(id: string): Promise<UserDetailCoreRow | null> {
-  const hasWagerColumns = await hasWagerProgressColumns();
-  const wagerFields = hasWagerColumns
+async function runUserDetailCoreQuery(
+  id: string,
+  excludedUserIds: string[],
+  withOptionalSchema: boolean,
+): Promise<UserDetailCoreRow | null> {
+  const wagerFields = withOptionalSchema
     ? `'wager_requirement_remaining', b.wager_requirement_remaining::text,
        'wager_requirement_progress', b.wager_requirement_progress::text`
     : `'wager_requirement_remaining', NULL::text,
        'wager_requirement_progress', NULL::text`;
+  // `user_battle_limits` exists on live prod (verified read-only 2026-07-01)
+  // but a dev-toggled DB can lag that migration. Rather than paying a separate
+  // round trip for a one-row lookup, the leg is emitted inline and the caller
+  // retries once without it when PostgreSQL reports the table/column missing.
+  // Money columns are re-emitted as ::text (same convention as the `balances`
+  // leg below) so a Decimal(20,2) never round-trips through a JSON number.
+  const battleLimitsField = withOptionalSchema
+    ? `(SELECT to_jsonb(bl) || jsonb_build_object(
+              'max_value_usd', bl.max_value_usd::text,
+              'base_bet_limit_usd', bl.base_bet_limit_usd::text
+            )
+          FROM user_battle_limits bl WHERE bl.user_id = u.id LIMIT 1)`
+    : `NULL::jsonb`;
 
   const [row] = await queryMainRows<UserDetailCoreRow[]>(
     `WITH codes AS (
@@ -530,16 +604,44 @@ async function getUserDetailCore(id: string): Promise<UserDetailCoreRow | null> 
               event_type, ip
          FROM fingerprints
         WHERE user_id = $1
-     ), deposit_agg AS (
-       SELECT COUNT(*) AS deposit_count,
-              SUM(amount::numeric)::text AS deposit_total,
-              (SUM(amount::numeric) FILTER (
-                WHERE crypto_asset IS NULL
-              ))::text AS fiat_deposit_total
-         FROM ledger_transactions
-        WHERE user_id = $1
-          AND type = 'deposit'::ledger_transaction_type
-          AND status = 'completed'::ledger_transaction_status
+     ), ledger_agg AS (
+       -- Deposit aggregate AND the lifetime wager breakdown in ONE pass. These
+       -- used to be two round trips over the same (user_id, type, status)
+       -- index; the mirror pool admits a globally-capped number of concurrent
+       -- reads, so a second round trip costs more than the extra FILTER work.
+       -- The four enum literals are all core money types present on every
+       -- environment's ledger_transaction_type, so this needs no live-enum
+       -- probe (the drift the old probe guarded was upgrader_bet, which was
+       -- fetched but never read -- battlesWagered/packsWagered below use
+       -- only pack_opening + battle_bet + battle_sponsorship).
+       SELECT COUNT(*) FILTER (
+                WHERE lt.type = 'deposit'::ledger_transaction_type
+              ) AS deposit_count,
+              (SUM(lt.amount::numeric) FILTER (
+                WHERE lt.type = 'deposit'::ledger_transaction_type
+              ))::text AS deposit_total,
+              (SUM(lt.amount::numeric) FILTER (
+                WHERE lt.type = 'deposit'::ledger_transaction_type
+                  AND lt.crypto_asset IS NULL
+              ))::text AS fiat_deposit_total,
+              (SUM(lt.amount::numeric) FILTER (
+                WHERE lt.type = 'pack_opening'::ledger_transaction_type
+              ))::text AS pack_opening_total,
+              (SUM(lt.amount::numeric) FILTER (
+                WHERE lt.type = 'battle_bet'::ledger_transaction_type
+              ))::text AS battle_bet_total,
+              (SUM(lt.amount::numeric) FILTER (
+                WHERE lt.type = 'battle_sponsorship'::ledger_transaction_type
+              ))::text AS battle_sponsorship_total
+         FROM ledger_transactions lt
+        WHERE lt.user_id = $1
+          AND lt.type IN (
+                'deposit'::ledger_transaction_type,
+                'pack_opening'::ledger_transaction_type,
+                'battle_bet'::ledger_transaction_type,
+                'battle_sponsorship'::ledger_transaction_type
+              )
+          AND lt.status = 'completed'::ledger_transaction_status
      )
      SELECT
        to_jsonb(u) || jsonb_build_object(
@@ -600,17 +702,40 @@ async function getUserDetailCore(id: string): Promise<UserDetailCoreRow | null> 
        (SELECT COALESCE(jsonb_agg(to_jsonb(cw) ORDER BY cw.requested_at DESC), '[]'::jsonb)
           FROM (SELECT * FROM card_withdrawal_requests WHERE user_id = u.id ORDER BY requested_at DESC LIMIT 10) cw) AS card_withdrawals,
        (SELECT to_jsonb(s) FROM active_seeds s WHERE s.user_id = u.id LIMIT 1) AS active_seed,
-       (SELECT COALESCE(jsonb_agg(to_jsonb(da) ORDER BY da.created_at DESC), '[]'::jsonb)
-          FROM (SELECT * FROM deposit_addresses WHERE user_id = u.id ORDER BY created_at DESC LIMIT 50) da) AS deposit_addresses,
-       da.deposit_count,
-       da.deposit_total,
-       da.fiat_deposit_total,
+       (SELECT COALESCE(jsonb_agg(to_jsonb(dad) ORDER BY dad.created_at DESC), '[]'::jsonb)
+          FROM (SELECT * FROM deposit_addresses WHERE user_id = u.id ORDER BY created_at DESC LIMIT 50) dad) AS deposit_addresses,
+       la.deposit_count,
+       la.deposit_total,
+       la.fiat_deposit_total,
+       la.pack_opening_total,
+       la.battle_bet_total,
+       la.battle_sponsorship_total,
+       ${battleLimitsField} AS battle_limits,
        (SELECT COUNT(*) FROM card_withdrawal_requests cw
          WHERE cw.user_id = u.id
            AND cw.status = ANY($2::card_withdrawal_status[])) AS withdrawal_count,
        (SELECT COALESCE(jsonb_agg(jsonb_build_object('code', ac.code, 'created_at', ac.created_at)
                                   ORDER BY ac.created_at ASC), '[]'::jsonb)
           FROM affiliate_codes ac WHERE ac.user_id = u.id) AS owned_codes,
+       -- Per-owned-code DISTINCT referred-user counts, blacklist-excluded so
+       -- the number shown next to each code agrees with what the "View
+       -- referrals" link (/users?affiliateCode=<code>) actually lists. Folded
+       -- into this statement -- it reuses the SAME codes CTE and the same
+       -- UPPER(code) index (idx_acu_upper_code) as total_referred directly
+       -- below, so it costs no extra round trip on the capped mirror pool.
+       (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                 'upper_code', rc.upper_code,
+                 'referral_count', rc.referral_count
+               )), '[]'::jsonb)
+          FROM (
+            SELECT c.upper_code,
+                   COUNT(DISTINCT acu.referred_user_id) AS referral_count
+              FROM codes c
+              LEFT JOIN affiliate_code_usages acu
+                     ON UPPER(acu.code) = c.upper_code
+                    AND NOT (acu.referred_user_id = ANY($3::text[]))
+             GROUP BY c.upper_code
+          ) rc) AS owned_code_referral_counts,
        (SELECT COUNT(DISTINCT acu.referred_user_id)
           FROM affiliate_code_usages acu
          WHERE UPPER(acu.code) IN (SELECT upper_code FROM codes)) AS total_referred,
@@ -645,100 +770,81 @@ async function getUserDetailCore(id: string): Promise<UserDetailCoreRow | null> 
          WHERE other.signup_ip IS NOT NULL
            AND other.signup_ip = u.signup_ip) AS signup_ip_shared_count
       FROM "user" u
-      CROSS JOIN deposit_agg da
+      CROSS JOIN ledger_agg la
      WHERE u.id = $1
      LIMIT 1`,
     id,
     ["completed", "shipped"],
+    excludedUserIds,
   );
 
   return row ?? null;
 }
 
-export async function getUserDetail(id: string) {
-  // The remaining independent scans run together. Small record lookups are
-  // consolidated by getUserDetailCore so this does not flood the read pool.
-  let wagerBreakdown: { type: string; _sum: { amount: unknown } }[] = [];
+/**
+ * {@link runUserDetailCoreQuery} with a one-shot degrade for environments whose
+ * schema lags the application.
+ *
+ * The optional legs (`balances.wager_requirement_*`, `user_battle_limits`) both
+ * exist on live prod. Probing for them, or issuing them as separate best-effort
+ * round trips, cost extra acquisitions on the globally-capped mirror pool on
+ * EVERY render just to protect a rare dev-toggled DB. Emitting them inline and
+ * retrying once on `undefined_table` / `undefined_column` moves that cost onto
+ * the lagging environment instead: prod pays one statement, a lagging DB pays
+ * two — the same two it paid before, with the same degraded result (null battle
+ * limits, null wager-requirement fields).
+ */
+async function getUserDetailCore(
+  id: string,
+  excludedUserIds: string[],
+): Promise<UserDetailCoreRow | null> {
+  try {
+    return await runUserDetailCoreQuery(id, excludedUserIds, true);
+  } catch (error) {
+    // 42P01 undefined_table / 42703 undefined_column only — every other
+    // failure is a real error and must surface to the caller's safeQuery.
+    if (!isPostgresError(error, "42P01", "42703")) throw error;
+    logError(
+      "users.detail.core",
+      "optional schema missing — retrying without the battle-limits / wager-requirement legs",
+      error,
+    );
+    return runUserDetailCoreQuery(id, excludedUserIds, false);
+  }
+}
 
-  // Wager-breakdown groupBy — the requested type list is intersected against
-  // the LIVE prod enum at call time (filterLedgerTxTypesLive), NOT just the
-  // generated enum. The generated schema is ahead of prod for the
-  // unlaunched upgrader feature: passing `upgrader_bet` into an enum
-  // predicate made Postgres throw `22P02 invalid input value for
-  // enum`, which the .catch below silently swallowed → packs/battles-wagered
-  // tiles rendered 0 on every prod profile. The live probe is 5-min
-  // unstable_cache'd, so steady-state adds no extra round trip.
-  const wagerBreakdownPromise = filterLedgerTxTypesLive([
-    "pack_opening",
-    "battle_bet",
-    "battle_sponsorship",
-    "upgrader_bet",
-  ])
-    .then((types) =>
-      types.length === 0
-        ? []
-        : queryMainRows<{ type: string; amount: string | null }[]>(
-            `SELECT type::text AS type, SUM(amount::numeric)::text AS amount
-               FROM ledger_transactions
-              WHERE user_id = $1
-                AND type = ANY($2::ledger_transaction_type[])
-                AND status = 'completed'::ledger_transaction_status
-              GROUP BY type`,
-            id,
-            types,
-          ).then((rows) =>
-            rows.map((row) => ({
-              type: row.type,
-              _sum: { amount: row.amount },
-            })),
-          ),
-    )
-    .catch((e) => {
-      logError("users.detail.wagerBreakdown", "query failed", e);
-      return [] as { type: string; _sum: { amount: unknown } }[];
-    });
+export async function getUserDetail(id: string) {
+  // ── MIRROR-READ BUDGET ───────────────────────────────────────────────
+  // Every MAIN read on this page passes through a process-wide semaphore
+  // sized to the mirror pool (see src/lib/db.ts), so what actually decides
+  // whether the 15s per-leg budget holds is the TOTAL number of reads one
+  // render issues — not how fast any single one is. This aggregate is
+  // therefore deliberately THREE statements:
+  //
+  //   1. getUserDetailCore  — every small record lookup, the deposit/wager
+  //                           aggregate, and the per-code referral counts,
+  //   2. calculateUserPnl   — the canonical shared money helper,
+  //   3. getUserTips        — the tip/prize ledger scan.
+  //
+  // It used to be six (battle limits, the wager breakdown and the referral
+  // counts each had their own round trip, plus an information_schema probe).
+  // Fold new data into (1) rather than adding a fourth leg.
 
   // Excluded (blacklisted) user ids for the per-owned-code referral count
-  // below, resolved with the SAME default (non-search) semantics
-  // /users?affiliateCode=<code> and /users?affiliateOwnerId=<ownerId> use
-  // when reached via the plain "View referrals" link (no active search term
+  // inside the core statement, resolved with the SAME default (non-search)
+  // semantics /users?affiliateCode=<code> and /users?affiliateOwnerId=<ownerId>
+  // use when reached via the plain "View referrals" link (no active search term
   // → getExcludedUserIdsForAdminSearch's `isSearching: false` branch, which
   // returns the FULL excluded_users blacklist regardless of
   // includeAllBlacklisted). Without this, a referred user who is on the
   // blacklist inflated the displayed count above what clicking through
-  // actually lists. Independent of `id` — resolved once and reused by the
-  // referral-count query promise below.
-  const ownedCodeReferralCountPromise = getExcludedUserIdsForAdminSearch({
+  // actually lists. ADMIN-DB read, React-cache()'d and shared with the
+  // withdrawal-suppression lookup below, and it NEVER throws (it fails open to
+  // an empty list), so chaining the core statement on it cannot break the page.
+  const corePromise = getExcludedUserIdsForAdminSearch({
     includeAllBlacklisted: false,
     isSearching: false,
-  })
-    .then((excludedUserIds) =>
-      queryMainRows<
-        { upper_code: string; referral_count: string | number | null }[]
-      >(
-        `
-        WITH codes AS (
-          SELECT UPPER(code) AS upper_code FROM affiliate_codes WHERE user_id = $1
-        )
-        SELECT c.upper_code,
-               COUNT(DISTINCT acu.referred_user_id) AS referral_count
-          FROM codes c
-          LEFT JOIN affiliate_code_usages acu
-                 ON UPPER(acu.code) = c.upper_code
-                AND NOT (acu.referred_user_id = ANY($2::text[]))
-         GROUP BY c.upper_code
-        `,
-        id,
-        excludedUserIds,
-      ),
-    )
-    .catch((e) => {
-      logError("users.detail.referralCounts", "query failed", e);
-      return [] as Array<{
-        upper_code: string;
-        referral_count: string | number | null;
-      }>;
-    });
+  }).then((excludedUserIds) => getUserDetailCore(id, excludedUserIds));
 
   // Canonical P&L components (deposits, withdrawals, on-site balance,
   // inventory value, unclaimed vouchers) live in the shared helper so the
@@ -749,59 +855,24 @@ export async function getUserDetail(id: string) {
   // aggregate ran in the same Promise.all without a .catch and would
   // surface to the page error boundary.
   const userPnlPromise = calculateUserPnl(id);
-  const corePromise = getUserDetailCore(id);
 
-  const [
-    core,
-    battleLimits,
-    userPnl,
-    wagerBreakdownResolved,
-    ownedCodeReferralCountRows,
-    tips,
-  ] = await Promise.all([
+  const [core, userPnl, tips] = await Promise.all([
     corePromise,
-    // user_battle_limits now EXISTS on live prod (verified read-only via
-    // to_regclass, 2026-07-01), so the historical missing-table throw
-    // this .catch was written for no longer fires there. The .catch is KEPT
-    // as defence-in-depth: the same generated client also serves the
-    // dev-toggled DB (which can lag prod's migration state), and a bare
-    // rejection here would take down the whole detail aggregate and
-    // render the amber error instead of the page. On prod a null now means
-    // "no per-user override row" (site_config defaults apply) — the TRUE
-    // answer — returned by the query itself, not the catch.
-    queryMainRows<(typeof mainSchema.user_battle_limits.$inferSelect)[]>(
-      `SELECT * FROM user_battle_limits WHERE user_id = $1 LIMIT 1`,
-      id,
-    )
-      .then((rows) => rows[0] ?? null)
-      .catch(() => null),
     userPnlPromise,
-    wagerBreakdownPromise,
-    // Per-owned-code referral counts for the "Codes they own" list — DISTINCT
-    // referred_user_id per code, same case-fold (UPPER(code)) and
-    // no-usage_type-restriction semantics as getCodeReferrals/getCodeAnalytics
-    // (creators-codes.ts), so the number shown next to each code here agrees
-    // with what /users?affiliateCode=<code> ("View referrals" link,
-    // OwnedCodeRow below) actually lists — including the excluded_users
-    // blacklist exclusion that list applies (see ownedCodeReferralCountPromise
-    // above). Keyed on `id` only (not on ownedCodeRows' resolved value) via
-    // its own `codes` CTE, so it runs in this same batch instead of a serial
-    // tail waiting on ownedCodeRows. UPPER(code) is index-backed on prod
-    // (idx_acu_upper_code — see prisma/recommended-indexes.sql #5c APPLIED
-    // STATUS), the same index the sibling live-affiliate-aggregate query
-    // below already relies on. .catch keeps a schema hiccup from taking down
-    // the whole aggregate — an empty array degrades every code's count to 0
-    // via the Map lookup below, not a broken page.
-    ownedCodeReferralCountPromise,
     // Creator tips received + sent (both are creator_tip rows, split by
     // metadata.direction). Runs in parallel; resolves counterparty names
     // for the shown rows internally.
     getUserTips(id),
   ]);
 
-  wagerBreakdown = wagerBreakdownResolved as typeof wagerBreakdown;
-
   if (!core) return null;
+
+  // On prod a null here means "no per-user override row" (site_config defaults
+  // apply) — the TRUE answer, returned by the core statement itself. On a
+  // dev-toggled DB that lags the `user_battle_limits` migration, the core
+  // statement's one-shot degrade (see getUserDetailCore) also yields null
+  // rather than taking the whole aggregate down.
+  const battleLimits = core.battle_limits;
 
   const {
     user,
@@ -860,10 +931,12 @@ export async function getUserDetail(id: string) {
   //
   // Gated GENERICALLY on blacklist membership (no hardcoded id) and applied
   // for EVERYONE viewing — there is no per-admin override that re-exposes it.
-  // `getExcludedUserIds` reads the ADMIN DB (allowed), is React-cache()'d so
-  // it costs one admin-DB round trip per request, and fails CLOSED (throws if
-  // the blacklist is unavailable and no prior good list exists) — matching how
-  // the rest of the app scopes on this list.
+  // `getExcludedUserIds` reads the ADMIN DB (allowed) and is React-cache()'d,
+  // so it costs ONE admin-DB round trip per request — shared with the
+  // referral-count blacklist resolved above, which is why chaining the core
+  // statement on that lookup adds no read. It NEVER throws: on an admin-DB
+  // blip it degrades to the last-known-good list, or fails OPEN to `[]` (see
+  // `src/lib/excluded-users/fetch.ts`), so it cannot take this aggregate down.
   const isBlacklisted = (await getExcludedUserIds()).includes(user.id);
 
   // Referrer identity + the latest usage code are folded into the main user
@@ -907,7 +980,7 @@ export async function getUserDetail(id: string) {
   // referral_count = 0, not a missing row) — the `?? 0` on the Map lookup
   // is just defence-in-depth for the .catch()-empty-array failure path.
   const referralCountByUpperCode = new Map<string, number>(
-    ownedCodeReferralCountRows.map((r) => [
+    core.owned_code_referral_counts.map((r) => [
       r.upper_code,
       Number(r.referral_count ?? 0),
     ]),
@@ -1081,21 +1154,15 @@ export async function getUserDetail(id: string) {
             : null,
           inventoryValue: userPnl.inventoryValue,
           vouchersValue: userPnl.unclaimedVouchers,
-          packsWagered: Math.abs(
-            toNumber(
-              wagerBreakdown.find((w) => w.type === "pack_opening")?._sum
-                .amount ?? 0,
-            ),
-          ),
+          // Lifetime completed wager stakes, from the `ledger_agg` CTE inside
+          // the core statement (previously its own GROUP BY round trip). Same
+          // per-type SUM(amount), same abs()/pairing — only the transport
+          // changed. NULL (no rows of that type) reads as 0 exactly like the
+          // old `.find(...) ?? 0` miss did.
+          packsWagered: Math.abs(toNumber(core.pack_opening_total ?? 0)),
           battlesWagered: Math.abs(
-            toNumber(
-              wagerBreakdown.find((w) => w.type === "battle_bet")?._sum
-                .amount ?? 0,
-            ) +
-              toNumber(
-                wagerBreakdown.find((w) => w.type === "battle_sponsorship")
-                  ?._sum.amount ?? 0,
-              ),
+            toNumber(core.battle_bet_total ?? 0) +
+              toNumber(core.battle_sponsorship_total ?? 0),
           ),
         }
       : null,

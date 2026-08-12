@@ -206,6 +206,37 @@ type NetGgrScans = {
  * dev-toggled admin lands in a separate slot. Inside, the client is
  * selected straight from the resolved `env` (never re-reading the cookie).
  */
+/**
+ * `upgrader_games` existence probe, cached cross-request.
+ *
+ * The probe result only decides whether the upgrader leg is issued, and it
+ * feeds the scan cache key — so it has to be resolved BEFORE
+ * `cachedNetGgrScans`, i.e. outside it, on the request path. Left uncached
+ * it was a guaranteed extra MAIN round-trip on every single /creators
+ * render even when every heavy scan below was a warm cache hit.
+ *
+ * That is not the cheap catalog lookup it looks like: mirror clients run
+ * with `maxUses: 1` (db.ts), so every read builds a fresh connection and
+ * takes one of the process-wide admission permits. Under a global
+ * concurrency cap a free read is never free — it is one more reader in the
+ * queue ahead of the reads that actually render a tile.
+ *
+ * A table appearing or disappearing is a migration, not a data event, so a
+ * 5-minute TTL (matching the scans it gates) is far more freshness than the
+ * answer can ever need.
+ */
+const cachedHasUpgraderTable = (env: DbEnv) =>
+  unstable_cache(
+    async (): Promise<boolean> => {
+      const probe = await readDrizzleForEnv(env).execute<{
+        exists: string | null;
+      }>(sql`SELECT to_regclass('public.upgrader_games')::text AS exists`);
+      return probe.rows[0]?.exists != null;
+    },
+    ["creators-net-ggr-has-upgrader-v1", env],
+    { revalidate: 300, tags: ["creators-net-ggr"] },
+  );
+
 const cachedNetGgrScans = (
   period: DashboardPeriod,
   env: DbEnv,
@@ -355,11 +386,10 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
     const exclLedger = scope.exclStaffSessionFrag({ tsCol: "created_at" });
     const exclInventory = scope.exclStaffSessionFrag({ tsCol: "obtained_at" });
 
-    // Probe upgrader_games once — pre-upgrader snapshot returns NULL.
-    const upgProbe = await probeDb.execute<{ exists: string | null }>(sql`
-      SELECT to_regclass('public.upgrader_games')::text AS exists
-    `);
-    const hasUpgrader = upgProbe.rows[0]?.exists != null;
+    // Probe upgrader_games — pre-upgrader snapshot returns NULL. Cached
+    // cross-request (see `cachedHasUpgraderTable`) so the warm path costs no
+    // MAIN round-trip at all.
+    const hasUpgrader = await cachedHasUpgraderTable(env)();
     const upgBlacklist = blacklistNotInClause("u_ug.id", excluded);
 
     const { ledgerRows, invRows, upgRows } = await cachedNetGgrScans(

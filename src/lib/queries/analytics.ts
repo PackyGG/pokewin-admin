@@ -137,6 +137,17 @@ export type PackPopularityStats = {
   }[];
 };
 
+/**
+ * Overview payload.
+ *
+ * NOTE (2026-08-12): `battleStats` / `packStats` used to be members here and
+ * were computed by SIX extra scans inside `computeAnalyticsData`. Nothing on
+ * the Overview ever rendered them — the only consumer, the Games → Packs /
+ * Battles sub-tab, reads the dedicated helpers at the bottom of this file.
+ * Six discarded reads per render is expensive under the process-wide mirror
+ * admission cap (see `src/lib/db.ts`), so they are gone from this bundle.
+ * Re-adding a field here means re-adding its scan to every Overview render.
+ */
 export type AnalyticsData = {
   ggr: number;
   ngr: number;
@@ -156,8 +167,6 @@ export type AnalyticsData = {
   upgraderWager: number;
   packWagerBorrowed: number;
   battleWagerBorrowed: number;
-  battleStats: BattleModeStats;
-  packStats: PackPopularityStats;
   daily: {
     date: string;
     ggr: number;
@@ -186,8 +195,8 @@ export type AnalyticsData = {
 };
 
 /**
- * Inner compute for {@link getAnalyticsData} — runs the full ~13-query
- * aggregate bundle. The resolved blacklist is passed in (rather than
+ * Inner compute for {@link getAnalyticsData} — runs the Overview aggregate
+ * bundle (six legs). The resolved blacklist is passed in (rather than
  * fetched here) so it participates verbatim in the `unstable_cache` key
  * of the public wrapper below; do not re-fetch it inside.
  */
@@ -206,24 +215,6 @@ async function computeAnalyticsData(
   // the user table (rather than on `user_id IN (subquery)`). Empty
   // string when nothing is blacklisted.
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
-  // Battle metadata uses the same canonical customer population as the money
-  // aggregates: staff, creators, and the dynamic blacklist are all excluded.
-  const battleCustomerIds = `(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})`;
-  const battleStaffExcl = `user_id IN ${battleCustomerIds}`;
-  const battleStaffExclAliased = `b.user_id IN ${battleCustomerIds}`;
-
-  // `today` anchors at midnight UTC of the current calendar day (matching
-  // `periodToDateFilter` / `periodToMetricWindow`); the other windows are
-  // rolling N-day from `now`. `all` has no date clause.
-  const battleSinceClause = battleSinceFragment(period);
-  const battleDateWhere =
-    battleSinceClause === ""
-      ? `WHERE ${battleStaffExcl}`
-      : `WHERE ${battleSinceClause.replace(/{col}/g, "created_at")} AND ${battleStaffExcl}`;
-  const battleDateWhereAliased =
-    battleSinceClause === ""
-      ? `WHERE ${battleStaffExclAliased}`
-      : `WHERE ${battleSinceClause.replace(/{col}/g, "b.created_at")} AND ${battleStaffExclAliased}`;
 
   // Canonical gaming-margin metrics come from `@/lib/metrics`: the daily
   // GGR/NGR series (`getDailyGamingMetrics`) and the upgrader figure from
@@ -239,44 +230,13 @@ async function computeAnalyticsData(
   const [
     dailyCanonical,
     upgrader,
-    aggregates,
     visitors,
     dailyTx,
     dailySignups,
-    battleModeRows,
-    battleSettingRows,
-    battleFlags,
-    battleFormatRows,
-    topBattlePackRows,
-    topPacksRows,
     realizedPnl,
   ] = await Promise.all([
       getDailyGamingMetrics(metricWindow),
       upgraderMetrics(metricWindow),
-      queryMainRows<
-        {
-          pack_wager: string;
-          battle_wager: string;
-          pack_wager_borrowed: string;
-          battle_wager_borrowed: string;
-        }[]
-      >(`
-        SELECT
-          COALESCE(SUM(CASE
-            WHEN type::text = 'pack_opening'
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
-          COALESCE(SUM(CASE
-            WHEN type::text IN ('battle_bet', 'battle_sponsorship')
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
-          COALESCE(SUM(CASE
-            WHEN type::text = 'pack_opening' AND description ILIKE '%borrow%'
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_borrowed,
-          COALESCE(SUM(CASE
-            WHEN type::text = 'battle_bet' AND description ILIKE '%borrow%'
-            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_borrowed
-        FROM ledger_transactions
-        WHERE status = 'completed' ${dateFilter} ${EXCL_STAFF_FRAG}
-      `),
       queryMainRows<{ count: string }[]>(`
         SELECT COUNT(DISTINCT user_id)::text AS count
         FROM ledger_transactions
@@ -287,6 +247,8 @@ async function computeAnalyticsData(
           date: Date | string;
           pack_wager: string;
           battle_wager: string;
+          pack_wager_borrowed: string;
+          battle_wager_borrowed: string;
           unique_visitors: string;
           median_deposit: string;
           median_bet: string;
@@ -312,6 +274,16 @@ async function computeAnalyticsData(
           COALESCE(SUM(CASE
             WHEN type::text IN ('battle_bet', 'battle_sponsorship')
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
+          -- Borrow-funded wager. These two columns used to be a SEPARATE
+          -- period-total scan of this exact table with this exact WHERE; the
+          -- per-day sums add up to the same totals, so the headline figures
+          -- are now summed from these rows in JS and the extra scan is gone.
+          COALESCE(SUM(CASE
+            WHEN type::text = 'pack_opening' AND description ILIKE '%borrow%'
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager_borrowed,
+          COALESCE(SUM(CASE
+            WHEN type::text = 'battle_bet' AND description ILIKE '%borrow%'
+            THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager_borrowed,
           COUNT(DISTINCT user_id)::text AS unique_visitors,
           COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
             CASE WHEN type::text = 'deposit'
@@ -369,81 +341,30 @@ async function computeAnalyticsData(
         GROUP BY DATE(created_at)
         ORDER BY date
       `),
-      queryMainRows<{ mode: string; count: string }[]>(`
-        SELECT mode::text AS mode, COUNT(*)::text AS count
-        FROM battles
-        ${battleDateWhere}
-        GROUP BY mode
-        ORDER BY COUNT(*) DESC
-      `),
-      queryMainRows<{ setting: string; count: string }[]>(`
-        SELECT setting, COUNT(*)::text AS count
-        FROM battles, UNNEST(additional_settings) AS setting
-        ${battleDateWhere}
-        GROUP BY setting
-        ORDER BY COUNT(*) DESC
-      `),
-      queryMainRows<
-        {
-          total_battles: string;
-          borrow_count: string;
-          sponsored_count: string;
-          private_count: string;
-        }[]
-      >(`
-        SELECT
-          COUNT(*)::text AS total_battles,
-          COUNT(*) FILTER (WHERE borrow_percentage > 0)::text AS borrow_count,
-          COUNT(*) FILTER (WHERE sponsorship_percentage > 0)::text AS sponsored_count,
-          COUNT(*) FILTER (WHERE password IS NOT NULL)::text AS private_count
-        FROM battles
-        ${battleDateWhere}
-      `),
-      queryMainRows<{ teams: number; players_per_team: number; count: string }[]>(`
-        SELECT teams, players_per_team, COUNT(*)::text AS count
-        FROM battles
-        ${battleDateWhere}
-        GROUP BY teams, players_per_team
-        ORDER BY COUNT(*) DESC
-      `),
-      queryMainRows<{ id: string; name: string; count: string }[]>(`
-        SELECT p.id::text AS id, p.name AS name, COUNT(*)::text AS count
-        FROM battles b
-        CROSS JOIN LATERAL UNNEST(b.pack_ids::uuid[]) AS pid
-        JOIN packs p ON p.id = pid
-        ${battleDateWhereAliased}
-        GROUP BY p.id, p.name
-        ORDER BY COUNT(*) DESC
-        LIMIT 10
-      `),
-      queryMainRows<
-        {
-          id: string;
-          name: string;
-          opens_total: string;
-          opens_borrowed: string;
-        }[]
-      >(`
-        SELECT
-          p.id::text AS id,
-          p.name AS name,
-          COUNT(*)::text AS opens_total,
-          COUNT(*) FILTER (WHERE lt.description ILIKE '%borrow%')::text AS opens_borrowed
-        FROM ledger_transactions lt
-        JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
-        JOIN packs p ON gs.game_id = p.id
-        WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
-          AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})
-        GROUP BY p.id, p.name
-        ORDER BY COUNT(*) DESC
-        LIMIT 20
-      `),
       // Realized P&L is period-independent (balance-sheet snapshot). Uses the
       // shared helper so the number matches the Dashboard page exactly.
       getRealizedPnlSnapshot(),
     ]);
 
-  const agg = aggregates[0];
+  // Period wager totals, summed from the per-day rows above. Identical to the
+  // dedicated period-total aggregate this replaces: same table, same WHERE,
+  // same CASE expressions — SUM over the day buckets is SUM over all matching
+  // rows. Saves one full ledger scan per Overview render.
+  const wagerTotals = dailyTx.reduce(
+    (acc, d) => ({
+      packWager: acc.packWager + toNumber(d.pack_wager),
+      battleWager: acc.battleWager + toNumber(d.battle_wager),
+      packWagerBorrowed: acc.packWagerBorrowed + toNumber(d.pack_wager_borrowed),
+      battleWagerBorrowed:
+        acc.battleWagerBorrowed + toNumber(d.battle_wager_borrowed),
+    }),
+    {
+      packWager: 0,
+      battleWager: 0,
+      packWagerBorrowed: 0,
+      battleWagerBorrowed: 0,
+    },
+  );
 
   // Canonical GGR/NGR (M1/M2/M4): the daily series comes straight from
   // `@/lib/metrics` (inventory-delta gaming payout, card conversions
@@ -578,64 +499,16 @@ async function computeAnalyticsData(
     },
     uniqueVisitors: Number(visitors[0]?.count ?? 0),
     newSignups: signups,
-    packWager: toNumber(agg?.pack_wager),
-    battleWager: toNumber(agg?.battle_wager),
+    packWager: wagerTotals.packWager,
+    battleWager: wagerTotals.battleWager,
     // Upgrader volume from the upgrader-native `upgrader_games` table (the
     // canonical source) — NOT ledger `upgrader_bet`. Prod does not write
     // upgrader rows to the ledger, so the ledger figure would be 0/wrong
     // and must never feed GGR. `null` on the pre-upgrader snapshot (no
     // `upgrader_games` table) → 0.
     upgraderWager: upgrader?.wager ?? 0,
-    packWagerBorrowed: toNumber(agg?.pack_wager_borrowed),
-    battleWagerBorrowed: toNumber(agg?.battle_wager_borrowed),
-    battleStats: {
-      totalBattles: Number(battleFlags[0]?.total_battles ?? 0),
-      byMode: battleModeRows.map((r) => ({ mode: r.mode, count: Number(r.count) })),
-      bySetting: battleSettingRows.map((r) => ({
-        setting: r.setting,
-        count: Number(r.count),
-      })),
-      byFormat: battleFormatRows.map((r) => ({
-        format:
-          r.teams === 2 && r.players_per_team === 1
-            ? "1v1"
-            : Array(Number(r.teams))
-                .fill(String(Number(r.players_per_team)))
-                .join("v"),
-        count: Number(r.count),
-      })),
-      borrowCount: Number(battleFlags[0]?.borrow_count ?? 0),
-      sponsoredCount: Number(battleFlags[0]?.sponsored_count ?? 0),
-      privateCount: Number(battleFlags[0]?.private_count ?? 0),
-      topBattlePacks: topBattlePackRows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        count: Number(r.count),
-      })),
-    },
-    packStats: {
-      topPacks: topPacksRows.map((r) => {
-        const total = Number(r.opens_total);
-        const borrowed = Number(r.opens_borrowed);
-        return {
-          id: r.id,
-          name: r.name,
-          opensTotal: total,
-          opensBorrowed: borrowed,
-          opensNormal: total - borrowed,
-        };
-      }),
-      topBorrowedPacks: [...topPacksRows]
-        .map((r) => ({
-          id: r.id,
-          name: r.name,
-          opensBorrowed: Number(r.opens_borrowed),
-          opensTotal: Number(r.opens_total),
-        }))
-        .filter((p) => p.opensBorrowed > 0)
-        .sort((a, b) => b.opensBorrowed - a.opensBorrowed)
-        .slice(0, 10),
-    },
+    packWagerBorrowed: wagerTotals.packWagerBorrowed,
+    battleWagerBorrowed: wagerTotals.battleWagerBorrowed,
     daily,
   };
 }
@@ -646,10 +519,9 @@ async function computeAnalyticsData(
  * `/analytics` polls via `<AutoRefresh intervalMs={300_000} />`, which
  * fires `router.refresh()` every 5 minutes and re-runs the Overview
  * server component for every viewer. Without a shared cache that re-ran
- * the entire ~13-query aggregate bundle (PERCENTILE_CONT medians,
- * multi-day GROUP BY, battle/pack scans, the lifetime realized-P&L
- * snapshot) against the main game DB on every tick. (PRE-FLIGHT audit
- * §6A SEV-1.)
+ * the whole aggregate bundle (PERCENTILE_CONT medians, multi-day GROUP BY,
+ * the lifetime realized-P&L snapshot) against the main game DB on every
+ * tick. (PRE-FLIGHT audit §6A SEV-1.)
  *
  * Same idiom as the `insights-rewards` helpers (see `_cache.ts` /
  * `creator-withdrawals.ts`): two `unstable_cache` layers — 60s for the
@@ -663,15 +535,17 @@ async function computeAnalyticsData(
  * that helper's key type is the insights `InsightsRewardsPeriod`
  * (24h/3d/90d) which doesn't include the analytics `today` window.
  */
+// v3: the payload dropped `battleStats` / `packStats` (never rendered by the
+// Overview). Bumped so a warm v2 entry can't keep serving the larger blob.
 const cachedAnalyticsData = unstable_cache(
   computeAnalyticsData,
-  ["analytics-data-v2"],
+  ["analytics-data-v3"],
   { revalidate: 60, tags: ["analytics"] },
 );
 
 const cachedAnalyticsDataLifetime = unstable_cache(
   computeAnalyticsData,
-  ["analytics-data-lifetime-v2"],
+  ["analytics-data-lifetime-v3"],
   { revalidate: 300, tags: ["analytics"] },
 );
 
@@ -699,22 +573,26 @@ function parseDays(period: Period): number {
 }
 
 /**
- * Slim variant of {@link getAnalyticsData} that runs ONLY the battle-
- * mode + pack-popularity aggregates (6 raws). Used by the
- * `/analytics?tab=packs` page, which previously called the full
- * `getAnalyticsData(period)` bundle (11 raws) purely to populate two
- * sections at the top — wasting an analytics-grade Postgres scan
- * (PERCENTILE_CONT, multi-day GROUP BY, …) on every tab render.
+ * Battle-mode aggregates for the Games → Battles sub-view.
  *
- * Returns only `{ battleStats, packStats }` — the two fields the
- * Pack & Battle tab consumes. Same per-request blacklist filter as
- * `getAnalyticsData` so the numbers stay consistent across pages.
+ * SPLIT from the old combined `getPackAndBattleStats` bundle (2026-08-12).
+ * That bundle ran SIX scans and handed back both `battleStats` and
+ * `packStats`, but the Games tab renders exactly one of the two per view
+ * (`?g=battles` shows battles, `?g=packs` shows packs). Every render was
+ * therefore paying for the half it did not display, and under the
+ * process-wide mirror admission cap (`src/lib/db.ts`) a discarded read costs
+ * the same slot as a rendered one. Same SQL, same scope, same numbers — the
+ * halves are simply fetched separately now.
+ *
+ * NOT collapsed into a single statement: the four `battles` aggregates have
+ * different row multiplicities (`UNNEST(additional_settings)` fans out) and a
+ * `GROUPING SETS` / materialised-CTE rewrite could not be validated with an
+ * `EXPLAIN` here, so the safe fan-out is kept.
  */
-async function computePackAndBattleStats(
+async function computeBattleModeStats(
   period: Period,
   excluded: string[],
-): Promise<{ battleStats: BattleModeStats; packStats: PackPopularityStats }> {
-  const dateFilter = periodToDateFilter(period);
+): Promise<BattleModeStats> {
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   const battleCustomerIds = `(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})`;
   const battleStaffExcl = `user_id IN ${battleCustomerIds}`;
@@ -737,7 +615,6 @@ async function computePackAndBattleStats(
     battleFlags,
     battleFormatRows,
     topBattlePackRows,
-    topPacksRows,
   ] = await Promise.all([
     queryMainRows<{ mode: string; count: string }[]>(`
       SELECT mode::text AS mode, COUNT(*)::text AS count
@@ -784,105 +661,138 @@ async function computePackAndBattleStats(
       ORDER BY COUNT(*) DESC
       LIMIT 10
     `),
-    queryMainRows<{
-      id: string;
-      name: string;
-      opens_total: string;
-      opens_borrowed: string;
-    }[]>(`
-      SELECT
-        p.id::text AS id,
-        p.name AS name,
-        COUNT(*)::text AS opens_total,
-        COUNT(*) FILTER (WHERE lt.description ILIKE '%borrow%')::text AS opens_borrowed
-      FROM ledger_transactions lt
-      JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
-      JOIN packs p ON gs.game_id = p.id
-      WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
-        AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})
-      GROUP BY p.id, p.name
-      ORDER BY COUNT(*) DESC
-      LIMIT 20
-    `),
   ]);
 
   return {
-    battleStats: {
-      totalBattles: Number(battleFlags[0]?.total_battles ?? 0),
-      byMode: battleModeRows.map((r) => ({ mode: r.mode, count: Number(r.count) })),
-      bySetting: battleSettingRows.map((r) => ({
-        setting: r.setting,
-        count: Number(r.count),
-      })),
-      byFormat: battleFormatRows.map((r) => ({
-        format:
-          r.teams === 2 && r.players_per_team === 1
-            ? "1v1"
-            : Array(Number(r.teams))
-                .fill(String(Number(r.players_per_team)))
-                .join("v"),
-        count: Number(r.count),
-      })),
-      borrowCount: Number(battleFlags[0]?.borrow_count ?? 0),
-      sponsoredCount: Number(battleFlags[0]?.sponsored_count ?? 0),
-      privateCount: Number(battleFlags[0]?.private_count ?? 0),
-      topBattlePacks: topBattlePackRows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        count: Number(r.count),
-      })),
-    },
-    packStats: {
-      topPacks: topPacksRows.map((r) => {
-        const total = Number(r.opens_total);
-        const borrowed = Number(r.opens_borrowed);
-        return {
-          id: r.id,
-          name: r.name,
-          opensTotal: total,
-          opensBorrowed: borrowed,
-          opensNormal: total - borrowed,
-        };
-      }),
-      topBorrowedPacks: [...topPacksRows]
-        .map((r) => ({
-          id: r.id,
-          name: r.name,
-          opensBorrowed: Number(r.opens_borrowed),
-          opensTotal: Number(r.opens_total),
-        }))
-        .filter((p) => p.opensBorrowed > 0)
-        .sort((a, b) => b.opensBorrowed - a.opensBorrowed)
-        .slice(0, 10),
-    },
+    totalBattles: Number(battleFlags[0]?.total_battles ?? 0),
+    byMode: battleModeRows.map((r) => ({ mode: r.mode, count: Number(r.count) })),
+    bySetting: battleSettingRows.map((r) => ({
+      setting: r.setting,
+      count: Number(r.count),
+    })),
+    byFormat: battleFormatRows.map((r) => ({
+      format:
+        r.teams === 2 && r.players_per_team === 1
+          ? "1v1"
+          : Array(Number(r.teams))
+              .fill(String(Number(r.players_per_team)))
+              .join("v"),
+      count: Number(r.count),
+    })),
+    borrowCount: Number(battleFlags[0]?.borrow_count ?? 0),
+    sponsoredCount: Number(battleFlags[0]?.sponsored_count ?? 0),
+    privateCount: Number(battleFlags[0]?.private_count ?? 0),
+    topBattlePacks: topBattlePackRows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      count: Number(r.count),
+    })),
   };
 }
 
 /**
- * Cross-request cache for the slim {@link getPackAndBattleStats} bundle
- * (6 raws), so the `/analytics?tab=packs` view doesn't re-run the
- * battle-mode / pack-popularity scans on every 5-minute `AutoRefresh`
- * tick. Same 60s/300s + `(period, sortedBlacklist)`-keyed pair as
- * {@link getAnalyticsData}; logic identical to `computePackAndBattleStats`.
+ * Pack-popularity aggregate for the Games → Packs sub-view. ONE scan — the
+ * other half of the old six-scan bundle (see `computeBattleModeStats`).
  */
-const cachedPackAndBattleStats = unstable_cache(
-  computePackAndBattleStats,
-  ["analytics-pack-battle-stats-v2"],
+async function computePackPopularityStats(
+  period: Period,
+  excluded: string[],
+): Promise<PackPopularityStats> {
+  const dateFilter = periodToDateFilter(period);
+  const blacklistIdNotIn = blacklistNotInClause("id", excluded);
+
+  const topPacksRows = await queryMainRows<{
+    id: string;
+    name: string;
+    opens_total: string;
+    opens_borrowed: string;
+  }[]>(`
+    SELECT
+      p.id::text AS id,
+      p.name AS name,
+      COUNT(*)::text AS opens_total,
+      COUNT(*) FILTER (WHERE lt.description ILIKE '%borrow%')::text AS opens_borrowed
+    FROM ledger_transactions lt
+    JOIN game_sessions gs ON lt.game_session_id = gs.id AND gs.game_type = 'pack'
+    JOIN packs p ON gs.game_id = p.id
+    WHERE lt.type::text = 'pack_opening' AND lt.status = 'completed' ${dateFilter.replace(/created_at/g, "lt.created_at")}
+      AND lt.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})
+    GROUP BY p.id, p.name
+    ORDER BY COUNT(*) DESC
+    LIMIT 20
+  `);
+
+  return {
+    topPacks: topPacksRows.map((r) => {
+      const total = Number(r.opens_total);
+      const borrowed = Number(r.opens_borrowed);
+      return {
+        id: r.id,
+        name: r.name,
+        opensTotal: total,
+        opensBorrowed: borrowed,
+        opensNormal: total - borrowed,
+      };
+    }),
+    topBorrowedPacks: [...topPacksRows]
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        opensBorrowed: Number(r.opens_borrowed),
+        opensTotal: Number(r.opens_total),
+      }))
+      .filter((p) => p.opensBorrowed > 0)
+      .sort((a, b) => b.opensBorrowed - a.opensBorrowed)
+      .slice(0, 10),
+  };
+}
+
+/**
+ * Cross-request caches, one pair per half, so the `/analytics?tab=games`
+ * sub-views don't re-run their scans on every 5-minute `AutoRefresh` tick.
+ * Same 60s/300s + `(period, sortedBlacklist)` keying as {@link getAnalyticsData};
+ * logic identical to the compute functions above.
+ */
+const cachedBattleModeStats = unstable_cache(
+  computeBattleModeStats,
+  ["analytics-battle-mode-stats-v1"],
   { revalidate: 60, tags: ["analytics"] },
 );
 
-const cachedPackAndBattleStatsLifetime = unstable_cache(
-  computePackAndBattleStats,
-  ["analytics-pack-battle-stats-lifetime-v2"],
+const cachedBattleModeStatsLifetime = unstable_cache(
+  computeBattleModeStats,
+  ["analytics-battle-mode-stats-lifetime-v1"],
   { revalidate: 300, tags: ["analytics"] },
 );
 
-export async function getPackAndBattleStats(
+const cachedPackPopularityStats = unstable_cache(
+  computePackPopularityStats,
+  ["analytics-pack-popularity-stats-v1"],
+  { revalidate: 60, tags: ["analytics"] },
+);
+
+const cachedPackPopularityStatsLifetime = unstable_cache(
+  computePackPopularityStats,
+  ["analytics-pack-popularity-stats-lifetime-v1"],
+  { revalidate: 300, tags: ["analytics"] },
+);
+
+export async function getBattleModeStats(
   period: Period,
-): Promise<{ battleStats: BattleModeStats; packStats: PackPopularityStats }> {
+): Promise<BattleModeStats> {
   const blacklist = await getExcludedUserIds();
   const sorted = [...blacklist].sort();
   return period === "all"
-    ? cachedPackAndBattleStatsLifetime(period, sorted)
-    : cachedPackAndBattleStats(period, sorted);
+    ? cachedBattleModeStatsLifetime(period, sorted)
+    : cachedBattleModeStats(period, sorted);
+}
+
+export async function getPackPopularityStats(
+  period: Period,
+): Promise<PackPopularityStats> {
+  const blacklist = await getExcludedUserIds();
+  const sorted = [...blacklist].sort();
+  return period === "all"
+    ? cachedPackPopularityStatsLifetime(period, sorted)
+    : cachedPackPopularityStats(period, sorted);
 }

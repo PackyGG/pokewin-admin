@@ -4,8 +4,9 @@ import { notFound } from "next/navigation";
 import { Clock, ListOrdered, Settings2, Ticket, Trophy, Users, Wallet } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
-import { safeQuery } from "@/lib/errors/safe-query";
+import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
 import { FadeIn } from "@/components/fade-in";
+import { InlineError } from "@/components/entity-surface/inline-error";
 import {
   KpiTile,
   PageHero,
@@ -67,8 +68,25 @@ export default async function ChatRaffleRoundPage({
 }
 
 async function RoundDetail({ id }: { id: string }) {
-  const round = await getChatRaffleRound(id);
-  if (!round) notFound();
+  // Guarded like the other detail routes: an unwrapped throw here escaped the
+  // page's <Suspense> (Suspense catches suspension, not errors) and took the
+  // whole route to the segment error boundary, and a transient failure was
+  // indistinguishable from a genuinely missing round. Only a clean `null` is a
+  // Not Found now.
+  const { data: round, error } = await safeQueryOrNull(
+    () => getChatRaffleRound(id),
+    "chat-raffle.round",
+    DETAIL_TIMEOUT_MS,
+  );
+  if (!round) {
+    if (!error) notFound();
+    return (
+      <InlineError
+        title="Round lookup is temporarily unavailable"
+        hint="The database did not return this round in time. Retry the page — this is not a Not Found result."
+      />
+    );
+  }
 
   const [entries, adjustments] = await Promise.all([
     safeQuery(

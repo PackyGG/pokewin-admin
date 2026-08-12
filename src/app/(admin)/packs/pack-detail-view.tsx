@@ -37,11 +37,7 @@ import { PackStatsSection } from "./[id]/revenue-chart";
 import { PackCardsView, GamesTable } from "./[id]/pack-tabs";
 import { TogglePackButton } from "./[id]/toggle-pack-button";
 import { DeletePackButton } from "./[id]/delete-pack-button";
-import {
-  fetchPackDetailCore,
-  fetchPackListSeed,
-  type PackFullDetail,
-} from "./actions";
+import { fetchPackDetailCore, type PackFullDetail } from "./actions";
 import {
   invalidatePackDetailCache,
   loadPackGamesPage,
@@ -55,26 +51,6 @@ type DetailState =
   | { status: "error" };
 
 type ContentTab = "cards" | "games";
-
-type HeaderSeed = {
-  id: string;
-  name: string;
-  slug: string;
-  imageUrl: string | null;
-  active: boolean;
-  priceUsd: number;
-};
-
-function seedFromPayload(payload: PackFullDetail): HeaderSeed {
-  return {
-    id: payload.detail.id,
-    name: payload.detail.name,
-    slug: payload.detail.slug,
-    imageUrl: payload.detail.imageUrl,
-    active: payload.detail.active,
-    priceUsd: payload.detail.priceUsd,
-  };
-}
 
 export function PackDetailView({
   packId,
@@ -93,9 +69,6 @@ export function PackDetailView({
   initialPayload?: PackFullDetail | null;
 }) {
   const router = useRouter();
-  const [headerSeed, setHeaderSeed] = React.useState<HeaderSeed | null>(
-    initialPayload ? seedFromPayload(initialPayload) : null,
-  );
   const [state, setState] = React.useState<DetailState>(
     initialPayload
       ? { status: "ready", payload: initialPayload }
@@ -126,14 +99,6 @@ export function PackDetailView({
             setState({ status: "notfound" });
             return;
           }
-          setHeaderSeed({
-            id: detail.id,
-            name: detail.name,
-            slug: detail.slug,
-            imageUrl: detail.imageUrl,
-            active: detail.active,
-            priceUsd: detail.priceUsd,
-          });
           setState({ status: "ready", payload: { detail, stats: null } });
         })
         .catch(() => {
@@ -151,47 +116,27 @@ export function PackDetailView({
     // Server-prefetched payload (incl. after a pack→pack navigation that
     // re-runs the server page): paint it directly, skip the client fetch.
     if (initialPayload) {
-      setHeaderSeed(seedFromPayload(initialPayload));
       setState({ status: "ready", payload: initialPayload });
       return;
     }
     return load(false);
   }, [packId, load, initialPayload]);
 
-  // Seed the header identity from the lightweight list-seed lookup while the
-  // heavy detail streams in — but ONLY while there's no already-seeded header
-  // (and no resolved detail, which sets the seed via `load()`). The effect
-  // re-runs only when `packId` or `headerSeed` changes, so once a seed exists
-  // the `if (headerSeed) return` guard blocks any refetch; there's no
-  // string-name sentinel that could leak "Loading…" into the hero title — while
-  // the name is unknown the title renders a <Skeleton>.
-  React.useEffect(() => {
-    if (headerSeed) return;
-    let cancelled = false;
-    fetchPackListSeed(packId)
-      .then((s) => {
-        if (cancelled || !s) return;
-        setHeaderSeed({
-          id: s.id,
-          name: s.name,
-          slug: s.slug,
-          imageUrl: s.imageUrl,
-          active: s.active,
-          priceUsd: s.priceUsd,
-        });
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [packId, headerSeed]);
-
+  // NOTE: there is deliberately no second "header seed" lookup here. This view
+  // is mounted only by /packs/[id], where `initialPayload` is always null, so a
+  // seed fetch ran on EVERY pack open — concurrently with `fetchPackDetailCore`
+  // and returning a strict SUBSET of the same row (id/name/slug/image/active/
+  // price). Under the process-wide mirror admission cap total reads per render
+  // is what costs, and that one was pure duplication; worse, it was the only
+  // read in this surface issued against the PRIMARY MAIN pool (max 3,
+  // shared with every mutation flow) instead of the read mirror. Removed: the
+  // hero identity now comes from the single core-detail read, and the loading
+  // state below is rendered honestly while it is in flight.
   const detail = state.status === "ready" ? state.payload.detail : null;
 
-  const resolvedName = detail?.name ?? headerSeed?.name ?? null;
-  const title = resolvedName ?? "Pack";
-  const imageUrl = detail?.imageUrl ?? headerSeed?.imageUrl ?? null;
-  const active = detail?.active ?? headerSeed?.active ?? false;
+  const title = detail?.name ?? "Pack";
+  const imageUrl = detail?.imageUrl ?? null;
+  const active = detail?.active ?? false;
   const packType = detail?.packType ?? null;
   const loading = state.status === "loading";
 
@@ -287,16 +232,24 @@ export function PackDetailView({
           </div>
           <div className="min-w-0 flex-1 pt-0.5">
             <div className="flex flex-wrap items-center gap-1.5">
-              <Badge
-                variant="outline"
-                className={
-                  active
-                    ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                    : "border-zinc-500/30 bg-zinc-500/15 text-zinc-600 dark:text-zinc-400"
-                }
-              >
-                {active ? "Active" : "Inactive"}
-              </Badge>
+              {/* While the detail read is in flight the availability state is
+                  unknown — render a placeholder rather than defaulting the
+                  badge to "Inactive", which reads as a real (and wrong) state
+                  for every pack that is in fact active. */}
+              {loading ? (
+                <Skeleton className="h-5 w-16 rounded-full" />
+              ) : (
+                <Badge
+                  variant="outline"
+                  className={
+                    active
+                      ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                      : "border-zinc-500/30 bg-zinc-500/15 text-zinc-600 dark:text-zinc-400"
+                  }
+                >
+                  {active ? "Active" : "Inactive"}
+                </Badge>
+              )}
               {packType ? (
                 <Badge variant="outline" className="capitalize">
                   {packType}

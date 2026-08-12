@@ -776,6 +776,15 @@ export async function getCostBreakdown(
   // by adding the live creator-id list to the drop set.
   const dropUserIds = [...excluded, ...creatorIds];
 
+  // The per-type reward + residual sums (`sumLedgerTypesGrouped`) used to be
+  // awaited AFTER this batch resolved, even though it depends on nothing in it
+  // — only on `window`. That put one more heavy ledger scan in series behind
+  // the slowest leg here. It now runs in the same batch; the values it feeds
+  // (`groupedLedgerSums`) are consumed further down exactly as before.
+  const rewardTypesExclRain = REWARD_PAYOUT_TYPES.filter(
+    (t) => t !== "rain_win",
+  );
+
   const [
     metrics,
     organicStake,
@@ -785,6 +794,7 @@ export async function getCostBreakdown(
     contributors,
     countedAdjustments,
     statsExcludedAdjSum,
+    groupedLedgerSums,
   ] = await Promise.all([
     getWindowMetrics({ window }),
     period === "all" ? Promise.resolve(null) : getCanonicalMoneyKpis(cutoff),
@@ -797,6 +807,10 @@ export async function getCostBreakdown(
     // Σ |amount| in the same scope — subtracted from the residual
     // admin-adjustment line below so they never surface as a residual cost.
     sumStatsExcludedAdjustments({ window }),
+    sumLedgerTypesGrouped({
+      types: [...rewardTypesExclRain, ...RESIDUAL_TYPES],
+      window,
+    }),
   ]);
 
   const totalWager = metrics.wager;
@@ -838,13 +852,6 @@ export async function getCostBreakdown(
   // are DISJOINT (the `ledger-sets.ts` partition guarantees it), so one
   // grouped scan over their union resolves both; a type with no rows reads
   // back as 0 exactly like the per-type `COALESCE(...,0)`.
-  const rewardTypesExclRain = REWARD_PAYOUT_TYPES.filter(
-    (t) => t !== "rain_win",
-  );
-  const groupedLedgerSums = await sumLedgerTypesGrouped({
-    types: [...rewardTypesExclRain, ...RESIDUAL_TYPES],
-    window,
-  });
   const rewardSums = rewardTypesExclRain.map((type) => ({
     type,
     total: groupedLedgerSums.get(type) ?? 0,

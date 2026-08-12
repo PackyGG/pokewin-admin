@@ -315,39 +315,113 @@ async function resolveCohort(
 // ─── Signal queries (each best-effort, all server-side) ───────────────────
 
 /**
- * Run a grouped signal query, mapping each shared value → the cohort users
- * that share it. Best-effort: a throw degrades the signal to empty and records
- * a gap (the tab still renders). `mask` redacts the grouping value for the
- * client; the raw value never escapes this function.
+ * One row of a MERGED signal query: which signal produced it, the raw
+ * grouping value (redacted before it leaves this module), an optional second
+ * grouping component, and the cohort user-ids sharing it.
  */
-async function runSignal(
-  run: () => Promise<{ value: string; userIds: string[] }[]>,
-  kind: AltSignalKind,
-  strength: "hard" | "soft",
-  mask: (value: string) => string,
-  gaps: AltDataGap[],
-  gapReason: string,
-): Promise<SignalGroup[]> {
+type MergedSignalRow = {
+  kind: string;
+  value: string | null;
+  aux: string | null;
+  ids: string[];
+};
+
+/** Signal kinds that describe a shared VALUE (i.e. produce cluster edges). */
+type EdgeSignalKind = Exclude<AltSignalKind, "platform_alt_flag">;
+
+/**
+ * Presentation for each edge signal — the strength weighting the scorer uses
+ * and the redaction applied before the value can reach the client. Lifted out
+ * of the individual query call sites unchanged when those queries were merged;
+ * the mask functions and strengths are byte-for-byte the previous ones.
+ */
+const SIGNAL_PRESENTATION: Record<
+  EdgeSignalKind,
+  { strength: "hard" | "soft"; mask: (value: string, aux: string | null) => string }
+> = {
+  shared_ip: { strength: "hard", mask: (v) => maskIp(v) },
+  shared_subnet: { strength: "soft", mask: (v) => maskSubnet(v) },
+  // Device id is itself an opaque token, but we still redact it to a short
+  // prefix so the full fingerprint never reaches the client.
+  shared_device: { strength: "hard", mask: (v) => `device ${v.slice(0, 8)}…` },
+  reused_wallet: { strength: "hard", mask: (v) => maskWallet(v) },
+  synchronized_deposit: { strength: "hard", mask: (v) => `same second · ${v}` },
+  identical_deposit: {
+    strength: "soft",
+    mask: (v, aux) => `${trimAmount(v)} ${(aux ?? "").toUpperCase()}`,
+  },
+};
+
+/** Per-signal degraded-coverage copy (unchanged from the split queries). */
+const SIGNAL_GAP_REASON: Record<AltSignalKind, string> = {
+  shared_ip: "Identity-event IP correlation failed to load on this database.",
+  shared_subnet: "Subnet correlation failed to load on this database.",
+  shared_device: "Device-fingerprint correlation failed to load.",
+  reused_wallet: "Deposit-wallet correlation failed to load.",
+  synchronized_deposit: "Deposit-timing correlation failed to load.",
+  identical_deposit: "Identical-deposit correlation failed to load.",
+  platform_alt_flag: "Platform suspected-alt flag failed to load.",
+};
+
+/**
+ * Stable emit order for the signal groups, matching the order the six
+ * separate queries used to be concatenated in. Kept explicit because the
+ * merged queries return interleaved kinds and `clusterSignals` relies on a
+ * deterministic input order for its (stable) tie-break sort.
+ */
+const SIGNAL_EMIT_ORDER: readonly EdgeSignalKind[] = [
+  "shared_ip",
+  "shared_subnet",
+  "shared_device",
+  "reused_wallet",
+  "synchronized_deposit",
+  "identical_deposit",
+];
+
+function gapsFor(kinds: readonly AltSignalKind[]): AltDataGap[] {
+  return kinds.map((kind) => ({
+    kind,
+    label: SIGNAL_LABEL[kind],
+    reason: SIGNAL_GAP_REASON[kind],
+  }));
+}
+
+/**
+ * Run ONE merged signal query covering several signal kinds, mapping each
+ * shared value → the cohort users that share it. Best-effort: a throw
+ * degrades every kind the query covers to empty and records their gaps (the
+ * tab still renders). The raw grouping value never escapes this function.
+ */
+async function runMergedSignals(
+  run: () => Promise<MergedSignalRow[]>,
+  kinds: readonly EdgeSignalKind[],
+): Promise<{ groups: SignalGroup[]; gaps: AltDataGap[] }> {
   try {
     const rows = await run();
-    return rows
-      .filter((r) => r.userIds.length >= 2)
-      .map((r) => ({
+    const groups: SignalGroup[] = [];
+    for (const row of rows) {
+      const kind = row.kind as EdgeSignalKind;
+      const presentation = SIGNAL_PRESENTATION[kind];
+      if (!presentation || row.value == null) continue;
+      const ids = row.ids ?? [];
+      if (ids.length < 2) continue;
+      groups.push({
         kind,
-        detail: mask(r.value),
-        userIds: r.userIds,
-        strength,
-      }));
+        detail: presentation.mask(row.value, row.aux),
+        userIds: ids,
+        strength: presentation.strength,
+      });
+    }
+    return { groups, gaps: [] };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     // 42P01 = undefined_table (a signal's backing table is absent on this
     // snapshot). Anything else = a real read failure; both degrade the same
-    // way (signal dropped, gap reported) so the tab never blanks.
+    // way (signals dropped, gaps reported) so the tab never blanks.
     console.error(
-      `[creator-hub.alt-accounts] signal '${kind}' degraded, continuing without it: ${msg}`,
+      `[creator-hub.alt-accounts] signals '${kinds.join(", ")}' degraded, continuing without them: ${msg}`,
     );
-    gaps.push({ kind, label: SIGNAL_LABEL[kind], reason: gapReason });
-    return [];
+    return { groups: [], gaps: gapsFor(kinds) };
   }
 }
 
@@ -355,6 +429,31 @@ async function runSignal(
  * Compute every signal group for a resolved cohort. Returns the groups plus
  * the set of cohort users the PLATFORM flagged as suspected alts, plus any
  * data gaps encountered.
+ *
+ * ─── WHY THIS IS THREE QUERIES AND NOT EIGHT ─────────────────────────
+ *
+ * The six edge signals plus the platform flag used to be seven SEQUENTIAL
+ * round-trips behind a separate `to_regclass` probe. Three of them
+ * (`reused_wallet`, `synchronized_deposit`, `identical_deposit`) scanned the
+ * SAME `ledger_transactions` deposit rows for the same cohort, just grouped
+ * differently; two (`shared_ip`, `shared_subnet`) built the identical
+ * `user_ips` relation twice; two more (`shared_device`, the platform flag)
+ * each scanned `fingerprints` for the same cohort. Every MAIN read takes a
+ * mirror-pool permit and — with mirror clients retired at `maxUses: 1` — a
+ * fresh connection, so the duplication cost eight handshakes and eight
+ * serialized latencies for four distinct scans.
+ *
+ * They are now three merged statements (each duplicated base relation scanned
+ * ONCE and re-grouped via UNION ALL), run in two waves: the probe and the
+ * ledger statement together, then the two fingerprint-dependent statements
+ * together. Never more than two permits at a time. Every predicate, filter and
+ * HAVING threshold is carried over verbatim, so the groups — and therefore the
+ * clusters, scores and collusion flags — are identical.
+ *
+ * Error isolation is coarser by exactly the merge: if the ledger statement
+ * fails, all three deposit signals report a gap instead of one. That is
+ * truthful (they share one scan, so they fail together in practice) and the
+ * tab still renders with `partial: true`.
  */
 async function computeSignals(
   codes: string[],
@@ -364,34 +463,87 @@ async function computeSignals(
   platformAltFlagged: Set<string>;
   gaps: AltDataGap[];
 }> {
-  const gaps: AltDataGap[] = [];
-
+  // ── Wave 1: the fingerprints probe + the deposit-signal statement ──
+  //
+  // The ledger statement does not depend on the probe, so it runs alongside
+  // it rather than behind it.
+  //
   // Probe once whether the `fingerprints` table exists on this DB snapshot —
   // device + fp-IP + platform-alt-flag all depend on it. If absent we record a
   // single clear gap rather than three identical "table missing" errors.
-  let hasFingerprints = false;
-  try {
-    const probe = await queryMainRows<{ exists: boolean }[]>(
-      `SELECT to_regclass('public.fingerprints') IS NOT NULL AS exists`,
-    );
-    hasFingerprints = probe[0]?.exists === true;
-  } catch {
-    hasFingerprints = false;
-  }
-  if (!hasFingerprints) {
-    gaps.push({
-      kind: "fingerprints_table",
-      label: "Device & platform-alt signals",
-      reason:
-        "The `fingerprints` table (device fingerprint, fingerprint-IP, and the platform's own suspected-alt flag) is not present on the connected database — verify on production. Shared-device, fingerprint-IP, and platform-alt-flag detection are disabled for now; IP (via login/register events), wallet, deposit-timing, and identical-deposit detection are unaffected.",
-    });
-  }
+  const [hasFingerprints, ledger] = await Promise.all([
+    (async () => {
+      try {
+        const probe = await queryMainRows<{ exists: boolean }[]>(
+          `SELECT to_regclass('public.fingerprints') IS NOT NULL AS exists`,
+        );
+        return probe[0]?.exists === true;
+      } catch {
+        return false;
+      }
+    })(),
+    // ── Signals 4+5+6: reused deposit wallet / synchronized deposits /
+    //    identical deposit amount — ONE scan of the cohort's deposit rows,
+    //    re-grouped three ways. `cohort_deposits` is referenced three times so
+    //    PostgreSQL materialises it, which is exactly the point: one index
+    //    scan instead of three. Each branch keeps its own original filter
+    //    (only the synchronized-deposit leg has ever required
+    //    `status = 'completed'`).
+    runMergedSignals(
+      () =>
+        queryMainRows<MergedSignalRow[]>(
+          `WITH cohort_deposits AS (
+             SELECT lt.user_id,
+                    lt.created_at,
+                    lt.status,
+                    lt.source_address,
+                    lt.crypto_asset,
+                    lt.crypto_amount
+               FROM ledger_transactions lt
+              WHERE lt.user_id = ANY($1::text[])
+                AND lt.type = 'deposit'
+           )
+           SELECT 'reused_wallet'::text AS kind,
+                  source_address::text AS value,
+                  NULL::text AS aux,
+                  array_agg(DISTINCT user_id) AS ids
+             FROM cohort_deposits
+            WHERE source_address IS NOT NULL
+            GROUP BY source_address
+           HAVING COUNT(DISTINCT user_id) >= 2
+           UNION ALL
+           SELECT 'synchronized_deposit'::text,
+                  to_char(date_trunc('second', created_at), 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                  NULL::text,
+                  array_agg(DISTINCT user_id)
+             FROM cohort_deposits
+            WHERE status = 'completed'
+            GROUP BY date_trunc('second', created_at)
+           HAVING COUNT(DISTINCT user_id) >= 2
+           UNION ALL
+           SELECT 'identical_deposit'::text,
+                  round(crypto_amount, 8)::text,
+                  crypto_asset::text,
+                  array_agg(DISTINCT user_id)
+             FROM cohort_deposits
+            WHERE crypto_asset IS NOT NULL
+              AND crypto_amount IS NOT NULL
+              AND crypto_amount > 0
+            GROUP BY crypto_asset, round(crypto_amount, 8)
+           HAVING COUNT(DISTINCT user_id) >= 2`,
+          userIds,
+        ),
+      ["reused_wallet", "synchronized_deposit", "identical_deposit"],
+    ),
+  ]);
 
-  // ── Signal 1+2: shared IP (exact) and shared /24 subnet ──
+  // ── Signals 1+2: shared IP (exact) and shared /24 subnet ──
   // Source A: audit_events.ip on identity events (login/register/session).
   // Source B: fingerprints.ip (login/signup), when present. We UNION both so a
   // user's IP from either source counts. Anonymous audit rows (user_id NULL)
-  // are naturally excluded by the ANY($ids) filter.
+  // are naturally excluded by the ANY($ids) filter. Both groupings read the
+  // SAME `user_ips` relation, so they share one statement (and one scan)
+  // instead of building it twice.
   const ipSelect = hasFingerprints
     ? `WITH user_ips AS (
          SELECT user_id, ip FROM audit_events
@@ -405,193 +557,139 @@ async function computeSignals(
           WHERE user_id = ANY($1::text[]) AND ip IS NOT NULL
        )`;
 
-  const sharedIpGroups = await runSignal(
-    async () => {
-      const rows = await queryMainRows<{ ip: string; ids: string[] }[]>(
-        `${ipSelect}
-         SELECT host(ip)::text AS ip,
-                array_agg(DISTINCT user_id) AS ids
-           FROM user_ips
-          GROUP BY ip
-         HAVING COUNT(DISTINCT user_id) >= 2`,
-        userIds,
-      );
-      return rows.map((r) => ({ value: r.ip, userIds: r.ids }));
-    },
-    "shared_ip",
-    "hard",
-    maskIp,
-    gaps,
-    "Identity-event IP correlation failed to load on this database.",
+  // ── Wave 2: the IP statement + (when the table exists) the fingerprint
+  //    statement, which carries BOTH the shared-device grouping and the
+  //    platform's own suspected-alt flag over one scan.
+  const [ip, fingerprint] = await Promise.all([
+    runMergedSignals(
+      () =>
+        queryMainRows<MergedSignalRow[]>(
+          `${ipSelect}
+           SELECT 'shared_ip'::text AS kind,
+                  host(ip)::text AS value,
+                  NULL::text AS aux,
+                  array_agg(DISTINCT user_id) AS ids
+             FROM user_ips
+            GROUP BY ip
+           HAVING COUNT(DISTINCT user_id) >= 2
+           UNION ALL
+           SELECT 'shared_subnet'::text,
+                  host(network(set_masklen(ip, 24)))::text,
+                  NULL::text,
+                  array_agg(DISTINCT user_id)
+             FROM user_ips
+            WHERE family(ip) = 4
+            GROUP BY network(set_masklen(ip, 24))
+           HAVING COUNT(DISTINCT user_id) >= 2`,
+          userIds,
+        ),
+      ["shared_ip", "shared_subnet"],
+    ),
+    hasFingerprints
+      ? loadFingerprintSignals(userIds)
+      : Promise.resolve({
+          groups: [] as SignalGroup[],
+          flagged: new Set<string>(),
+          gaps: [] as AltDataGap[],
+        }),
+  ]);
+
+  const groups = [...ip.groups, ...fingerprint.groups, ...ledger.groups].sort(
+    (a, b) =>
+      SIGNAL_EMIT_ORDER.indexOf(a.kind as EdgeSignalKind) -
+      SIGNAL_EMIT_ORDER.indexOf(b.kind as EdgeSignalKind),
   );
 
-  const sharedSubnetGroups = await runSignal(
-    async () => {
-      const rows = await queryMainRows<
-        { subnet: string; ids: string[] }[]
-      >(
-        `${ipSelect}
-         SELECT host(network(set_masklen(ip, 24)))::text AS subnet,
-                array_agg(DISTINCT user_id) AS ids
-           FROM user_ips
-          WHERE family(ip) = 4
-          GROUP BY network(set_masklen(ip, 24))
-         HAVING COUNT(DISTINCT user_id) >= 2`,
-        userIds,
-      );
-      return rows.map((r) => ({ value: r.subnet, userIds: r.ids }));
-    },
-    "shared_subnet",
-    "soft",
-    maskSubnet,
-    gaps,
-    "Subnet correlation failed to load on this database.",
+  // Gap order is deterministic: the missing-table notice first (it explains
+  // the others), then the per-signal gaps in the canonical signal order.
+  const gaps: AltDataGap[] = [];
+  if (!hasFingerprints) {
+    gaps.push({
+      kind: "fingerprints_table",
+      label: "Device & platform-alt signals",
+      reason:
+        "The `fingerprints` table (device fingerprint, fingerprint-IP, and the platform's own suspected-alt flag) is not present on the connected database — verify on production. Shared-device, fingerprint-IP, and platform-alt-flag detection are disabled for now; IP (via login/register events), wallet, deposit-timing, and identical-deposit detection are unaffected.",
+    });
+  }
+  const kindRank = (kind: AltDataGap["kind"]) => {
+    const index = SIGNAL_EMIT_ORDER.indexOf(kind as EdgeSignalKind);
+    return index === -1 ? SIGNAL_EMIT_ORDER.length : index;
+  };
+  gaps.push(
+    ...[...ip.gaps, ...fingerprint.gaps, ...ledger.gaps].sort(
+      (a, b) => kindRank(a.kind) - kindRank(b.kind),
+    ),
   );
 
-  // ── Signal 3: shared device (fingerprint visitor_id) ──
-  const sharedDeviceGroups = hasFingerprints
-    ? await runSignal(
-        async () => {
-          const rows = await queryMainRows<
-            { visitor_id: string; ids: string[] }[]
-          >(
-            `SELECT visitor_id, array_agg(DISTINCT user_id) AS ids
-               FROM fingerprints
-              WHERE user_id = ANY($1::text[]) AND visitor_id IS NOT NULL
-              GROUP BY visitor_id
-             HAVING COUNT(DISTINCT user_id) >= 2`,
-            userIds,
-          );
-          // Device id is itself an opaque token, but we still redact it to a
-          // short prefix so the full fingerprint never reaches the client.
-          return rows.map((r) => ({ value: r.visitor_id, userIds: r.ids }));
-        },
-        "shared_device",
-        "hard",
-        (v) => `device ${v.slice(0, 8)}…`,
-        gaps,
-        "Device-fingerprint correlation failed to load.",
-      )
-    : [];
+  return { groups, platformAltFlagged: fingerprint.flagged, gaps };
+}
 
-  // ── Signal 4: reused deposit wallet (on-chain sender address) ──
-  const reusedWalletGroups = await runSignal(
-    async () => {
-      const rows = await queryMainRows<
-        { source_address: string; ids: string[] }[]
-      >(
-        `SELECT source_address, array_agg(DISTINCT user_id) AS ids
-           FROM ledger_transactions
-          WHERE user_id = ANY($1::text[])
-            AND type = 'deposit'
-            AND source_address IS NOT NULL
-          GROUP BY source_address
-         HAVING COUNT(DISTINCT user_id) >= 2`,
-        userIds,
-      );
-      return rows.map((r) => ({ value: r.source_address, userIds: r.ids }));
-    },
-    "reused_wallet",
-    "hard",
-    maskWallet,
-    gaps,
-    "Deposit-wallet correlation failed to load.",
-  );
+/**
+ * Shared-device grouping + the platform's own suspected-alt flag in ONE
+ * statement. Both read `fingerprints` for the same cohort, so they used to
+ * cost two checkouts for one table. The flag branch is a plain aggregate with
+ * no GROUP BY, guarded by `HAVING COUNT(*) > 0` so it contributes no row (and
+ * therefore no all-NULL array) when nothing is flagged.
+ *
+ * The flag is per-USER, not a pairing, so it creates no cluster edges on its
+ * own — it is surfaced as a count and attached as corroborating evidence to
+ * any cluster whose members carry it.
+ */
+async function loadFingerprintSignals(userIds: string[]): Promise<{
+  groups: SignalGroup[];
+  flagged: Set<string>;
+  gaps: AltDataGap[];
+}> {
+  try {
+    const rows = await queryMainRows<MergedSignalRow[]>(
+      `SELECT 'shared_device'::text AS kind,
+              visitor_id::text AS value,
+              NULL::text AS aux,
+              array_agg(DISTINCT user_id) AS ids
+         FROM fingerprints
+        WHERE user_id = ANY($1::text[]) AND visitor_id IS NOT NULL
+        GROUP BY visitor_id
+       HAVING COUNT(DISTINCT user_id) >= 2
+       UNION ALL
+       SELECT 'platform_alt_flag'::text,
+              NULL::text,
+              NULL::text,
+              array_agg(DISTINCT user_id)
+         FROM fingerprints
+        WHERE user_id = ANY($1::text[]) AND suspected_alt_triggered = true
+       HAVING COUNT(*) > 0`,
+      userIds,
+    );
 
-  // ── Signal 5: synchronized deposits (same second) ──
-  const syncDepositGroups = await runSignal(
-    async () => {
-      const rows = await queryMainRows<{ sec: string; ids: string[] }[]>(
-        `SELECT to_char(date_trunc('second', created_at), 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sec,
-                array_agg(DISTINCT user_id) AS ids
-           FROM ledger_transactions
-          WHERE user_id = ANY($1::text[])
-            AND type = 'deposit'
-            AND status = 'completed'
-          GROUP BY date_trunc('second', created_at)
-         HAVING COUNT(DISTINCT user_id) >= 2`,
-        userIds,
-      );
-      return rows.map((r) => ({ value: r.sec, userIds: r.ids }));
-    },
-    "synchronized_deposit",
-    "hard",
-    (v) => `same second · ${v}`,
-    gaps,
-    "Deposit-timing correlation failed to load.",
-  );
-
-  // ── Signal 6: identical deposit amount + same crypto ──
-  const identicalDepositGroups = await runSignal(
-    async () => {
-      const rows = await queryMainRows<
-        { asset: string; amt: string; ids: string[] }[]
-      >(
-        `SELECT crypto_asset AS asset,
-                round(crypto_amount, 8)::text AS amt,
-                array_agg(DISTINCT user_id) AS ids
-           FROM ledger_transactions
-          WHERE user_id = ANY($1::text[])
-            AND type = 'deposit'
-            AND crypto_asset IS NOT NULL
-            AND crypto_amount IS NOT NULL
-            AND crypto_amount > 0
-          GROUP BY crypto_asset, round(crypto_amount, 8)
-         HAVING COUNT(DISTINCT user_id) >= 2`,
-        userIds,
-      );
-      return rows.map((r) => ({
-        value: `${trimAmount(r.amt)} ${r.asset.toUpperCase()}`,
-        userIds: r.ids,
-      }));
-    },
-    "identical_deposit",
-    "soft",
-    (v) => v,
-    gaps,
-    "Identical-deposit correlation failed to load.",
-  );
-
-  // ── Signal 7 (bonus): the platform's own suspected-alt flag ──
-  // This is per-USER, not a pairing, so it doesn't create cluster edges on its
-  // own — it's surfaced as a count + attached as corroborating evidence to any
-  // cluster whose members carry the flag.
-  const platformAltFlagged = new Set<string>();
-  if (hasFingerprints) {
-    try {
-      const rows = await queryMainRows<{ user_id: string }[]>(
-        `SELECT DISTINCT user_id
-           FROM fingerprints
-          WHERE user_id = ANY($1::text[])
-            AND suspected_alt_triggered = true`,
-        userIds,
-      );
-      for (const r of rows) platformAltFlagged.add(r.user_id);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(
-        `[creator-hub.alt-accounts] platform alt-flag read degraded: ${msg}`,
-      );
-      gaps.push({
-        kind: "platform_alt_flag",
-        label: SIGNAL_LABEL.platform_alt_flag,
-        reason: "Platform suspected-alt flag failed to load.",
+    const groups: SignalGroup[] = [];
+    const flagged = new Set<string>();
+    for (const row of rows) {
+      const ids = row.ids ?? [];
+      if (row.kind === "platform_alt_flag") {
+        for (const id of ids) flagged.add(id);
+        continue;
+      }
+      const presentation = SIGNAL_PRESENTATION[row.kind as EdgeSignalKind];
+      if (!presentation || row.value == null || ids.length < 2) continue;
+      groups.push({
+        kind: row.kind as EdgeSignalKind,
+        detail: presentation.mask(row.value, row.aux),
+        userIds: ids,
+        strength: presentation.strength,
       });
     }
+    return { groups, flagged, gaps: [] };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[creator-hub.alt-accounts] fingerprint signals degraded, continuing without them: ${msg}`,
+    );
+    return {
+      groups: [],
+      flagged: new Set<string>(),
+      gaps: gapsFor(["shared_device", "platform_alt_flag"]),
+    };
   }
-
-  return {
-    groups: [
-      ...sharedIpGroups,
-      ...sharedSubnetGroups,
-      ...sharedDeviceGroups,
-      ...reusedWalletGroups,
-      ...syncDepositGroups,
-      ...identicalDepositGroups,
-    ],
-    platformAltFlagged,
-    gaps,
-  };
 }
 
 /** Drop trailing zeros from a fixed-8 decimal string ("0.50000000" → "0.5"). */
