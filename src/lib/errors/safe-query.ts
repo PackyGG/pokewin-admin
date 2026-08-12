@@ -1,3 +1,4 @@
+import { withQueryAbortSignal } from "../query-deadline";
 import { logQueryFailure } from "./logger";
 
 /**
@@ -51,11 +52,11 @@ import { logQueryFailure } from "./logger";
  * to a fallback tile. Pass `timeoutMs` to either wrapper to bound the
  * wait: once it elapses the wrapper resolves to the same fallback shape a
  * throw would (with a `[timeout]`-prefixed error string), and the tile
- * degrades instead of hanging the segment. The underlying DB statement
- * is NOT cancelled (Postgres keeps running it to completion on its own
- * connection) — the timeout only stops US waiting on it; the next cache
- * fill picks up the warmed result. Use {@link withTimeout} directly when
- * you want the race without the surrounding `safeQuery` catch.
+ * degrades instead of hanging the segment. A MAIN read still queued at the
+ * admission limiter is cancelled before it starts; an underlying DB statement
+ * that already began is not cancelled and remains bounded by PostgreSQL's
+ * `statement_timeout`. Use {@link withTimeout} directly when you want the race
+ * without the surrounding `safeQuery` catch.
  */
 /**
  * Discriminates WHY a wrapped query degraded:
@@ -117,19 +118,29 @@ function getSafeErrorMessage(err: unknown): string {
  * {@link QueryTimeoutError} if `timeoutMs` elapses first.
  *
  * The timer is always cleared (success OR failure) so a fast query never
- * leaves a dangling `setTimeout` holding the event loop. NOTE this does
- * not abort the query itself — it only stops the caller awaiting it.
+ * leaves a dangling `setTimeout` holding the event loop. The signal propagated
+ * through async context cancels a MAIN read that is still waiting for an
+ * admission slot. It does not abort a PostgreSQL statement that already began;
+ * the server-side `statement_timeout` remains that statement's backstop.
  */
 export async function withTimeout<T>(
   fn: () => Promise<T>,
   timeoutMs: number,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new QueryTimeoutError(timeoutMs)), timeoutMs);
+    timer = setTimeout(() => {
+      const error = new QueryTimeoutError(timeoutMs);
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
   });
   try {
-    return await Promise.race([fn(), timeout]);
+    return await Promise.race([
+      withQueryAbortSignal(controller.signal, fn),
+      timeout,
+    ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -149,10 +160,18 @@ export async function safeQuery<T>(
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     if (isQueryTimeoutError(err)) {
-      logQueryFailure(context, { engine: "postgres", durationMs, kind: "timeout" }, err);
+      logQueryFailure(
+        context,
+        { engine: "postgres", durationMs, kind: "timeout" },
+        err,
+      );
       return { data: fallback, error: err.message, kind: "timeout" };
     }
-    logQueryFailure(context, { engine: "postgres", durationMs, kind: "error" }, err);
+    logQueryFailure(
+      context,
+      { engine: "postgres", durationMs, kind: "error" },
+      err,
+    );
     const message = getSafeErrorMessage(err);
     return { data: fallback, error: message, kind: "error" };
   }
@@ -182,10 +201,18 @@ export async function safeQueryOrNull<T>(
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     if (isQueryTimeoutError(err)) {
-      logQueryFailure(context, { engine: "postgres", durationMs, kind: "timeout" }, err);
+      logQueryFailure(
+        context,
+        { engine: "postgres", durationMs, kind: "timeout" },
+        err,
+      );
       return { data: null, error: err.message, kind: "timeout" };
     }
-    logQueryFailure(context, { engine: "postgres", durationMs, kind: "error" }, err);
+    logQueryFailure(
+      context,
+      { engine: "postgres", durationMs, kind: "error" },
+      err,
+    );
     const message = getSafeErrorMessage(err);
     return { data: null, error: message, kind: "error" };
   }

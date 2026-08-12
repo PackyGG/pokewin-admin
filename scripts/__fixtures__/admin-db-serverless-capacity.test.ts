@@ -42,6 +42,18 @@ test("serverless Admin pool concurrency is conditional on the transaction pooler
   );
 });
 
+test("the Admin pool and Drizzle client are process-global in production", () => {
+  const source = readFileSync("src/lib/admin-db.ts", "utf8");
+
+  assert.match(source, /globalForAdminDb\.adminPool = adminPool;/);
+  assert.match(source, /globalForAdminDb\.adminDrizzle = adminDrizzle;/);
+  assert.doesNotMatch(
+    source,
+    /NODE_ENV !== "production"[\s\S]{0,180}globalForAdminDb\.adminPool/,
+    "route chunks must share the same Admin pool in production",
+  );
+});
+
 /**
  * PgBouncer does not forward `statement_timeout` or
  * `idle_in_transaction_session_timeout` startup parameters — they must be
@@ -64,7 +76,10 @@ test("Admin session safety limits survive the pooler", () => {
   assert.match(source, /statement_timeout: 30_000/);
   assert.match(source, /idle_in_transaction_session_timeout: 30_000/);
 
-  assert.match(migration, /ALTER DATABASE railway SET statement_timeout = '30s'/);
+  assert.match(
+    migration,
+    /ALTER DATABASE railway SET statement_timeout = '30s'/,
+  );
   assert.match(
     migration,
     /ALTER DATABASE railway SET idle_in_transaction_session_timeout = '30s'/,

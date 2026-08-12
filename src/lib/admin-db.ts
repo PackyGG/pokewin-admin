@@ -86,7 +86,8 @@ export const adminDrizzle: AdminDrizzleDb =
     casing: "snake_case",
   });
 
-if (process.env.NODE_ENV !== "production") {
-  globalForAdminDb.adminPool = adminPool;
-  globalForAdminDb.adminDrizzle = adminDrizzle;
-}
+// Pin in production too. Next route chunking can evaluate this module more
+// than once in one isolate; module-local pools would multiply the configured
+// connection cap and defeat both PgBouncer sizing and the direct-path guard.
+globalForAdminDb.adminPool = adminPool;
+globalForAdminDb.adminDrizzle = adminDrizzle;

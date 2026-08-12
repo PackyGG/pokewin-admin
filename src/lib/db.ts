@@ -191,7 +191,11 @@ type ConnectCallback = (
  * tiles blanked with "timeout exceeded when trying to connect" while the mirror
  * itself was answering in milliseconds.
  */
-export function withReadAdmissionControl(pool: Pool, env: DbEnv): Pool {
+export function withReadAdmissionControl(
+  pool: Pool,
+  env: DbEnv,
+  watchdogMs = READ_PERMIT_WATCHDOG_MS,
+): Pool {
   const key = `main:${env}:read`;
   const permits = MIRROR_POOL_MAX;
   const nativeConnect = pool.connect.bind(pool) as () => Promise<PoolClient>;
@@ -221,9 +225,7 @@ export function withReadAdmissionControl(pool: Pool, env: DbEnv): Pool {
         ...a: unknown[]
       ) => unknown;
       let released = false;
-      const watchdog = setTimeout(returnPermit, READ_PERMIT_WATCHDOG_MS);
-      watchdog.unref?.();
-      client.release = ((...releaseArgs: unknown[]) => {
+      const releaseClient = (...releaseArgs: unknown[]) => {
         if (released) return undefined;
         released = true;
         clearTimeout(watchdog);
@@ -232,7 +234,14 @@ export function withReadAdmissionControl(pool: Pool, env: DbEnv): Pool {
         } finally {
           returnPermit();
         }
-      }) as PoolClient["release"];
+      };
+      // Returning only the permit would let a leaked checkout continue to
+      // occupy a pg-pool slot while admission accepts a replacement. Destroy
+      // the leaked client as part of the same watchdog action so limiter and
+      // pool capacity stay aligned.
+      const watchdog = setTimeout(() => releaseClient(true), watchdogMs);
+      watchdog.unref?.();
+      client.release = releaseClient as PoolClient["release"];
       return client;
     } catch (error) {
       // Never leak the permit when the checkout itself fails.
