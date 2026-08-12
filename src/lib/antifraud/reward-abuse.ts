@@ -20,6 +20,8 @@ export type RainAbuseMetrics = {
   netRainUsd: number;
   deposits30dUsd: number;
   lifetimeDepositsUsd: number;
+  withdrawn30dUsd: number;
+  lifetimeWithdrawnUsd: number;
   lifetimeRainUsd: number;
   lifetimeRainTipsUsd: number;
   wagerUsd: number;
@@ -62,6 +64,8 @@ type CandidateRow = {
   rain_tips_usd: string;
   deposits_30d_usd: string;
   lifetime_deposits_usd: string;
+  withdrawn_30d_usd: string;
+  lifetime_withdrawn_usd: string;
   lifetime_rain_usd: string;
   lifetime_rain_tips_usd: string;
   wager_usd: string;
@@ -157,6 +161,10 @@ async function loadRainCandidates(): Promise<CandidateRow[]> {
       COALESCE(ledger.rain_tips_usd, 0)::text AS rain_tips_usd,
       COALESCE(ledger.deposits_30d_usd, 0)::text AS deposits_30d_usd,
       COALESCE(ledger.lifetime_deposits_usd, 0)::text AS lifetime_deposits_usd,
+      (COALESCE(ledger.manual_withdrawn_30d_usd, 0) + COALESCE(withdrawal.withdrawn_30d_usd, 0))::text
+        AS withdrawn_30d_usd,
+      (COALESCE(balance.total_withdrawn::numeric, 0) + COALESCE(withdrawal.lifetime_withdrawn_usd, 0))::text
+        AS lifetime_withdrawn_usd,
       COALESCE(ledger.lifetime_rain_usd, 0)::text AS lifetime_rain_usd,
       COALESCE(ledger.lifetime_rain_tips_usd, 0)::text AS lifetime_rain_tips_usd,
       COALESCE(ledger.wager_usd, 0)::text AS wager_usd,
@@ -170,6 +178,7 @@ async function loadRainCandidates(): Promise<CandidateRow[]> {
     JOIN "user" AS account ON account.id = activity.user_id
     LEFT JOIN user_feature_locks AS feature_lock
       ON feature_lock.user_id = activity.user_id
+    LEFT JOIN balances AS balance ON balance.user_id = activity.user_id
     JOIN LATERAL (
       SELECT
         count(*) FILTER (
@@ -190,6 +199,14 @@ async function loadRainCandidates(): Promise<CandidateRow[]> {
         ) AS deposits_30d_usd,
         sum(tx.amount::numeric) FILTER (WHERE tx.type::text = 'deposit')
           AS lifetime_deposits_usd,
+        sum(COALESCE(
+          NULLIF(tx.metadata->>'withdrawal_amount_usd', '')::numeric,
+          abs(tx.amount::numeric)
+        )) FILTER (
+          WHERE tx.type::text = 'admin_balance_adjustment'
+            AND tx.description ILIKE 'Manual withdrawal:%'
+            AND tx.created_at >= now() - interval '30 days'
+        ) AS manual_withdrawn_30d_usd,
         sum(tx.amount::numeric) FILTER (WHERE tx.type::text = 'rain_win')
           AS lifetime_rain_usd,
         sum(tx.amount::numeric) FILTER (WHERE tx.type::text = 'rain_tip')
@@ -228,6 +245,16 @@ async function loadRainCandidates(): Promise<CandidateRow[]> {
         AND session.bet_ledger_tx_id IS NOT NULL
         AND session.bet_amount::numeric > 0
     ) AS play ON true
+    LEFT JOIN LATERAL (
+      SELECT
+        sum(request.total_value_usd::numeric) FILTER (
+          WHERE COALESCE(request.shipped_at, request.completed_at) >= now() - interval '30 days'
+        ) AS withdrawn_30d_usd,
+        sum(request.total_value_usd::numeric) AS lifetime_withdrawn_usd
+      FROM card_withdrawal_requests AS request
+      WHERE request.user_id = activity.user_id
+        AND request.status::text IN ('completed', 'shipped')
+    ) AS withdrawal ON true
     LEFT JOIN LATERAL (
       SELECT sum(round(
         (COALESCE(items.value_usd, 0) + COALESCE(vouchers.value_usd, 0))
@@ -281,6 +308,8 @@ function candidateMetrics(row: CandidateRow): RainAbuseMetrics {
     netRainUsd: Math.max(0, Math.round((rainUsd - rainTipsUsd) * 100) / 100),
     deposits30dUsd: money(row.deposits_30d_usd),
     lifetimeDepositsUsd: money(row.lifetime_deposits_usd),
+    withdrawn30dUsd: money(row.withdrawn_30d_usd),
+    lifetimeWithdrawnUsd: money(row.lifetime_withdrawn_usd),
     lifetimeRainUsd: money(row.lifetime_rain_usd),
     lifetimeRainTipsUsd: money(row.lifetime_rain_tips_usd),
     wagerUsd: money(row.wager_usd),

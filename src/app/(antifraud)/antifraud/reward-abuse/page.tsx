@@ -104,6 +104,24 @@ function DepositsMetric({ recent, lifetime, rainRatio }: {
   );
 }
 
+function WithdrawalsMetric({ recent, lifetime }: { recent: number; lifetime: number }) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Withdrawn</p>
+      <div className="mt-2 grid grid-cols-2 divide-x">
+        <div className="pr-3">
+          <p className="text-[10px] text-muted-foreground">30 days</p>
+          <p className="font-semibold tabular-nums">{usd(recent)}</p>
+        </div>
+        <div className="pl-3">
+          <p className="text-[10px] text-muted-foreground">All time</p>
+          <p className="font-semibold tabular-nums">{usd(lifetime)}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReviewCard({ review }: { review: RewardAbuseReview }) {
   const m = review.metrics;
   return (
@@ -119,10 +137,11 @@ function ReviewCard({ review }: { review: RewardAbuseReview }) {
         </div>
         {review.status === "pending" ? <RewardAbuseReviewActions reviewId={review.id} /> : <div className="max-w-md text-sm"><p className="font-medium">{review.reviewReason}</p><p className="text-xs text-muted-foreground">{review.reviewerUsername ?? "Staff"} · {review.reviewedAt ? formatDateTime(review.reviewedAt) : ""}{review.rainLockApplied ? " · Rain disabled" : " · No account change"}</p></div>}
       </div>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
         <Metric label="Rain entries" value={m.entries.toLocaleString()} note={`${m.entryDays} active days`} />
         <Metric label="Net Rain retained" value={usd(m.netRainUsd)} note={`${usd(m.rainUsd)} won · ${usd(m.rainTipsUsd)} tipped`} />
         <DepositsMetric recent={m.deposits30dUsd} lifetime={m.lifetimeDepositsUsd} rainRatio={Math.round((m.deposits30dUsd / Math.max(m.netRainUsd, .01)) * 100)} />
+        <WithdrawalsMetric recent={m.withdrawn30dUsd ?? 0} lifetime={m.lifetimeWithdrawnUsd ?? 0} />
         <Metric label="Real-money play" value={usd(m.wagerUsd)} note={`${m.games} paid game sessions`} />
         <Metric label="Pack pattern" value={`${Math.round(m.packGameRatio * 100)}%`} note={`${m.packGames} pack sessions`} />
         <Metric

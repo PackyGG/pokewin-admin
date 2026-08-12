@@ -52,3 +52,11 @@ test("reward evidence separates received tips from sponsored-battle value", asyn
   assert.match(detector, /inventory\.source_id = participant\.game_session_id/);
   assert.match(detector, /voucher\.origin_id = participant\.game_session_id/);
 });
+
+test("reward evidence includes recent and lifetime completed withdrawals", async () => {
+  const detector = await readFile(detectorPath, "utf8");
+  assert.match(detector, /AS withdrawn_30d_usd/);
+  assert.match(detector, /AS lifetime_withdrawn_usd/);
+  assert.match(detector, /request\.status::text IN \('completed', 'shipped'\)/);
+  assert.match(detector, /balance\.total_withdrawn/);
+});
