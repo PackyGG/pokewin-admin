@@ -2,6 +2,7 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 
+import { adminDrizzle } from "@/lib/admin-db";
 import { getReadDrizzleDb } from "@/lib/db";
 import { enqueueDiscordEvent } from "./router";
 
@@ -18,8 +19,9 @@ import { enqueueDiscordEvent } from "./router";
  * `(guild_id, event_key, dedupe_key, channel_id)` keyed on the webhook digest
  * makes re-scanning the same window a no-op, so no cursor table is needed.
  */
-const LOOKBACK_MINUTES = 45;
-const MAX_PER_TICK = 25;
+const INITIAL_LOOKBACK_DAYS = 30;
+const MAX_PER_TICK = 100;
+const STREAM = "sumsub_started";
 
 type StartedRow = {
   digest: string;
@@ -68,16 +70,12 @@ function startedEmbed(row: StartedRow, url: string) {
       inline: true,
     });
   }
-  if (row.applicant_id) {
-    fields.push({
-      name: "Applicant ID",
-      value: `\`${safeDiscordText(row.applicant_id, 100)}\``,
-      inline: false,
-    });
-  }
+  // Provider applicant ids stay out of Discord. Staff can open the restricted
+  // workspace when provider evidence is required.
   return {
     title: "🪪 Sumsub verification started",
-    description: "The player opened the Sumsub flow and an applicant was created.",
+    description:
+      "The player opened the Sumsub flow and an applicant was created.",
     url,
     color: 0x5865f2,
     fields,
@@ -94,6 +92,18 @@ export async function enqueueSumsubVerificationStarts(): Promise<{
   if (!guildId) return { inspected: 0, queued: 0 };
 
   const db = await getReadDrizzleDb();
+  const cursor = await adminDrizzle.execute<{
+    occurred_at: string;
+    tie_breaker: string;
+  }>(sql`
+    SELECT occurred_at::text, tie_breaker
+    FROM kyc_notification_cursors
+    WHERE stream = ${STREAM}
+  `);
+  const occurredAt =
+    cursor.rows[0]?.occurred_at ??
+    new Date(Date.now() - INITIAL_LOOKBACK_DAYS * 86_400_000).toISOString();
+  const tieBreaker = cursor.rows[0]?.tie_breaker ?? "";
   const started = await db.execute<StartedRow>(sql`
     SELECT
       event.digest,
@@ -109,9 +119,9 @@ export async function enqueueSumsubVerificationStarts(): Promise<{
     LEFT JOIN user_kyc AS kyc
       ON kyc.applicant_id = event.applicant_id
     WHERE event.event_type = 'applicantCreated'
-      AND event.received_at >=
-        (now() AT TIME ZONE 'utc') - (${LOOKBACK_MINUTES}::int * interval '1 minute')
-    ORDER BY event.provider_created_at DESC
+      AND (event.provider_created_at, event.digest) >
+        (${occurredAt}::timestamptz, ${tieBreaker})
+    ORDER BY event.provider_created_at ASC, event.digest ASC
     LIMIT ${MAX_PER_TICK}
   `);
 
@@ -126,13 +136,24 @@ export async function enqueueSumsubVerificationStarts(): Promise<{
       components: [
         {
           type: 1,
-          components: [
-            { type: 2, style: 5, label: "Open KYC workspace", url },
-          ],
+          components: [{ type: 2, style: 5, label: "Open KYC workspace", url }],
         },
       ],
     });
+    if (result.enqueued + result.duplicate === 0) {
+      throw new Error(
+        "Sumsub started notification has no eligible Discord route",
+      );
+    }
     queued += result.enqueued;
+    await adminDrizzle.execute(sql`
+      INSERT INTO kyc_notification_cursors (stream, occurred_at, tie_breaker)
+      VALUES (${STREAM}, ${row.started_at}::timestamptz, ${row.digest})
+      ON CONFLICT (stream) DO UPDATE SET
+        occurred_at = EXCLUDED.occurred_at,
+        tie_breaker = EXCLUDED.tie_breaker,
+        updated_at = now()
+    `);
   }
 
   return { inspected: started.rows.length, queued };

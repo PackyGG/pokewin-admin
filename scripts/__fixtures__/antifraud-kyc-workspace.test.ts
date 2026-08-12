@@ -53,6 +53,14 @@ test("KYC mutations are manager-only and preserve the verification-cycle guard",
   // ADMIN-DB blip must not leave a completed KYC mutation unaudited.
   assert.match(actions, /createAdminAuditEventDurable\(/);
   assert.match(actions, /outcome\.status === "lost"/);
+  // Once the backend command commits, a transient status read must never be
+  // reported as a command failure that invites a second verification cycle.
+  assert.match(actions, /readKycAfterMutation/);
+  assert.match(actions, /data: UserKycStatus \| null/);
+  assert.match(actions, /verificationCycle = required\.verificationCycle/);
+  assert.match(actions, /user_kyc_containment_incomplete/);
+  assert.match(actions, /failedStage: "tips_lock"/);
+  assert.match(actions, /failedStage: "kyc_requirement"/);
 });
 
 test("admins can ban an active KYC account while preserving its history", () => {
@@ -69,7 +77,10 @@ test("admins can ban an active KYC account while preserving its history", () => 
   assert.match(button, /ANTIFRAUD_BAN_REASON_PRESETS/);
   assert.match(banAction, /requireAntifraudManager\(/);
   assert.match(banAction, /requireCapability\(session, "__can_ban_users"/);
-  assert.match(banAction, /require2FA\(session\.userId, parsed\.data\.credential\)/);
+  assert.match(
+    banAction,
+    /require2FA\(session\.userId, parsed\.data\.credential\)/,
+  );
   assert.match(banAction, /blockKnownUserIdentifiers\(/);
   assert.match(banAction, /antifraud_ban_partial_failure/);
   assert.match(banAction, /decision: "rejected"/);
@@ -232,10 +243,7 @@ test("account reviews keep KYC workflow sync outside the simplified queue", () =
   const workflow = source("src/lib/antifraud/review-workflow.ts");
   const ops = source("src/app/api/antifraud/ops/tick/route.ts");
 
-  assert.match(
-    page,
-    /REVIEW_TABS = \["reviews", "postponed", "auto-banned"\]/,
-  );
+  assert.match(page, /REVIEW_TABS = \["reviews", "postponed", "auto-banned"\]/);
   assert.doesNotMatch(page, /"in_review"/);
   assert.match(ops, /syncReviewWorkflowStates\(\)/);
   assert.doesNotMatch(page, /syncReviewWorkflowStates\(\)/);

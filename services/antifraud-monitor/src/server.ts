@@ -101,7 +101,6 @@ import { SumsubClient } from "./sumsub-client.js";
 import { registerSumsubRoutes } from "./sumsub-routes.js";
 import { KycCountryReviewService } from "./kyc-country-reviews.js";
 import { DashboardOpsTick } from "./ops-tick.js";
-import { DiscordAlerts } from "./discord.js";
 import { MaxMindService, registerMaxMindAlertRoute } from "./maxmind.js";
 import {
   bootstrapProviderAccessConfig,
@@ -220,7 +219,6 @@ const live = new LiveBus(config.REDIS_URL, app.log, {
 });
 const scoreWeights = new ScoreWeightStore(db.antifraud);
 const networkRisk = new NetworkRiskService(db, app.log);
-const discordAlerts = new DiscordAlerts(config, app.log);
 const reportProviderAccessIssue = (
   issue: Parameters<typeof sendProviderAccessIssue>[2],
 ) => sendProviderAccessIssue(config, app.log, issue);
@@ -2284,25 +2282,6 @@ await registerSumsubRoutes(
         db.antifraud,
         sumsub,
         () => new Date(),
-        async (review) => {
-          const url = new URL("/kyc", config.ANTIFRAUD_DASHBOARD_URL);
-          url.searchParams.set("user", review.userId);
-          await discordAlerts.sendSumsubReady(
-            `sumsub-ready:${review.applicantId}:${review.providerReviewedAt}`,
-            {
-              title: "Sumsub result ready",
-              description:
-                "A Sumsub result is ready for immediate staff review.",
-              userId: review.userId,
-              severity: review.reviewAnswer === "RED" ? "high" : "medium",
-              outcome: review.reviewAnswer ?? review.reviewStatus ?? "ready",
-              occurredAt: review.providerReviewedAt
-                ? new Date(review.providerReviewedAt)
-                : new Date(),
-              url: url.toString(),
-            },
-          );
-        },
       )
     : undefined,
 );

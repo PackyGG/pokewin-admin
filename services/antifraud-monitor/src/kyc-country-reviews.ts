@@ -279,7 +279,6 @@ export class KycCountryReviewService {
             ? error.message.slice(0, 200)
             : "unknown_error";
         console.error("[kyc-country-review] provider refresh failed", {
-          applicantId: input.applicantId,
           providerStatus:
             error instanceof SumsubRequestError ? error.status : null,
           lastError,

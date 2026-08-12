@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle, BadgeCheck } from "lucide-react";
 import countries from "i18n-iso-countries";
@@ -21,6 +22,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StepUpField } from "@/components/step-up-field";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -76,16 +78,18 @@ export function KycCard({
   data: UserKycStatus | null;
   canManage: boolean;
 }) {
-  const [isPending, startTransition] = useTransition();
+  const router = useRouter();
   const [requireOpen, setRequireOpen] = useState(false);
+  const [reviewDecision, setReviewDecision] = useState<
+    "safe" | "rejected" | null
+  >(null);
   const [localData, setLocalData] = useState<UserKycStatus | null>(data);
 
-  // Re-sync to the prop whenever a fresh value streams in — but never while a
-  // mutation is mid-flight (the action's return value is authoritative then).
+  // Re-sync when a fresh server value streams in. Mutation dialogs replace
+  // localData with their authoritative action response when they complete.
   useEffect(() => {
-    if (isPending) return;
     setLocalData(data);
-  }, [data, isPending]);
+  }, [data]);
 
   if (!localData) {
     return (
@@ -108,26 +112,6 @@ export function KycCard({
 
   const awaitingReview =
     localData.kycRequired && localData.adminDecision === "pending";
-
-  const handleReview = (decision: "safe" | "rejected") => {
-    startTransition(async () => {
-      const result = await reviewKycAction({
-        userId,
-        decision,
-        expectedCycle: localData.verificationCycle,
-      });
-      if (result.success) {
-        setLocalData(result.data);
-        toast.success(
-          decision === "safe"
-            ? "Marked safe — withdrawals re-enabled"
-            : "Marked rejected — user stays locked",
-        );
-      } else {
-        toast.error(result.error);
-      }
-    });
-  };
 
   return (
     <Card>
@@ -205,7 +189,6 @@ export function KycCard({
             <Button
               size="sm"
               variant="outline"
-              disabled={isPending}
               onClick={() => setRequireOpen(true)}
             >
               <BadgeCheck className="mr-1 h-3 w-3" />
@@ -213,20 +196,15 @@ export function KycCard({
             </Button>
             {awaitingReview && (
               <>
-                <Button
-                  size="sm"
-                  disabled={isPending}
-                  onClick={() => handleReview("safe")}
-                >
-                  {isPending ? "Working…" : "Mark safe"}
+                <Button size="sm" onClick={() => setReviewDecision("safe")}>
+                  Mark safe
                 </Button>
                 <Button
                   size="sm"
                   variant="ghost"
-                  disabled={isPending}
-                  onClick={() => handleReview("rejected")}
+                  onClick={() => setReviewDecision("rejected")}
                 >
-                  {isPending ? "Working…" : "Reject"}
+                  Reject
                 </Button>
               </>
             )}
@@ -237,7 +215,22 @@ export function KycCard({
           userId={userId}
           open={requireOpen}
           onOpenChange={setRequireOpen}
-          onDone={setLocalData}
+          onDone={(next) => {
+            if (next) setLocalData(next);
+            else router.refresh();
+          }}
+        />
+        <ReviewKycDialog
+          userId={userId}
+          expectedCycle={localData.verificationCycle}
+          decision={reviewDecision}
+          onOpenChange={(open) => {
+            if (!open) setReviewDecision(null);
+          }}
+          onDone={(next) => {
+            if (next) setLocalData(next);
+            else router.refresh();
+          }}
         />
       </CardContent>
     </Card>
@@ -251,7 +244,7 @@ function country(value: string | null): string {
 function normalizedCountry(value: string | null): string | null {
   const code = value?.trim().toUpperCase();
   if (!code) return null;
-  return code.length === 3 ? countries.alpha3ToAlpha2(code) ?? code : code;
+  return code.length === 3 ? (countries.alpha3ToAlpha2(code) ?? code) : code;
 }
 
 function humanize(value: string): string {
@@ -285,8 +278,8 @@ function SumsubReviewPanel({
   if (!review) {
     return (
       <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
-        Detailed Sumsub identity evidence is temporarily unavailable. The
-        stored provider result above remains authoritative.
+        Detailed Sumsub identity evidence is temporarily unavailable. The stored
+        provider result above remains authoritative.
       </div>
     );
   }
@@ -329,10 +322,7 @@ function SumsubReviewPanel({
           label="Declared country"
           value={country(review.declaredCountry)}
         />
-        <ReviewFact
-          label="Nationality"
-          value={country(review.nationality)}
-        />
+        <ReviewFact label="Nationality" value={country(review.nationality)} />
         <ReviewFact
           label="Country of birth"
           value={country(review.countryOfBirth)}
@@ -344,10 +334,7 @@ function SumsubReviewPanel({
           label="Review status"
           value={review.reviewStatus ? humanize(review.reviewStatus) : "?"}
         />
-        <ReviewFact
-          label="Review answer"
-          value={review.reviewAnswer ?? "?"}
-        />
+        <ReviewFact label="Review answer" value={review.reviewAnswer ?? "?"} />
         <ReviewFact
           label="Reviewed at"
           value={providerDate(review.reviewedAt)}
@@ -375,9 +362,7 @@ function SumsubReviewPanel({
                     ? humanize(document.documentType)
                     : "Verification step"}{" "}
                   ? issuing country {country(document.country)}
-                  {document.reviewAnswer
-                    ? ` ? ${document.reviewAnswer}`
-                    : ""}
+                  {document.reviewAnswer ? ` ? ${document.reviewAnswer}` : ""}
                 </p>
               </div>
             ))}
@@ -389,10 +374,7 @@ function SumsubReviewPanel({
         <div className="text-xs">
           <span className="text-muted-foreground">Provider findings: </span>
           <span className="font-medium">
-            {[
-              review.reviewRejectType,
-              ...review.rejectLabels.map(humanize),
-            ]
+            {[review.reviewRejectType, ...review.rejectLabels.map(humanize)]
               .filter(Boolean)
               .join(" ? ")}
           </span>
@@ -452,16 +434,18 @@ function RequireKycDialog({
   userId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onDone: (next: UserKycStatus) => void;
+  onDone: (next: UserKycStatus | null) => void;
 }) {
   const [reason, setReason] = useState("");
   const [levelName, setLevelName] = useState("");
+  const [credential, setCredential] = useState("");
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     if (open) {
       setReason("");
       setLevelName("");
+      setCredential("");
     }
   }, [open]);
 
@@ -471,11 +455,17 @@ function RequireKycDialog({
       toast.error("Reason must be at least 3 characters");
       return;
     }
+    if (!credential.trim()) {
+      toast.error("2FA or passkey approval is required");
+      return;
+    }
     startTransition(async () => {
       const result = await requireKycAction({
         userId,
         reason: trimmed,
         levelName: levelName.trim() || undefined,
+        credential: credential.trim(),
+        idempotencyKey: crypto.randomUUID(),
       });
       if (result.success) {
         onDone(result.data);
@@ -513,6 +503,13 @@ function RequireKycDialog({
               onChange={(e) => setReason(e.target.value)}
             />
           </div>
+          <StepUpField
+            id="kyc-step-up"
+            value={credential}
+            onChange={setCredential}
+            label="Confirm with 2FA or passkey"
+            disabled={isPending}
+          />
           <div className="space-y-1.5">
             <Label htmlFor="kyc-level" className="text-xs">
               Sumsub level name (optional)
@@ -535,8 +532,97 @@ function RequireKycDialog({
           >
             Cancel
           </Button>
-          <Button size="sm" onClick={handleSubmit} disabled={isPending}>
+          <Button
+            size="sm"
+            onClick={handleSubmit}
+            disabled={isPending || !credential.trim()}
+          >
             {isPending ? "Requiring…" : "Require KYC"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReviewKycDialog({
+  userId,
+  expectedCycle,
+  decision,
+  onOpenChange,
+  onDone,
+}: {
+  userId: string;
+  expectedCycle: number;
+  decision: "safe" | "rejected" | null;
+  onOpenChange: (open: boolean) => void;
+  onDone: (next: UserKycStatus | null) => void;
+}) {
+  const [credential, setCredential] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (decision) setCredential("");
+  }, [decision]);
+
+  const submit = () => {
+    if (!decision || !credential.trim()) return;
+    startTransition(async () => {
+      const result = await reviewKycAction({
+        userId,
+        decision,
+        expectedCycle,
+        credential: credential.trim(),
+        idempotencyKey: crypto.randomUUID(),
+      });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      onDone(result.data);
+      toast.success(
+        decision === "safe"
+          ? "Marked safe — withdrawals re-enabled"
+          : "Marked rejected — user stays locked",
+      );
+      onOpenChange(false);
+    });
+  };
+
+  return (
+    <Dialog open={decision !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {decision === "safe" ? "Mark KYC safe" : "Reject KYC"}
+          </DialogTitle>
+          <DialogDescription>
+            {decision === "safe"
+              ? "This lifts the KYC withdrawal gate for the current verification cycle."
+              : "This keeps the account contained for the current verification cycle."}
+          </DialogDescription>
+        </DialogHeader>
+        <StepUpField
+          id="kyc-review-step-up"
+          value={credential}
+          onChange={setCredential}
+          label="Confirm with 2FA or passkey"
+          disabled={isPending}
+        />
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isPending}
+          >
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={isPending || !credential.trim()}>
+            {isPending
+              ? "Working…"
+              : decision === "safe"
+                ? "Mark safe"
+                : "Reject"}
           </Button>
         </DialogFooter>
       </DialogContent>

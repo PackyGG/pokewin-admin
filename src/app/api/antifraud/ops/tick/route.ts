@@ -1,9 +1,14 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 
 import { enqueueDueReviewReminders } from "@/lib/discord-notifications/review-reminders";
 import { enqueueSumsubVerificationStarts } from "@/lib/discord-notifications/sumsub-started";
+import {
+  assertKycNotificationDeliveryHealthy,
+  reconcileKycLifecycleNotifications,
+} from "@/lib/discord-notifications/kyc-lifecycle";
 import { syncReviewWorkflowStates } from "@/lib/antifraud/review-workflow";
 
 export const runtime = "nodejs";
@@ -13,9 +18,7 @@ const MAX_SKEW_MS = 5 * 60 * 1000;
 const MAX_BODY_BYTES = 4 * 1024;
 const BodySchema = z.object({
   schemaVersion: z.literal(1),
-  correlationId: z
-    .string()
-    .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+  correlationId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
 });
 
 function response(body: unknown, status: number, correlationId?: string) {
@@ -74,12 +77,11 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const projectedReviews = await syncReviewWorkflowStates();
     const reminders = await enqueueDueReviewReminders();
-    // A MAIN mirror hiccup must not fail the whole tick: review projection and
-    // reminders already ran, and the next tick rescans the same window.
-    const sumsubStarts = await enqueueSumsubVerificationStarts().catch(() => ({
-      inspected: 0,
-      queued: 0,
-    }));
+    const [sumsubStarts, kycLifecycle] = await Promise.all([
+      enqueueSumsubVerificationStarts(),
+      reconcileKycLifecycleNotifications(),
+    ]);
+    await assertKycNotificationDeliveryHealthy();
     return response(
       {
         ok: true,
@@ -87,11 +89,19 @@ export async function POST(request: Request): Promise<Response> {
         projectedReviews,
         reminders,
         sumsubStarts,
+        kycLifecycle,
       },
       200,
       parsed.data.correlationId,
     );
-  } catch {
+  } catch (error) {
+    Sentry.withScope((scope) => {
+      scope.setTag("operation", "antifraud.ops_tick");
+      scope.setTag("subsystem", "kyc_notifications");
+      Sentry.captureException(error);
+    });
+    Sentry.metrics.count("kyc.notification_tick_failures", 1);
+    console.error("[antifraud-ops] signed operations tick failed");
     return response(
       { error: "tick_failed", correlationId: parsed.data.correlationId },
       500,

@@ -16,7 +16,10 @@ const BodySchema = z.object({
     .string()
     .trim()
     .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
-  guildId: z.string().trim().regex(/^\d{15,21}$/),
+  guildId: z
+    .string()
+    .trim()
+    .regex(/^\d{15,21}$/),
   eventKey: z
     .string()
     .trim()
@@ -60,7 +63,8 @@ export async function POST(request: Request): Promise<Response> {
 
   const timestamp = request.headers.get("x-antifraud-timestamp");
   const signature = request.headers.get("x-antifraud-signature");
-  if (!timestamp || !signature) return json({ error: "missing_signature" }, 401);
+  if (!timestamp || !signature)
+    return json({ error: "missing_signature" }, 401);
   const parsedTimestamp = Number(timestamp);
   if (
     !Number.isFinite(parsedTimestamp) ||
@@ -117,6 +121,16 @@ export async function POST(request: Request): Promise<Response> {
       embed: parsed.data.embed,
       components: parsed.data.components,
     });
+    if (result.enqueued + result.duplicate === 0) {
+      return json(
+        {
+          error: "no_eligible_route",
+          correlationId: parsed.data.correlationId,
+        },
+        503,
+        parsed.data.correlationId,
+      );
+    }
     return json(
       { ok: true, correlationId: parsed.data.correlationId, ...result },
       200,

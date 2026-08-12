@@ -28,7 +28,7 @@ import { blockKnownUserIdentifiers } from "@/lib/antifraud/user-identifier-block
 import { enqueueKycRequiredReview } from "@/lib/discord-notifications/kyc-required";
 
 type ActionResult =
-  | { success: true; data: UserKycStatus; userId: string }
+  | { success: true; data: UserKycStatus | null; userId: string }
   | { success: false; error: string };
 
 const requireSchema = z.object({
@@ -64,6 +64,51 @@ function friendlyError(error: unknown): string {
     return error.message;
   }
   return "The backend KYC service could not be reached.";
+}
+
+async function readKycAfterMutation(
+  userId: string,
+): Promise<UserKycStatus | null> {
+  for (const delayMs of [0, 100, 300]) {
+    if (delayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+    try {
+      return await getUserKyc(userId);
+    } catch {
+      // The command has already committed. A failed convenience read must not
+      // tell staff to repeat it and accidentally open another KYC cycle.
+    }
+  }
+  return null;
+}
+
+async function recordIncompleteKycContainment(input: {
+  adminUserId: string;
+  userId: string;
+  reason: string;
+  idempotencyKey: string;
+  failedStage: "tips_lock" | "kyc_requirement";
+  fiatAndWithdrawalsLocked: boolean;
+  tipsLocked: boolean;
+}): Promise<void> {
+  const outcome = await createAdminAuditEventDurable({
+    adminUserId: input.adminUserId,
+    eventType: "user_kyc_containment_incomplete",
+    targetUserId: input.userId,
+    metadata: {
+      source: "antifraud_kyc_workspace",
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+      failedStage: input.failedStage,
+      depositsWithdrawalsLocked: input.fiatAndWithdrawalsLocked,
+      tipsLocked: input.tipsLocked,
+      requiresOperatorRetry: true,
+    },
+  });
+  if (outcome.status === "lost") {
+    console.error("[antifraud-kyc] incomplete containment audit lost");
+  }
 }
 
 async function resolveAccount(account: string): Promise<string | null> {
@@ -142,6 +187,15 @@ export async function requireAccountKyc(
       }
     }
   } catch (error) {
+    await recordIncompleteKycContainment({
+      adminUserId: session.userId,
+      userId,
+      reason: parsed.data.reason,
+      idempotencyKey: parsed.data.idempotencyKey,
+      failedStage: "tips_lock",
+      fiatAndWithdrawalsLocked: true,
+      tipsLocked: false,
+    });
     return {
       success: false,
       error:
@@ -151,18 +205,28 @@ export async function requireAccountKyc(
     };
   }
 
-  let data: UserKycStatus;
+  let verificationCycle: number;
   try {
-    await requireUserKyc({
+    const required = await requireUserKyc({
       userId,
       adminId: session.userId,
       reason: parsed.data.reason,
       levelName: parsed.data.levelName || undefined,
     });
-    data = await getUserKyc(userId);
+    verificationCycle = required.verificationCycle;
   } catch (error) {
+    await recordIncompleteKycContainment({
+      adminUserId: session.userId,
+      userId,
+      reason: parsed.data.reason,
+      idempotencyKey: parsed.data.idempotencyKey,
+      failedStage: "kyc_requirement",
+      fiatAndWithdrawalsLocked: true,
+      tipsLocked: true,
+    });
     return { success: false, error: friendlyError(error) };
   }
+  const data = await readKycAfterMutation(userId);
 
   try {
     // Durable: retries, then a fallback row, so a transient ADMIN-DB blip
@@ -175,7 +239,7 @@ export async function requireAccountKyc(
         source: "antifraud_kyc_workspace",
         reason: parsed.data.reason,
         levelName: parsed.data.levelName || null,
-        verificationCycle: data.verificationCycle,
+        verificationCycle,
         idempotencyKey: parsed.data.idempotencyKey,
         depositsWithdrawalsLocked: true,
         tipsLocked: true,
@@ -199,7 +263,7 @@ export async function requireAccountKyc(
       userId,
       reason: parsed.data.reason,
       levelName: parsed.data.levelName || undefined,
-      verificationCycle: data.verificationCycle,
+      verificationCycle,
     });
   } catch (error) {
     // KYC is already authoritative in the backend. Keep the successful staff
@@ -224,7 +288,6 @@ export async function reviewAccountKyc(
   }
   await require2FA(session.userId, parsed.data.credential);
 
-  let data: UserKycStatus;
   try {
     await reviewUserKyc({
       userId: parsed.data.userId,
@@ -232,10 +295,10 @@ export async function reviewAccountKyc(
       decision: parsed.data.decision,
       expectedCycle: parsed.data.expectedCycle,
     });
-    data = await getUserKyc(parsed.data.userId);
   } catch (error) {
     return { success: false, error: friendlyError(error) };
   }
+  const data = await readKycAfterMutation(parsed.data.userId);
 
   try {
     const outcome = await createAdminAuditEventDurable({
@@ -311,7 +374,9 @@ export async function banAccountFromKyc(
 
   const reason = `KYC review: ${parsed.data.reason}`.slice(0, 500);
   let newlyBanned = false;
-  let identifiers: Awaited<ReturnType<typeof blockKnownUserIdentifiers>> | null = null;
+  let identifiers: Awaited<
+    ReturnType<typeof blockKnownUserIdentifiers>
+  > | null = null;
   if (!account.is_banned) {
     const actorMainUserId = await resolveAdminMainUserId(session.userId);
     try {
@@ -362,12 +427,16 @@ export async function banAccountFromKyc(
           },
         });
         if (partialAudit.status === "lost") {
-          console.error("[antifraud-kyc] partial ban audit lost:", partialAudit.error);
+          console.error(
+            "[antifraud-kyc] partial ban audit lost:",
+            partialAudit.error,
+          );
         }
       }
       return {
         success: false,
-        error: "The account could not be banned. Its KYC record was left active.",
+        error:
+          "The account could not be banned. Its KYC record was left active.",
       };
     }
 
@@ -418,7 +487,10 @@ export async function banAccountFromKyc(
       },
     });
     if (outcome.status === "lost") {
-      console.error("[antifraud-kyc] partial failure audit lost:", outcome.error);
+      console.error(
+        "[antifraud-kyc] partial failure audit lost:",
+        outcome.error,
+      );
     }
     return {
       success: false,

@@ -146,12 +146,12 @@ test("rain reward-abuse batches notify Support only", () => {
   const policySql = read("src/lib/discord-notifications/policy-sql.ts");
   const router = read("src/lib/discord-notifications/router.ts");
 
-  assert.match(
-    policy,
-    /"antifraud\.reward_abuse_rain": \["support"\]/,
-  );
+  assert.match(policy, /"antifraud\.reward_abuse_rain": \["support"\]/);
   assert.match(router, /discordEventMentionGroupOverride\(key\)/);
-  assert.match(router, /CROSS JOIN \(VALUES \$\{mentionGroupKeyRows\(mentionGroupOverride\)\}\)/);
+  assert.match(
+    router,
+    /CROSS JOIN \(VALUES \$\{mentionGroupKeyRows\(mentionGroupOverride\)\}\)/,
+  );
   assert.match(policySql, /export function mentionGroupKeyRows/);
   assert.match(router, /jsonb_agg\(DISTINCT member\.user_id\) AS user_ids/);
   assert.match(router, /'users', mentions\.user_ids/);
@@ -213,5 +213,35 @@ test("KYC requirements enqueue account review cards to the KYC route", () => {
     /'antifraud\.kyc_required', '1532298371052867634'/,
   );
   assert.match(antifraudAction, /enqueueKycRequiredReview/);
-  assert.match(userAction, /enqueueKycRequiredReview/);
+  assert.match(userAction, /requireAccountKyc/);
+  assert.match(userAction, /reviewAccountKyc/);
+  assert.match(userAction, /credential: string/);
+});
+
+test("KYC lifecycle notifications are cursor-backed and route failures stay retryable", () => {
+  const lifecycle = read("src/lib/discord-notifications/kyc-lifecycle.ts");
+  const started = read("src/lib/discord-notifications/sumsub-started.ts");
+  const tick = read("src/app/api/antifraud/ops/tick/route.ts");
+  const receiver = read("src/app/api/antifraud/discord-events/route.ts");
+  const migration = read(
+    "drizzle/admin/migrations/20260812_kyc_notification_reliability.sql",
+  );
+
+  assert.match(
+    migration,
+    /CREATE TABLE IF NOT EXISTS kyc_notification_cursors/,
+  );
+  assert.match(migration, /antifraud\.sumsub_started/);
+  assert.match(migration, /antifraud\.sumsub_ready/);
+  for (const producer of [lifecycle, started]) {
+    assert.match(producer, /ORDER BY .* ASC/);
+    assert.match(producer, /kyc_notification_cursors/);
+    assert.match(producer, /enqueued \+ result\.duplicate === 0/);
+  }
+  assert.match(lifecycle, /last_webhook_digest/);
+  assert.match(tick, /reconcileKycLifecycleNotifications\(\)/);
+  assert.match(tick, /assertKycNotificationDeliveryHealthy\(\)/);
+  assert.match(tick, /kyc\.notification_tick_failures/);
+  assert.doesNotMatch(tick, /enqueueSumsubVerificationStarts\(\)\.catch/);
+  assert.match(receiver, /error: "no_eligible_route"/);
 });
