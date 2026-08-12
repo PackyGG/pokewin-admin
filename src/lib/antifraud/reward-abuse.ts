@@ -7,7 +7,7 @@ import { getProdReadDrizzleDb } from "@/lib/db";
 import { enqueueDiscordEvent } from "@/lib/discord-notifications/router";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 
-export const RAIN_ABUSE_DETECTOR_VERSION = "rain-v1.3";
+export const RAIN_ABUSE_DETECTOR_VERSION = "rain-v1.4";
 export const REWARD_ABUSE_PAGE_SIZE = 40;
 
 export type RewardAbuseStatus = "pending" | "confirmed" | "dismissed";
@@ -31,8 +31,8 @@ export type RainAbuseMetrics = {
   bonusFundedPackUsd: number;
   bonusFundedPackRatio: number;
   packGameRatio: number;
-  tipsReceived30dUsd: number;
-  sponsoredBattleReceived30dUsd: number;
+  lifetimeTipsReceivedUsd: number;
+  lifetimeSponsoredBattleReceivedUsd: number;
 };
 
 export type RewardAbuseReview = {
@@ -74,8 +74,8 @@ type CandidateRow = {
   pack_games: number;
   pack_wager_usd: string;
   bonus_funded_pack_usd: string;
-  tips_received_30d_usd: string;
-  sponsored_battle_received_30d_usd: string;
+  lifetime_tips_received_usd: string;
+  lifetime_sponsored_battle_received_usd: string;
 };
 
 function money(value: string): number {
@@ -182,8 +182,8 @@ async function loadRainCandidates(): Promise<CandidateRow[]> {
       COALESCE(play.pack_games, 0)::int AS pack_games,
       COALESCE(play.pack_wager_usd, 0)::text AS pack_wager_usd,
       COALESCE(play.bonus_funded_pack_usd, 0)::text AS bonus_funded_pack_usd,
-      COALESCE(ledger.tips_received_30d_usd, 0)::text AS tips_received_30d_usd,
-      COALESCE(sponsored.received_30d_usd, 0)::text AS sponsored_battle_received_30d_usd
+      COALESCE(ledger.lifetime_tips_received_usd, 0)::text AS lifetime_tips_received_usd,
+      COALESCE(sponsored.lifetime_received_usd, 0)::text AS lifetime_sponsored_battle_received_usd
     FROM rain_activity AS activity
     JOIN "user" AS account ON account.id = activity.user_id
     LEFT JOIN user_feature_locks AS feature_lock
@@ -227,13 +227,12 @@ async function loadRainCandidates(): Promise<CandidateRow[]> {
         ) AS wager_usd,
         sum(tx.amount::numeric) FILTER (
           WHERE tx.type::text = 'creator_tip'
-            AND tx.created_at >= now() - interval '30 days'
             AND CASE
               WHEN tx.metadata->>'direction' = 'received' THEN true
               WHEN tx.metadata->>'direction' = 'sent' THEN false
               ELSE tx.balance_after::numeric > tx.balance_before::numeric
             END
-        ) AS tips_received_30d_usd
+        ) AS lifetime_tips_received_usd
       FROM ledger_transactions AS tx
       WHERE tx.user_id = activity.user_id AND tx.status::text = 'completed'
     ) AS ledger ON true
@@ -269,7 +268,7 @@ async function loadRainCandidates(): Promise<CandidateRow[]> {
       SELECT sum(round(
         (COALESCE(items.value_usd, 0) + COALESCE(vouchers.value_usd, 0))
         * battle.sponsorship_percentage
-      ) / 100) AS received_30d_usd
+      ) / 100) AS lifetime_received_usd
       FROM battle_participants AS participant
       JOIN battles AS battle ON battle.id = participant.battle_id
       LEFT JOIN LATERAL (
@@ -287,7 +286,6 @@ async function loadRainCandidates(): Promise<CandidateRow[]> {
           AND voucher.origin_id = participant.game_session_id
       ) AS vouchers ON true
       WHERE participant.user_id = activity.user_id
-        AND participant.created_at >= now() - interval '30 days'
         AND battle.currency::text = 'real'
         AND battle.status::text = 'completed'
         AND battle.sponsorship_percentage > 0
@@ -329,8 +327,10 @@ function candidateMetrics(row: CandidateRow): RainAbuseMetrics {
     bonusFundedPackUsd,
     bonusFundedPackRatio: ratio(bonusFundedPackUsd, packWagerUsd),
     packGameRatio: ratio(packGames, games),
-    tipsReceived30dUsd: money(row.tips_received_30d_usd),
-    sponsoredBattleReceived30dUsd: money(row.sponsored_battle_received_30d_usd),
+    lifetimeTipsReceivedUsd: money(row.lifetime_tips_received_usd),
+    lifetimeSponsoredBattleReceivedUsd: money(
+      row.lifetime_sponsored_battle_received_usd,
+    ),
   };
 }
 

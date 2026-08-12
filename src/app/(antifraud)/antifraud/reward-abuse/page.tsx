@@ -212,13 +212,13 @@ function BonusFundingMetric({
       </p>
       <dl className="mt-2 space-y-1 text-xs text-muted-foreground">
         <div className="flex items-center justify-between gap-2">
-          <dt>Received tips · 30d</dt>
+          <dt>Received tips · All time</dt>
           <dd className="font-medium tabular-nums text-foreground">
             {usd(tipsReceived)}
           </dd>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <dt>Sponsored battles · 30d</dt>
+          <dt>Sponsored battles · All time</dt>
           <dd className="font-medium tabular-nums text-foreground">
             {usd(sponsoredBattles)}
           </dd>
@@ -313,8 +313,8 @@ function ReviewCard({ review }: { review: RewardAbuseReview }) {
         />
         <BonusFundingMetric
           ratio={m.bonusFundedPackRatio}
-          tipsReceived={m.tipsReceived30dUsd ?? 0}
-          sponsoredBattles={m.sponsoredBattleReceived30dUsd ?? 0}
+          tipsReceived={m.lifetimeTipsReceivedUsd ?? 0}
+          sponsoredBattles={m.lifetimeSponsoredBattleReceivedUsd ?? 0}
         />
       </div>
     </article>

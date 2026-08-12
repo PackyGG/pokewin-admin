@@ -16,20 +16,18 @@ import { require2FA } from "@/lib/require-2fa";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { requireCapability } from "@/lib/require-capability";
 
-const DecisionSchema = z.object({
-  reviewId: z.string().uuid("Invalid review"),
-  decision: z.enum(["confirm", "dismiss"]),
-  reason: z.string().trim().min(3, "Add a short review note").max(500),
-  credential: z.string().trim().optional(),
-}).superRefine((value, ctx) => {
-  if (value.decision === "confirm" && !value.credential) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["credential"],
-      message: "A 2FA code or passkey is required",
-    });
-  }
-});
+const DecisionSchema = z.discriminatedUnion("decision", [
+  z.object({
+    reviewId: z.string().uuid("Invalid review"),
+    decision: z.literal("confirm"),
+    credential: z.string().trim().min(1, "A 2FA code or passkey is required"),
+  }),
+  z.object({
+    reviewId: z.string().uuid("Invalid review"),
+    decision: z.literal("dismiss"),
+    reason: z.string().trim().min(3, "Add a short review note").max(500),
+  }),
+]);
 
 export type RewardAbuseDecisionResult =
   | { ok: true; status: "confirmed" | "dismissed"; rainLocked: boolean; rainFundsRemovedUsd: number }
@@ -209,15 +207,18 @@ export async function decideRewardAbuseReview(
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid decision" };
   }
-  const { reviewId, decision, reason, credential } = parsed.data;
+  const { reviewId, decision } = parsed.data;
+  const reason = decision === "confirm"
+    ? "Confirmed reward abuse finding"
+    : parsed.data.reason;
   const targetStatus = decision === "confirm" ? "confirmed" : "dismissed";
   if (decision === "confirm") {
     try {
       await Promise.all([
         requireCapability(
-        session,
-        "__can_toggle_feature_locks",
-        "lock Rain, tips, and sponsored battles after confirming abuse",
+          session,
+          "__can_toggle_feature_locks",
+          "lock Rain, tips, and sponsored battles after confirming abuse",
         ),
         requireCapability(
           session,
@@ -227,7 +228,7 @@ export async function decideRewardAbuseReview(
       ]);
       // Confirmation changes both money and reward access. Authenticate the
       // operator before either external side effect can begin.
-      await require2FA(session.userId, credential ?? "");
+      await require2FA(session.userId, parsed.data.credential);
     } catch (error) {
       return {
         ok: false,

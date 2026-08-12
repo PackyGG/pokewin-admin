@@ -37,7 +37,7 @@ test("only a confirmed manual decision adds Rain, tips, and sponsored-battle loc
   assert.match(action, /decision === "confirm"/);
   assert.match(action, /requireCapability[\s\S]*__can_toggle_feature_locks/);
   assert.match(action, /requireCapability[\s\S]*__can_adjust_balance/);
-  assert.match(action, /require2FA\(session\.userId, credential \?\? ""\)/);
+  assert.match(action, /require2FA\(session\.userId, parsed\.data\.credential\)/);
   assert.ok(
     action.indexOf("require2FA(session.userId") <
       action.indexOf("adminDrizzle.transaction"),
@@ -94,7 +94,17 @@ test("confirmation UI requires step-up while dismissal does not", async () => {
   );
   assert.match(actions, /<StepUpField value=\{credential\} onChange=\{setCredential\} \/>/);
   assert.match(actions, /confirming && !credential\.trim\(\)/);
+  assert.match(actions, /reason: confirming \? undefined : reason/);
+  assert.match(actions, /!confirming \? \([\s\S]*<Textarea/);
   assert.match(actions, /credential: confirming \? credential\.trim\(\) : undefined/);
+  const action = await readFile(actionPath, "utf8");
+  assert.match(action, /Confirmed reward abuse finding/);
+  assert.match(action, /decision: z\.literal\("confirm"\)[\s\S]*credential:/);
+  const confirmSchema = action.slice(
+    action.indexOf('decision: z.literal("confirm")'),
+    action.indexOf("  z.object({", action.indexOf('decision: z.literal("confirm")')),
+  );
+  assert.doesNotMatch(confirmSchema, /reason:/);
 });
 
 test("reward evidence separates received tips from sponsored-battle value", async () => {
@@ -104,6 +114,16 @@ test("reward evidence separates received tips from sponsored-battle value", asyn
   assert.match(detector, /battle\.sponsorship_percentage/);
   assert.match(detector, /inventory\.source_id = participant\.game_session_id/);
   assert.match(detector, /voucher\.origin_id = participant\.game_session_id/);
+  assert.match(detector, /AS lifetime_tips_received_usd/);
+  assert.match(detector, /AS lifetime_sponsored_battle_received_usd/);
+  assert.doesNotMatch(detector, /tips_received_30d_usd/);
+  assert.doesNotMatch(detector, /sponsored_battle_received_30d_usd/);
+  const page = await readFile(
+    "src/app/(antifraud)/antifraud/reward-abuse/page.tsx",
+    "utf8",
+  );
+  assert.match(page, /Received tips · All time/);
+  assert.match(page, /Sponsored battles · All time/);
 });
 
 test("reward evidence includes recent and lifetime completed withdrawals", async () => {

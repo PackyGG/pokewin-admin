@@ -49,13 +49,15 @@ function DecisionDialog({
               : "The account will remain unchanged and will not be detected again for 30 days."}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <Textarea
-          aria-label="Review note"
-          placeholder={confirming ? "Why this behavior is abusive…" : "Why this looks legitimate…"}
-          value={reason}
-          onChange={(event) => setReason(event.target.value)}
-          rows={4}
-        />
+        {!confirming ? (
+          <Textarea
+            aria-label="Review note"
+            placeholder="Why this looks legitimate…"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            rows={4}
+          />
+        ) : null}
         {confirming ? (
           <StepUpField value={credential} onChange={setCredential} />
         ) : null}
@@ -64,7 +66,7 @@ function DecisionDialog({
           <AlertDialogAction
             disabled={
               pending ||
-              reason.trim().length < 3 ||
+              (!confirming && reason.trim().length < 3) ||
               (confirming && !credential.trim())
             }
             onClick={(event) => {
@@ -73,7 +75,7 @@ function DecisionDialog({
                 const result = await decideRewardAbuseReview({
                   reviewId,
                   decision,
-                  reason,
+                  reason: confirming ? undefined : reason,
                   credential: confirming ? credential.trim() : undefined,
                 });
                 if (!result.ok) {
