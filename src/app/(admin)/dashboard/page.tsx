@@ -1,6 +1,5 @@
 import { Suspense } from "react";
-import Link from "next/link";
-import { Activity, Gauge, LineChart } from "lucide-react";
+import { Gauge, LineChart } from "lucide-react";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDoubleDownDashboardStats } from "@/lib/queries/double-down";
 import { getDailyPnl } from "@/lib/queries/pnl";
@@ -72,19 +71,6 @@ export default async function DashboardPage() {
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
-
-      <SectionHeading
-        icon={Activity}
-        title="Today"
-        action={
-          <Link
-            href="/analytics"
-            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-          >
-            Full analytics →
-          </Link>
-        }
-      />
 
       {/* TODAY BOXES — P&L Today · Reward + Creators Costs (merged) ·
           Upgrader + Double Down (merged), in that order, at the top.
