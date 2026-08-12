@@ -122,7 +122,7 @@ test("the blacklist containment fast path is gated on the delivery receipt", () 
  * leave freshly-locked accounts pending and re-alerting. The contract is
  * therefore conditional, not absent.
  */
-test("the lock receipt is withheld whenever the dashboard reports a skip", () => {
+test("the lock receipt is withheld whenever dashboard containment is unconfirmed", () => {
   const delivery = read(DELIVERY);
   const verifier = read("services/antifraud-monitor/src/fiat-email-domains.ts");
 
@@ -134,18 +134,19 @@ test("the lock receipt is withheld whenever the dashboard reports a skip", () =>
   );
   assert.match(delivery, /locksSkipped = Number\(result\.locksSkipped \?\? 0\)/);
 
-  // …thread it into the confirmation…
+  // …thread the complete delivery verdict into the confirmation…
   assert.match(
     delivery,
-    /confirmContainmentEvents\(\s*\n?\s*client,\s*\n?\s*containmentRows,\s*\n?\s*containmentDelivery\.locksSkipped,/,
-    "the skip count must reach the containment confirmation",
+    /confirmContainmentEvents\(\s*\n?\s*client,\s*\n?\s*containmentRows,\s*\n?\s*containmentDelivery,/,
+    "the delivery verdict must reach the containment confirmation",
   );
 
-  // …and bail out before stamping when a skip was reported.
+  // …and bail out before stamping for every non-applied outcome. A stale or
+  // unparseable containment command is just as unconfirmed as a lock skip.
   assert.match(
     delivery,
-    /if \(locksSkipped > 0\) \{[\s\S]{0,400}?return;\s*\n\s*\}/,
-    "a reported skip must prevent the lock receipt being written",
+    /if \(result\.locksSkipped > 0 \|\| result\.stale > 0 \|\| result\.skipped > 0\) \{[\s\S]{0,700}?return;\s*\n\s*\}/,
+    "every discarded containment command must prevent the lock receipt",
   );
 
   // The clean-success stamp is still present (mirror-lag contract).

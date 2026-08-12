@@ -611,7 +611,7 @@ export class IngestDelivery {
         await this.confirmContainmentEvents(
           client,
           containmentRows,
-          containmentDelivery.locksSkipped,
+          containmentDelivery,
         );
         await client.query("COMMIT");
         transactionOpen = false;
@@ -723,7 +723,11 @@ export class IngestDelivery {
 
   private async deliverEvents(
     events: RiskEventRow[],
-  ): Promise<{ locksSkipped: number }> {
+  ): Promise<{
+    locksSkipped: number;
+    stale: number;
+    skipped: number;
+  }> {
     const target = signedIngestTarget(this.config);
     if (!target) {
       throw new Error("Dashboard ingest is not configured");
@@ -817,13 +821,15 @@ export class IngestDelivery {
     }
     return {
       locksSkipped: Number.isFinite(locksSkipped) ? locksSkipped : 0,
+      stale: Number.isFinite(stale) ? stale : 0,
+      skipped: Number.isFinite(skipped) ? skipped : 0,
     };
   }
 
   private async confirmContainmentEvents(
     client: pg.PoolClient,
     events: RiskEventRow[],
-    locksSkipped = 0,
+    result: { locksSkipped: number; stale: number; skipped: number },
   ): Promise<void> {
     const eventIds = events
       .filter(
@@ -837,15 +843,23 @@ export class IngestDelivery {
     // verifies against the MAIN *mirror*, which lags, so waiting for it would
     // leave freshly-locked accounts pending and re-alerting.
     //
-    // But the dashboard also answers HTTP 200 with locksSkipped > 0 when the
-    // lock did NOT happen. Stamping then recorded a lock that never existed and
-    // removed the row from confirmLocks()'s pending set — the only code that
-    // checks user_feature_locks on MAIN — so nothing ever retried or verified
-    // it. When a skip is reported we leave lock_delivered_at NULL and let
-    // confirmLocks() prove the state against MAIN with its own backoff.
-    if (locksSkipped > 0) {
+    // But the dashboard also answers HTTP 200 when the command was discarded:
+    // `locksSkipped` means containment validation/application failed, `stale`
+    // means the ingest age gate rejected it, and `skipped` means the event did
+    // not parse. Stamping any of those outcomes recorded a lock that never
+    // existed and removed the row from confirmLocks()'s pending set — the only
+    // code that checks user_feature_locks on MAIN. Containment batches contain
+    // exactly one event, so the batch-level counters identify this command
+    // without ambiguity. Keep the delivery receipt but withhold the lock
+    // receipt, leaving confirmLocks() to prove the state with its own backoff.
+    if (result.locksSkipped > 0 || result.stale > 0 || result.skipped > 0) {
       this.log.warn(
-        { eventIds: eventIds.length },
+        {
+          eventIds: eventIds.length,
+          locksSkipped: result.locksSkipped,
+          stale: result.stale,
+          skipped: result.skipped,
+        },
         "containment lock receipt withheld; leaving rows for MAIN verification",
       );
       return;

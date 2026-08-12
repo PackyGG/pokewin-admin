@@ -93,6 +93,11 @@ test("overview metrics use bounded real sources and never equate KYC with fraud"
   // fiat split.
   assert.match(query, /antifraud-overview-dashboard-v7/);
   assert.match(query, /antifraud-overview-mirror-fiat-v1/);
+  assert.match(
+    query,
+    /try \{[\s\S]*?await Promise\.all\([\s\S]*?\} finally \{[\s\S]*?mirrorFiat\.release\(\);[\s\S]*?\}/,
+    "a failed overview dependency must disarm the speculative mirror scan",
+  );
   assert.doesNotMatch(
     query,
     /fraud[\s\S]{0,120}user_kyc\.kyc_required\s*=\s*TRUE/i,

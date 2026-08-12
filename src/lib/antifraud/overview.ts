@@ -842,16 +842,21 @@ export async function getAntifraudOverviewData(): Promise<AntifraudOverviewData>
   // Armed before the awaits below so a slow monitor cannot stack the scan's
   // latency on top of its own.
   const mirrorFiat = armMirrorFiatTotals(env);
-  const [base, monitor] = await Promise.all([
-    env === "prod"
-      ? cachedAntifraudOverviewBase(env)
-      : computeAntifraudOverviewBase(env),
-    getAntifraudMonitorOverview(),
-  ]);
-  // Past this point nothing is waiting on the monitor any more, so the grace
-  // timer has done its job either way: it has already armed the scan for a slow
-  // monitor, and clearing it here keeps a fast one from ever starting it.
-  mirrorFiat.release();
+  let base: AntifraudOverviewBase;
+  let monitor: Awaited<ReturnType<typeof getAntifraudMonitorOverview>>;
+  try {
+    [base, monitor] = await Promise.all([
+      env === "prod"
+        ? cachedAntifraudOverviewBase(env)
+        : computeAntifraudOverviewBase(env),
+      getAntifraudMonitorOverview(),
+    ]);
+  } finally {
+    // Release on failure as well as success. Previously, a rejected base or
+    // monitor request bypassed this call and the grace timer later launched an
+    // expensive mirror scan whose result nobody could consume.
+    mirrorFiat.release();
+  }
 
   const split = monitor.data?.fiat;
   if (split) {

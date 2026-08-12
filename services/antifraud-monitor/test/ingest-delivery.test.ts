@@ -261,6 +261,53 @@ test("successful containment delivery confirms the lock without mirror lag", asy
   );
 });
 
+for (const [verdict, response] of [
+  ["stale", { ok: true, accepted: 0, duplicates: 0, stale: 1 }],
+  ["unparseable", { ok: true, accepted: 0, duplicates: 0, skipped: 1 }],
+  [
+    "lock-skipped",
+    { ok: true, accepted: 1, duplicates: 0, locksSkipped: 1 },
+  ],
+] as const) {
+  test(`${verdict} containment keeps its lock receipt pending`, async () => {
+    const containment: RiskEventRow = {
+      ...row,
+      event_type: "fiat_blacklisted_email_domain",
+      source_ref: "blacklisted-checkout:cluster-event-1",
+      payload: {
+        emailDomain: "gmail.com",
+        emailRiskType: "suspicious_deposit_cluster",
+        matchSource: "whop_checkout",
+      },
+    };
+    const fixture = deliveryPool([containment]);
+    const delivery = new IngestDelivery(
+      config,
+      fixture.pool,
+      quietLogger,
+      async () =>
+        new Response(JSON.stringify(response), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    assert.equal(await delivery.flushOnce(), 1);
+    assert.equal(
+      fixture.queries.some((sql) => sql.includes("WITH confirmed_matches AS")),
+      false,
+    );
+    assert.equal(
+      fixture.queries.some((sql) =>
+        sql.includes("UPDATE risk_events") &&
+        sql.includes("dashboard_delivered_at")
+      ),
+      true,
+    );
+    assert.equal(fixture.queries.at(-1), "COMMIT");
+  });
+}
+
 test("review-only email signals cannot acknowledge cluster containment", async () => {
   const review: RiskEventRow = {
     ...row,
