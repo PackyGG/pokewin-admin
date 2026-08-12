@@ -1702,7 +1702,7 @@ export class FiatEligibilityService {
       `,
       [input.env, input.userID, input.fingerprint, hash, now],
     );
-    const row = inserted.rows[0];
+    let row = inserted.rows[0];
     if (!row) {
       const existing = await this.db.antifraud.query<{
         id: string;

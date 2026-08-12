@@ -25,6 +25,8 @@ export type FiatIdentityContainmentTarget = {
   reasons: string[];
   reason: string;
   action: "withdrawals" | "fiat_and_withdrawals";
+  /** Active high-confidence refunded-amount campaigns are automatic bans. */
+  ban: boolean;
 };
 
 /** Pure admission validation; safe inside the ADMIN ingest transaction. */
@@ -74,27 +76,30 @@ export function fiatIdentityContainmentTarget(signal: {
     return null;
   }
 
+  const ban = reasons.includes("checkout_refunded_amount_cluster");
   return {
     userId,
     intentId,
     reasons,
     action,
+    ban,
     reason: (
-      "Automatic fraud lock: high-confidence authorized Fiat risk ("
+      `${ban ? "Automatic fraud ban" : "Automatic fraud lock"}: high-confidence authorized Fiat risk (`
       + `${reasons.join(", ")})`
     ).slice(0, 500),
   };
 }
 
-export type FiatIdentityContainmentOutcome = { locked: boolean };
+export type FiatIdentityContainmentOutcome = { locked: boolean; banned: boolean };
 
-/** Lock withdrawals, and Fiat deposits only when the approved action says so. */
+/** Apply approved rail locks; refunded-amount campaigns also ban and revoke sessions. */
 export async function applyFiatIdentityContainment(
   target: FiatIdentityContainmentTarget,
 ): Promise<FiatIdentityContainmentOutcome> {
   const db = getProdPrimaryDrizzleDb();
-  if (target.action === "withdrawals") {
-    const locked = await db.execute<{ user_id: string }>(sql`
+  return db.transaction(async (tx): Promise<FiatIdentityContainmentOutcome> => {
+    const locked = target.action === "withdrawals"
+      ? await tx.execute<{ user_id: string }>(sql`
       INSERT INTO user_feature_locks (
         id, user_id,
         locked_withdrawals_crypto, locked_withdrawals_items,
@@ -119,11 +124,8 @@ export async function applyFiatIdentityContainment(
         ),
         updated_at = NOW()
       RETURNING user_id
-    `);
-    return { locked: locked.rows.length > 0 };
-  }
-
-  const locked = await db.execute<{ user_id: string }>(sql`
+    `)
+      : await tx.execute<{ user_id: string }>(sql`
     INSERT INTO user_feature_locks (
       id, user_id,
       locked_deposits_fiat, locked_deposits_at, locked_deposits_by,
@@ -163,5 +165,34 @@ export async function applyFiatIdentityContainment(
       updated_at = NOW()
     RETURNING user_id
   `);
-  return { locked: locked.rows.length > 0 };
+    if (locked.rows.length === 0 || !target.ban) {
+      return { locked: locked.rows.length > 0, banned: false };
+    }
+
+    const banned = await tx.execute<{ id: string }>(sql`
+      UPDATE "user"
+      SET
+        is_banned = TRUE,
+        banned_reason = CASE
+          WHEN is_banned THEN COALESCE(banned_reason, ${target.reason})
+          ELSE ${target.reason}
+        END,
+        banned_at = CASE
+          WHEN is_banned THEN COALESCE(banned_at, NOW())
+          ELSE NOW()
+        END,
+        banned_by = CASE WHEN is_banned THEN banned_by ELSE NULL END,
+        updated_at = NOW()
+      WHERE id = ${target.userId}
+        AND is_banned = FALSE
+        AND COALESCE(role::text, '') NOT IN ('admin', 'support', 'creator')
+        AND NOT COALESCE(roles::text[], ARRAY[]::text[])
+          && ARRAY['admin','support','creator']::text[]
+      RETURNING id
+    `);
+    if (banned.rows.length === 1) {
+      await tx.execute(sql`DELETE FROM session WHERE "userId" = ${target.userId}`);
+    }
+    return { locked: true, banned: banned.rows.length === 1 };
+  });
 }

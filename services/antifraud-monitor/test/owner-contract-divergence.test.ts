@@ -88,7 +88,7 @@ test("automatic containment fully locks first-seen catch-all accounts without fo
   );
 });
 
-test("Fiat identity drift opens review and applies only approved locks", async () => {
+test("Fiat identity drift routes automatic containment and bans active refund campaigns", async () => {
   const containment = await source(
     "../../../src/lib/antifraud/fiat-identity-containment.ts",
   );
@@ -100,6 +100,9 @@ test("Fiat identity drift opens review and applies only approved locks", async (
   assert.match(containment, /"withdrawals" \| "fiat_and_withdrawals"/);
   assert.match(containment, /locked_withdrawals_items = TRUE/);
   assert.match(containment, /locked_deposits_fiat = ARRAY\['all'\]/);
+  assert.match(containment, /reasons\.includes\("checkout_refunded_amount_cluster"\)/);
+  assert.match(containment, /is_banned = TRUE/);
+  assert.match(containment, /DELETE FROM session/);
 
   // The dashboard re-checks the reason it was handed; the monitor's containment
   // set and the dashboard's allowlist must not drift apart.

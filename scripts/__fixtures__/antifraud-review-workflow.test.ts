@@ -23,11 +23,15 @@ test("Account Reviews isolate automatic bans in their own tab", () => {
   );
   assert.match(
     reviews,
-    /NOT review\.signals @> ARRAY\['whop_history_auto_ban'\]::text\[\]/,
+    /AUTO_BANNED_REVIEW_SIGNAL_KINDS[\s\S]*?fiat_deposit_identity_containment/,
   );
   assert.match(
     reviews,
-    /review\.signals @> ARRAY\['whop_history_auto_ban'\]::text\[[\s\S]*?AS auto_banned/,
+    /NOT review\.signals && \$\{pgArrayParam\(\[\.\.\.AUTO_BANNED_REVIEW_SIGNAL_KINDS\]\)\}::text\[\]/,
+  );
+  assert.match(
+    reviews,
+    /review\.signals && \$\{pgArrayParam\(\[\.\.\.AUTO_BANNED_REVIEW_SIGNAL_KINDS\]\)\}::text\[[\s\S]*?AS auto_banned/,
   );
   assert.match(page, /autoBanned: tab === "auto-banned"/);
   assert.doesNotMatch(reviews, /inReview: Number\(row\?\.in_review/);

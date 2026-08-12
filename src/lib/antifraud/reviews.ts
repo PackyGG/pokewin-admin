@@ -47,6 +47,13 @@ const REVIEW_QUEUE_STORAGE_STATUSES = [
   "escalated",
 ] as const;
 
+/** Automatic ban/containment cases belong in the dedicated Auto banned tab. */
+const AUTO_BANNED_REVIEW_SIGNAL_KINDS = [
+  "whop_history_auto_ban",
+  "fiat_blacklisted_email_domain",
+  "fiat_deposit_identity_containment",
+] as const;
+
 /**
  * The account-review queue.
  *
@@ -164,7 +171,7 @@ export type ReviewFilters = {
   queue?: ReviewQueueState;
   /** Active postponement state. False keeps normal tabs free of postponed work. */
   postponed?: boolean;
-  /** Whop-history automatic bans live in their own operational queue. */
+  /** Automatic bans and automatic Fiat containment live in their own queue. */
   autoBanned?: boolean;
   /** Restrict the queue to the selected risk bands. */
   severities?: readonly ReviewSeverity[];
@@ -225,7 +232,7 @@ function buildReviewConditions(filters: ReviewFilters): SQL[] {
         AND postponed.postponed_until > now()
     )`);
   }
-  const autoBanned = sql`${antifraud_reviews.signals} @> ARRAY['whop_history_auto_ban']::text[]`;
+  const autoBanned = sql`${antifraud_reviews.signals} && ${pgArrayParam([...AUTO_BANNED_REVIEW_SIGNAL_KINDS])}::text[]`;
   if (filters.autoBanned === true) {
     conditions.push(autoBanned);
   } else if (filters.autoBanned === false) {
@@ -766,16 +773,16 @@ export async function getAccountReviewTabCounts(): Promise<AccountReviewTabCount
         COUNT(*) FILTER (
           WHERE review.status IN ('open', 'in_review', 'escalated')
             AND NOT COALESCE(workflow.postponed_until > now(), false)
-            AND NOT review.signals @> ARRAY['whop_history_auto_ban']::text[]
+            AND NOT review.signals && ${pgArrayParam([...AUTO_BANNED_REVIEW_SIGNAL_KINDS])}::text[]
         ) AS reviews,
         COUNT(*) FILTER (
           WHERE review.status IN ('open', 'in_review', 'escalated')
             AND workflow.postponed_until > now()
-            AND NOT review.signals @> ARRAY['whop_history_auto_ban']::text[]
+            AND NOT review.signals && ${pgArrayParam([...AUTO_BANNED_REVIEW_SIGNAL_KINDS])}::text[]
         ) AS postponed,
         COUNT(*) FILTER (
           WHERE review.status IN ('open', 'in_review', 'escalated')
-            AND review.signals @> ARRAY['whop_history_auto_ban']::text[]
+            AND review.signals && ${pgArrayParam([...AUTO_BANNED_REVIEW_SIGNAL_KINDS])}::text[]
         ) AS auto_banned
       FROM antifraud_reviews AS review
       LEFT JOIN antifraud_review_workflow AS workflow
