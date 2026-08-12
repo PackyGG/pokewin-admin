@@ -12,11 +12,17 @@ test("creator rewards use the wager's frozen leaderboard weight", () => {
   const wagerQuery = compute.slice(queryStart, queryEnd);
 
   const effectiveWager = wagerQuery.match(
-    /COALESCE\(\s*acu\.weighted_wager_amount_usd,\s*acu\.wager_amount_usd\s*\)(?:::numeric)?\s+AS\s+(\w+)/,
+    /COALESCE\(\s*acu\.weighted_wager_amount_usd,\s*0\s*\)(?:::numeric)?\s+AS\s+(\w+)/,
   );
   assert.ok(
     effectiveWager,
-    "creator rewards must use the frozen weighted wager, with raw wager only as the legacy NULL fallback",
+    "creator rewards must use the frozen weighted wager and fail closed when it is missing",
+  );
+
+  assert.doesNotMatch(
+    wagerQuery,
+    /acu\.wager_amount_usd/,
+    "creator rewards must never read or expose the original unweighted wager",
   );
 
   const effectiveAlias = effectiveWager[1];

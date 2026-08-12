@@ -311,9 +311,10 @@ type WagerPositionRow = {
  *
  * The amount is the SAME frozen value used by official races and creator
  * leaderboards: packs/battles currently count 1x, while upgrader/Keno count
- * 0.5x. We never expose or add the raw amount alongside it. The raw fallback
- * exists only for historical rows written before weighted wager was added;
- * current rows carry an explicit weighted value (including a legitimate 0).
+ * 0.5x. We never read or expose the raw amount here. A missing frozen weight
+ * is zero, not 1x: wager weighting predates Creator Rewards, so NULL means a
+ * producer failed to freeze the weight and must fail closed rather than
+ * silently over-crediting a player.
  *
  * KNOWN LIMIT: a player who switches codes and then generates NO activity
  * under the new one leaves no trace, so nothing is detectable and their run
@@ -363,10 +364,7 @@ function wagerPositionSql(
     live AS (
       SELECT
         acu.created_at,
-        COALESCE(
-          acu.weighted_wager_amount_usd,
-          acu.wager_amount_usd
-        ) AS reward_wager_amount_usd
+        COALESCE(acu.weighted_wager_amount_usd, 0) AS reward_wager_amount_usd
         FROM affiliate_code_usages acu
        WHERE acu.referred_user_id = ${userId}
          AND acu.usage_type::text = 'wager'
