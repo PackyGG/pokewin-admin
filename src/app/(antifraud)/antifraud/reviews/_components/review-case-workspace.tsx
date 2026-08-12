@@ -60,6 +60,7 @@ export async function ReviewCaseWorkspace({
   const { review, account } = detail.detail;
   const name = review.targetUsername ?? review.targetUserId;
   const country = account?.country ?? account?.countryCode ?? "Country unavailable";
+  const accountCreatedAt = account?.createdAt ?? null;
 
   return (
     <div className="space-y-4">
@@ -85,8 +86,12 @@ export async function ReviewCaseWorkspace({
                   <MapPin className="size-3" />
                   {country}
                 </span>
-                <span title={formatDateTime(review.createdAt)}>
-                  Signed up {formatRelative(review.createdAt)}
+                <span
+                  title={accountCreatedAt ? formatDateTime(accountCreatedAt) : undefined}
+                >
+                  {accountCreatedAt
+                    ? `Signed up ${formatRelative(accountCreatedAt)}`
+                    : "Signup date unavailable"}
                 </span>
               </div>
             </div>
@@ -160,12 +165,21 @@ function ScoreDeltaBadge({ delta }: { delta: number | null }) {
 }
 
 function CaseFacts({ detail }: { detail: ReviewDetail }) {
-  const { review, assignee, financialFacts, activeLocks } = detail;
+  const { review, account, assignee, financialFacts, activeLocks } = detail;
   const facts: { label: string; value: string; mono?: boolean; title?: string }[] =
     [
       { label: "Player id", value: review.targetUserId, mono: true },
       {
         label: "Signed up",
+        value: account?.createdAt
+          ? formatRelative(account.createdAt)
+          : "Unavailable",
+        title: account?.createdAt
+          ? formatDateTime(account.createdAt)
+          : undefined,
+      },
+      {
+        label: "Review opened",
         value: formatRelative(review.createdAt),
         title: formatDateTime(review.createdAt),
       },

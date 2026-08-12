@@ -528,6 +528,7 @@ export type ReviewDetail = {
     email: string | null;
     country: string | null;
     countryCode: string | null;
+    createdAt: Date;
   } | null;
   notes: ReviewNote[];
   /** Other signals that arrived for the same account. */
@@ -628,6 +629,7 @@ export async function getReviewDetail(
                 email: user.email,
                 country: user.country,
                 countryCode: user.country_code,
+                createdAt: user.created_at,
               }).from(user).where(eq(user.id, review.target_user_id)).limit(1),
               main.select({
                 depositsCrypto: user_feature_locks.locked_deposits_crypto,
@@ -688,7 +690,12 @@ export async function getReviewDetail(
               locks?.vault ? "Vault" : null,
             ].filter((value): value is string => Boolean(value));
             return {
-              account: accounts[0] ?? null,
+              account: accounts[0]
+                ? {
+                    ...accounts[0],
+                    createdAt: new Date(accounts[0].createdAt),
+                  }
+                : null,
               activeLocks,
               financialFacts: {
                 fiatDepositsUsd: toNumber(financial?.fiat_deposits),
