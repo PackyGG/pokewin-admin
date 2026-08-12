@@ -99,7 +99,7 @@ test("a slow reader delays but does not fail its siblings", async () => {
   assert.equal(outcomes.length, 7);
 });
 
-test("the mirror pool routes both query and connect through the limiter", () => {
+test("the mirror pool is admission-controlled at the checkout, not per statement", () => {
   const source = read("src/lib/db.ts");
 
   assert.match(source, /const MIRROR_POOL_MAX = 2;/);
@@ -114,15 +114,98 @@ test("the mirror pool routes both query and connect through the limiter", () => 
     "only the read mirror is admission-controlled; the primary is untouched",
   );
 
-  // Both acquisition paths must be wrapped — `query` for ordinary statements
-  // and `connect` for transactions.
-  assert.match(source, /Reflect\.set\(pool, "query"/);
+  // `connect` is the single acquisition path — `Pool.prototype.query` calls it
+  // internally. Wrapping `query` too makes a statement hold one permit while
+  // waiting for a second, which deadlocks the isolate at `permits` concurrent
+  // reads (see the behavioural regression below).
   assert.match(source, /Reflect\.set\(pool, "connect"/);
+  assert.doesNotMatch(
+    source,
+    /Reflect\.set\(pool, "query"/,
+    "wrapping pool.query re-introduces the self-deadlock",
+  );
 
-  // A transaction must hold its permit for the whole checkout, released via
+  // A checkout must hold its permit for the whole checkout, released via
   // client.release(), and must never leak it on a failed checkout.
-  assert.match(source, /releasePermit\?\.\(\)/);
+  assert.match(source, /returnPermit\(\)/);
   assert.match(source, /if \(released\) return undefined;/);
+});
+
+/**
+ * Minimal stand-in for node-postgres' Pool that reproduces the ONE detail that
+ * matters here: `query()` acquires its client through `this.connect(cb)`, so
+ * anything wrapped around `connect` is also on the path of every statement.
+ */
+function makeFakePool(max: number) {
+  let leased = 0;
+  const waiters: Array<() => void> = [];
+  const pool = {
+    async connect(cb?: (e: unknown, c: unknown, done: unknown) => void) {
+      const lease = async () => {
+        if (leased >= max) {
+          await new Promise<void>((r) => waiters.push(r));
+        }
+        leased += 1;
+        const client = {
+          release() {
+            leased -= 1;
+            waiters.shift()?.();
+          },
+          async query() {
+            return { rows: [] };
+          },
+        };
+        return client;
+      };
+      const checkout = lease();
+      if (!cb) return checkout;
+      void checkout.then((c) => cb(undefined, c, c.release));
+      return undefined;
+    },
+    // Mirrors pg-pool: query is connect + client.query + release.
+    query(): Promise<unknown> {
+      return new Promise((resolve, reject) => {
+        void (pool.connect as (cb: (e: unknown, c: never) => void) => void)(
+          (error, client: { query(): Promise<unknown>; release(): void }) => {
+            if (error) return reject(error);
+            client.query().then(
+              (res) => {
+                client.release();
+                resolve(res);
+              },
+              (err) => {
+                client.release();
+                reject(err);
+              },
+            );
+          },
+        );
+      });
+    },
+  };
+  return pool;
+}
+
+test("concurrent statements never deadlock the admission limiter", async () => {
+  // Regression for 2026-08-12: `query` and `connect` were BOTH wrapped, so a
+  // statement held one of the two permits while its internal connect waited for
+  // the other. Two concurrent dashboard reads hung the isolate's MAIN pool
+  // forever and every tile fell back to "timeout exceeded when trying to
+  // connect" while the mirror answered in milliseconds.
+  const { withReadAdmissionControl } = await import("../../src/lib/db");
+  const fake = makeFakePool(2);
+  const pool = withReadAdmissionControl(
+    fake as unknown as Parameters<typeof withReadAdmissionControl>[0],
+    "dev",
+  ) as unknown as { query(): Promise<unknown> };
+
+  const results = await Promise.race([
+    Promise.all(Array.from({ length: 12 }, () => pool.query())),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("admission control deadlocked")), 5_000),
+    ),
+  ]);
+  assert.equal((results as unknown[]).length, 12);
 });
 
 test("the limiter is shared across module instances via globalThis", () => {

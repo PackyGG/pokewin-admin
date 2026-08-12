@@ -437,12 +437,24 @@ async function DashboardTodayPnl() {
       voucherChange={data.voucherChange}
       dayLabel={dayLabel}
       ggr={
-        ggrPayload?.ggrAvailable && ggrPayload.cashflowAvailable
+        // The headline GGR only needs its OWN leg. The popover's secondary
+        // cash-flow figures fall back to this tile's own deposits/withdrawals
+        // when the KPI cash-flow leg degrades — `getTodayPnl` and
+        // `getDashboardCashflowFromPostgres` compute the today window from the
+        // same definition, so the popover stays exact instead of the whole GGR
+        // section disappearing because an unrelated read timed out.
+        ggrPayload?.ggrAvailable
           ? {
               value: ggrPayload.ggr,
-              netCashFlow: ggrPayload.netCashFlow,
-              deposits: ggrPayload.deposits,
-              withdrawals: ggrPayload.withdrawals,
+              netCashFlow: ggrPayload.cashflowAvailable
+                ? ggrPayload.netCashFlow
+                : data.deposits - data.withdrawals,
+              deposits: ggrPayload.cashflowAvailable
+                ? ggrPayload.deposits
+                : data.deposits,
+              withdrawals: ggrPayload.cashflowAvailable
+                ? ggrPayload.withdrawals
+                : data.withdrawals,
               breakdown: ggrPayload.ggrBreakdown,
             }
           : null

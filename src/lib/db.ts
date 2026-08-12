@@ -1,5 +1,5 @@
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 
 import * as mainSchema from "./db-schema/main/schema";
 import { readDbEnv, type DbEnv } from "./db-env";
@@ -114,6 +114,23 @@ function createPool(
 }
 
 /**
+ * Hard ceiling on how long one checkout may hold its permit. `statement_timeout`
+ * is 30s and `maxLifetimeSeconds` is 600, so a client that has not been released
+ * after this long is a leak (a caller that forgot `release()`, or an isolate
+ * frozen mid-request). Returning the permit anyway keeps a leak from
+ * permanently shrinking — and with only two permits, deadlocking — every MAIN
+ * read in the isolate. The client itself is left alone; the pool's own
+ * lifetime/idle timers reclaim it.
+ */
+const READ_PERMIT_WATCHDOG_MS = 60_000;
+
+type ConnectCallback = (
+  error: Error | undefined,
+  client: PoolClient | undefined,
+  done: PoolClient["release"],
+) => void;
+
+/**
  * Route every mirror acquisition through a process-wide semaphore sized to the
  * pool.
  *
@@ -130,25 +147,34 @@ function createPool(
  * Callers remain bounded by `safeQuery`/`withTimeout` above and
  * `statement_timeout` below, so a genuinely slow read still degrades its own
  * tile — it just no longer takes healthy siblings down with it.
+ *
+ * ONLY `connect` is wrapped, and that is deliberate. `Pool.prototype.query`
+ * is implemented as `this.connect((err, client) => client.query(...))`, so
+ * every read — plain statement and transaction alike — passes through here
+ * exactly once. Wrapping `query` as well (as this did until 2026-08-12) made a
+ * statement hold one permit while its OWN internal connect waited for a second:
+ * with `permits === pool max`, two concurrent reads consumed both permits and
+ * then waited forever for a permit only they could release. That deadlocked
+ * every MAIN read in the isolate until it was recycled — the dashboard's KPI
+ * tiles blanked with "timeout exceeded when trying to connect" while the mirror
+ * itself was answering in milliseconds.
  */
-function withReadAdmissionControl(pool: Pool, env: DbEnv): Pool {
+export function withReadAdmissionControl(pool: Pool, env: DbEnv): Pool {
   const key = `main:${env}:read`;
   const permits = MIRROR_POOL_MAX;
-  const nativeQuery = pool.query.bind(pool);
-  const nativeConnect = pool.connect.bind(pool);
+  const nativeConnect = pool.connect.bind(pool) as () => Promise<PoolClient>;
 
-  // `query` is what Drizzle uses for every non-transactional statement.
-  Reflect.set(pool, "query", (...args: unknown[]) =>
-    withMainReadSlot(key, permits, () =>
-      (nativeQuery as (...a: unknown[]) => Promise<unknown>)(...args),
-    ),
-  );
-
-  // `connect` backs `db.transaction(...)`. The permit must span the WHOLE
-  // checkout, so it is released by `release()` rather than on acquisition —
-  // otherwise a transaction would hold a pool slot without holding a permit.
-  Reflect.set(pool, "connect", async (...args: unknown[]) => {
+  // The permit must span the WHOLE checkout, so it is returned by `release()`
+  // rather than on acquisition — otherwise a caller would hold a pool slot
+  // without holding a permit and the pool would start queueing again.
+  const admittedCheckout = async (): Promise<PoolClient> => {
     let releasePermit: (() => void) | undefined;
+    let permitReturned = false;
+    const returnPermit = () => {
+      if (permitReturned) return;
+      permitReturned = true;
+      releasePermit?.();
+    };
     await new Promise<void>((admitted) => {
       void withMainReadSlot(key, permits, () => {
         admitted();
@@ -158,26 +184,49 @@ function withReadAdmissionControl(pool: Pool, env: DbEnv): Pool {
       });
     });
     try {
-      const client = (await (
-        nativeConnect as (...a: unknown[]) => Promise<{ release: unknown }>
-      )(...args)) as { release: (...a: unknown[]) => unknown };
-      const nativeRelease = client.release.bind(client);
+      const client = await nativeConnect();
+      const nativeRelease = client.release.bind(client) as (
+        ...a: unknown[]
+      ) => unknown;
       let released = false;
-      client.release = (...releaseArgs: unknown[]) => {
+      const watchdog = setTimeout(returnPermit, READ_PERMIT_WATCHDOG_MS);
+      watchdog.unref?.();
+      client.release = ((...releaseArgs: unknown[]) => {
         if (released) return undefined;
         released = true;
+        clearTimeout(watchdog);
         try {
           return nativeRelease(...releaseArgs);
         } finally {
-          releasePermit?.();
+          returnPermit();
         }
-      };
+      }) as PoolClient["release"];
       return client;
     } catch (error) {
       // Never leak the permit when the checkout itself fails.
-      releasePermit?.();
+      returnPermit();
       throw error;
     }
+  };
+
+  Reflect.set(pool, "connect", (...args: unknown[]) => {
+    const callback =
+      typeof args[0] === "function" ? (args[0] as ConnectCallback) : undefined;
+    const checkout = admittedCheckout();
+    if (!callback) return checkout;
+    // Callback form — this is the path `Pool.prototype.query` takes. It expects
+    // node-postgres' `(err, client, done)` contract and ignores the return
+    // value, so the promise must be settled here rather than handed back.
+    void checkout.then(
+      (client) => callback(undefined, client, client.release),
+      (error: unknown) =>
+        callback(
+          error instanceof Error ? error : new Error(String(error)),
+          undefined,
+          () => {},
+        ),
+    );
+    return undefined;
   });
 
   return pool;

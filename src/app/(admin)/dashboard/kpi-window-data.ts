@@ -16,11 +16,19 @@ import {
   cacheGetOrSetStale,
   hashString,
 } from "@/lib/cache/redis";
-import {
-  REWARD_QUERY_TIMEOUT_MS,
-  safeQuery,
-  withTimeout,
-} from "@/lib/errors/safe-query";
+import { safeQuery, withTimeout } from "@/lib/errors/safe-query";
+
+/**
+ * Per-leg budget for the KPI payload, deliberately SMALLER than
+ * {@link KPI_PAYLOAD_TIMEOUT_MS}. Each leg must be able to time out and fall
+ * back on its own while the surrounding compute still returns — a leg that
+ * outlives the payload budget takes the whole snapshot down with it (see the
+ * invariant on `buildResilientKpiWindowPayload`).
+ */
+const KPI_LEG_TIMEOUT_MS = 8_000;
+
+/** Outer budget for assembling one window's payload. */
+const KPI_PAYLOAD_TIMEOUT_MS = 12_000;
 
 /**
  * Serializable snapshot of every dashboard KPI box for ONE window
@@ -103,12 +111,25 @@ export type KpiWindowPayload = {
 async function computeKpiWindowPayload(
   window: DashboardKpiWindow,
 ): Promise<KpiWindowPayload> {
-  const [statsResult, ggrBreakdown] = await Promise.all([
+  // All three legs run in PARALLEL and each owns its own timeout. They used to
+  // run in sequence, which meant a slow cash-flow read burned the payload's
+  // whole budget AFTER the wager read had already succeeded — and because the
+  // outer budget then expired, that successful wager result was thrown away
+  // too. The mirror pool's admission limiter bounds the actual DB concurrency,
+  // so issuing them together costs nothing and keeps one slow leg off the
+  // others' clock.
+  const [statsResult, cashflowResult, ggrBreakdown] = await Promise.all([
     safeQuery(
       () => getDashboardKpiStats(window),
       null,
       "dashboard.kpiStats",
-      REWARD_QUERY_TIMEOUT_MS,
+      KPI_LEG_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getDashboardCashflowFromPostgres(window),
+      null,
+      "dashboard.cashflow",
+      KPI_LEG_TIMEOUT_MS,
     ),
     getGgrBreakdownForKpiWindow(window).catch(() => ({
       wagers: [],
@@ -119,13 +140,6 @@ async function computeKpiWindowPayload(
     })),
   ]);
   const stats = statsResult.data;
-
-  const cashflowResult = await safeQuery(
-    () => getDashboardCashflowFromPostgres(window),
-    null,
-    "dashboard.cashflow",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
   const cashflow = cashflowResult.data;
 
   // The shared aggregate above produces the GGR and wager boxes. Cash-flow
@@ -224,6 +238,15 @@ export function emptyKpiWindowPayload(
   };
 }
 
+/**
+ * INVARIANT: `computeKpiWindowPayload` must always settle INSIDE
+ * {@link KPI_PAYLOAD_TIMEOUT_MS} (its legs are individually capped at
+ * {@link KPI_LEG_TIMEOUT_MS} and run in parallel). The outer race below is a
+ * backstop only — when it wins, `partial` was never assigned, so every box in
+ * the strip degrades at once even though most legs may have succeeded. Keep the
+ * leg budget strictly below the payload budget or a single slow read blanks the
+ * whole KPI strip and the P&L tile's GGR section again.
+ */
 async function buildResilientKpiWindowPayload(
   window: DashboardKpiWindow,
 ): Promise<KpiWindowPayload> {
@@ -250,7 +273,7 @@ async function buildResilientKpiWindowPayload(
       async () => {
         partial = await withTimeout(
           () => computeKpiWindowPayload(window),
-          10_000,
+          KPI_PAYLOAD_TIMEOUT_MS,
         );
         // A partial cold result remains useful when no snapshot exists, but it
         // must never replace a complete last-known-good snapshot.
