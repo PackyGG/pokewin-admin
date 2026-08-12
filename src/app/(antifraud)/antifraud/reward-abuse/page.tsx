@@ -1,8 +1,8 @@
 import { Suspense } from "react";
-import { AlertTriangle, CloudRain, Search, ShieldCheck } from "lucide-react";
+import { Search } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
-import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,15 +34,6 @@ export default async function RewardAbusePage({ searchParams }: {
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
-      <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
-        <div className="flex gap-3">
-          <ShieldCheck className="mt-0.5 size-5 shrink-0 text-amber-600" />
-          <div>
-            <p className="font-semibold">Manual enforcement only</p>
-            <p className="text-sm text-muted-foreground">The monitor adds evidence for staff review. It never disables rewards automatically; only “Confirm abuse & disable Rain” blocks future Rain joins and tips. An already-entered active rain still settles normally.</p>
-          </div>
-        </div>
-      </div>
       <Suspense key={`${status}-${search ?? ""}`} fallback={<QueueSkeleton />}>
         <ReviewQueue status={status} search={search} />
       </Suspense>
@@ -57,10 +48,6 @@ async function ReviewQueue({ status, search }: { status: RewardAbuseStatus; sear
   ]);
   return (
     <section className="space-y-4">
-      <div>
-        <SectionHeading icon={CloudRain} title="Rain abuse review" />
-        <p className="mt-1 text-sm text-muted-foreground">Behavioral signals from the last 30 days, ranked by confidence.</p>
-      </div>
       <div className="rounded-xl border bg-card p-3 sm:p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <nav className="flex flex-wrap gap-1" aria-label="Reward abuse status">
@@ -116,10 +103,6 @@ function ReviewCard({ review }: { review: RewardAbuseReview }) {
         <Metric label="Real-money play" value={usd(m.wagerUsd)} note={`${m.games} paid game sessions`} />
         <Metric label="Pack pattern" value={`${Math.round(m.packGameRatio * 100)}%`} note={`${m.packGames} pack sessions`} />
         <Metric label="Bonus-funded packs" value={`${Math.round(m.bonusFundedPackRatio * 100)}%`} note="Inference; general bonus pool" />
-      </div>
-      <div className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
-        <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400"><AlertTriangle className="size-4" /> Why it was flagged</p>
-        <ul className="mt-2 grid gap-1 text-sm sm:grid-cols-2">{review.reasons.map((reason) => <li key={reason}>• {reason}</li>)}</ul>
       </div>
     </article>
   );
