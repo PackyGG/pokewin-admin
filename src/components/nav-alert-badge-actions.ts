@@ -1,25 +1,36 @@
 "use server";
 
-import { and, count, gt, lte } from "drizzle-orm";
+import { and, count, eq, gt, isNotNull, lte, or } from "drizzle-orm";
 import { z } from "zod";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import { countAntifraudSignupsSince } from "@/lib/antifraud/signups";
-import { antifraud_reviews } from "@/lib/db-schema/admin/schema";
+import {
+  antifraud_reviews,
+  creator_reward_claims,
+} from "@/lib/db-schema/admin/schema";
 import { getReadDrizzleDb } from "@/lib/db";
-import { requirePageAccess } from "@/lib/dal";
+import {
+  getUserPermissions,
+  requirePageAccess,
+  sessionIsAdmin,
+  sessionIsOwner,
+} from "@/lib/dal";
+import { pageAccessGranted } from "@/lib/admin-pages";
 import {
   queryRows,
   sql,
 } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { requireAntifraudReadAccess } from "@/lib/require-antifraud-access";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 
 const requestSchema = z
   .object({
-    scope: z.enum(["main", "antifraud"]),
+    scope: z.enum(["main", "antifraud", "creatorHub"]),
     fiat: z.iso.datetime().optional(),
     reviews: z.iso.datetime().optional(),
     signups: z.iso.datetime().optional(),
+    creatorRewards: z.iso.datetime().optional(),
   })
   .strict();
 
@@ -32,6 +43,7 @@ type NavAlertCounts = {
   fiat?: number | null;
   reviews?: number | null;
   signups?: number | null;
+  creatorRewards?: number | null;
 };
 
 function boundedSince(value: string, checkedAt: Date): Date {
@@ -91,6 +103,38 @@ async function countReviewsSince(
   return Math.min(MAX_BADGE_COUNT, Number(row?.value ?? 0));
 }
 
+async function countCreatorRewardRequestsSince(
+  since: Date,
+  checkedAt: Date,
+): Promise<number> {
+  const [row] = await adminDrizzle
+    .select({ value: count() })
+    .from(creator_reward_claims)
+    .where(
+      and(
+        eq(creator_reward_claims.status, "pending"),
+        or(
+          and(
+            gt(creator_reward_claims.requested_at, since.toISOString()),
+            lte(
+              creator_reward_claims.requested_at,
+              checkedAt.toISOString(),
+            ),
+          ),
+          and(
+            isNotNull(creator_reward_claims.reinstated_at),
+            gt(creator_reward_claims.reinstated_at, since.toISOString()),
+            lte(
+              creator_reward_claims.reinstated_at,
+              checkedAt.toISOString(),
+            ),
+          ),
+        ),
+      ),
+    );
+  return Math.min(MAX_BADGE_COUNT, Number(row?.value ?? 0));
+}
+
 /**
  * Poll target for the navigation badges.
  *
@@ -115,8 +159,22 @@ export async function fetchNavAlertCounts(
     // page's own reads) bought nothing. Same reasoning as the read-only stream
     // routes documented on `requireAntifraudReadAccess`.
     await requireAntifraudReadAccess();
+    if (parsed.creatorRewards) {
+      throw new Error("Creator Rewards badge counts require Creator Hub access.");
+    }
+  } else if (parsed.scope === "creatorHub") {
+    if (parsed.fiat || parsed.reviews || parsed.signups) {
+      throw new Error("Fraud badge counts require Antifraud access.");
+    }
+    const session = await requireCreatorHubAccess();
+    if (!sessionIsAdmin(session) && !sessionIsOwner(session)) {
+      const pages = await getUserPermissions(session.userId);
+      if (!pageAccessGranted(pages, "/creator-rewards")) {
+        throw new Error("Not authorized to view Creator Rewards requests.");
+      }
+    }
   } else {
-    if (parsed.reviews || parsed.signups) {
+    if (parsed.reviews || parsed.signups || parsed.creatorRewards) {
       throw new Error("Antifraud badge counts require Antifraud access.");
     }
     await requirePageAccess("/analytics");
@@ -171,6 +229,21 @@ export async function fetchNavAlertCounts(
         .catch((error) => {
           console.error("[nav-alerts] signup count failed:", error);
           result.signups = null;
+        }),
+    );
+  }
+  if (parsed.creatorRewards) {
+    reads.push(
+      countCreatorRewardRequestsSince(
+        boundedSince(parsed.creatorRewards, checkedAt),
+        checkedAt,
+      )
+        .then((value) => {
+          result.creatorRewards = value;
+        })
+        .catch((error) => {
+          console.error("[nav-alerts] creator reward request count failed:", error);
+          result.creatorRewards = null;
         }),
     );
   }

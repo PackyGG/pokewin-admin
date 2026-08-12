@@ -34,6 +34,11 @@ import { LinkPending } from "@/components/ux";
 import { AppSwitcher, type AppSwitcherAccess } from "@/components/app-switcher";
 import { useAppHost } from "@/lib/use-app-host";
 import { hrefFrom } from "@/lib/app-hosts";
+import {
+  NavAlertBadge,
+  type NavAlertKey,
+  useNavAlertBadges,
+} from "@/components/nav-alert-badge";
 
 /**
  * Creator Hub sidebar — the swapped nav rendered by the Creator Hub
@@ -43,9 +48,10 @@ import { hrefFrom } from "@/lib/app-hosts";
  * identity: the Packy wordmark (same assets as the main sidebar), a
  * "Back to Admin" exit at the top, and its own nav list.
  *
- * Live nav, sectioned (owner request 2026-07-29): Overview (Dashboard),
+ * Live nav, sectioned (owner request 2026-07-29): Overview (Dashboard,
+ * Creator Rewards),
  * Creators (Roster, Creator Fraud, Socials Review), Programs & Payouts
- * (Leaderboards, Tips & Sponsors, Creator Rewards), Economics
+ * (Leaderboards, Tips & Sponsors), Economics
  * (Profitability, ROI Calculator). The theme toggle sits in the footer.
  *
  * Removed 2026-07-23 (owner): All Sessions, Wager / Fraud Abusers and
@@ -63,6 +69,7 @@ type HubNavItem = {
   label: string;
   href: string;
   icon: LucideIcon;
+  alertKey?: NavAlertKey;
 };
 
 type HubNavGroup = {
@@ -81,6 +88,12 @@ const HUB_NAV_GROUPS: HubNavGroup[] = [
     label: "Overview",
     items: [
       { label: "Dashboard", href: "/creator-hub", icon: LayoutDashboard },
+      {
+        label: "Creator Rewards",
+        href: "/creator-hub/rewards",
+        icon: Crown,
+        alertKey: "creatorRewards",
+      },
       { label: "Terms", href: "/creator-hub/tos", icon: ScrollText },
     ],
   },
@@ -113,11 +126,6 @@ const HUB_NAV_GROUPS: HubNavGroup[] = [
         href: "/creator-hub/tips-sponsors",
         icon: Gift,
       },
-      {
-        label: "Creator Rewards",
-        href: "/creator-hub/rewards",
-        icon: Crown,
-      },
     ],
   },
   {
@@ -142,6 +150,8 @@ function HubNavMenu({
   pathname,
   onNavTap,
   toHref,
+  alertCounts,
+  onAlertSeen,
 }: {
   items: HubNavItem[];
   pathname: string;
@@ -154,6 +164,8 @@ function HubNavMenu({
    * mark every item inactive.
    */
   toHref: (path: string) => string;
+  alertCounts?: Partial<Record<NavAlertKey, number>>;
+  onAlertSeen?: (key: NavAlertKey) => void;
 }) {
   const root = toHref("/creator-hub");
   const activeHref = items
@@ -170,13 +182,19 @@ function HubNavMenu({
         const Icon = item.icon;
         const href = toHref(item.href);
         const isActive = href === activeHref;
+        const alertCount = item.alertKey
+          ? (alertCounts?.[item.alertKey] ?? 0)
+          : 0;
         return (
           <SidebarMenuItem key={`${item.label}-${i}`}>
             <SidebarMenuButton
               isActive={isActive}
               tooltip={item.label}
               render={<Link href={href} />}
-              onClick={onNavTap}
+              onClick={() => {
+                if (item.alertKey) onAlertSeen?.(item.alertKey);
+                onNavTap();
+              }}
               className="h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
             >
               <Icon
@@ -188,8 +206,12 @@ function HubNavMenu({
               <span>{item.label}</span>
               <LinkPending
                 size={13}
-                className="ml-auto shrink-0 group-data-[collapsible=icon]:hidden"
+                className={cn(
+                  "shrink-0 group-data-[collapsible=icon]:hidden",
+                  alertCount === 0 && "ml-auto",
+                )}
               />
+              <NavAlertBadge count={alertCount} />
             </SidebarMenuButton>
           </SidebarMenuItem>
         );
@@ -199,11 +221,13 @@ function HubNavMenu({
 }
 
 export function CreatorHubSidebar({
+  viewerId,
   access = { creatorHub: true, packStudio: false, antifraud: false },
 }: {
+  viewerId: string;
   /** Server-computed workspace entitlement for the footer switcher. */
   access?: AppSwitcherAccess;
-} = {}) {
+}) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
   // Host-aware hrefs: on marketing.packydash.com the `/creator-hub` prefix is
@@ -211,6 +235,16 @@ export function CreatorHubSidebar({
   // HostLink (a bare /dashboard here would be rewritten into this segment).
   const appHost = useAppHost();
   const toHref = (path: string) => (appHost ? hrefFrom(appHost, path) : path);
+  const rewardsHref = toHref("/creator-hub/rewards");
+  const rewardsIsActive =
+    pathname === rewardsHref || pathname.startsWith(`${rewardsHref}/`);
+  const { counts: navAlertCounts, markSeen: markNavAlertSeen } =
+    useNavAlertBadges({
+      keys: ["creatorRewards"],
+      viewerId,
+      scope: "creatorHub",
+      activeKey: rewardsIsActive ? "creatorRewards" : undefined,
+    });
 
   // Close the mobile drawer on a navigation tap (same UX the main sidebar
   // applies — otherwise the new page renders behind the still-open sheet).
@@ -260,6 +294,8 @@ export function CreatorHubSidebar({
                 pathname={pathname}
                 onNavTap={handleNavTap}
                 toHref={toHref}
+                alertCounts={navAlertCounts}
+                onAlertSeen={markNavAlertSeen}
               />
             </SidebarGroupContent>
           </SidebarGroup>

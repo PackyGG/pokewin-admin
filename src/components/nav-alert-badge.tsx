@@ -9,7 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { fetchNavAlertCounts } from "./nav-alert-badge-actions";
 
-export type NavAlertKey = "fiat" | "reviews" | "signups";
+export type NavAlertKey = "fiat" | "reviews" | "signups" | "creatorRewards";
 
 type NavAlertCounts = Record<NavAlertKey, number>;
 
@@ -17,6 +17,7 @@ const EMPTY_COUNTS: NavAlertCounts = {
   fiat: 0,
   reviews: 0,
   signups: 0,
+  creatorRewards: 0,
 };
 const POLL_MS = 60_000;
 /**
@@ -63,7 +64,7 @@ export function useNavAlertBadges({
 }: {
   keys: readonly NavAlertKey[];
   viewerId: string;
-  scope: "main" | "antifraud";
+  scope: "main" | "antifraud" | "creatorHub";
   activeKey?: NavAlertKey;
   enabled?: boolean;
 }) {
@@ -90,7 +91,7 @@ export function useNavAlertBadges({
     const requestSequence = ++requestSequenceRef.current;
 
     const request: Partial<Record<NavAlertKey, string>> & {
-      scope: "main" | "antifraud";
+      scope: "main" | "antifraud" | "creatorHub";
     } = { scope };
     const baselineKeys: NavAlertKey[] = [];
 

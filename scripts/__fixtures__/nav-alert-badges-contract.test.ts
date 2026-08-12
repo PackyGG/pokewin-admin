@@ -46,6 +46,11 @@ test("badge counts use bounded indexed event timestamps", async () => {
   assert.match(actions, /completed_at <=/);
   assert.match(actions, /gt\(antifraud_reviews\.created_at/);
   assert.match(actions, /lte\(antifraud_reviews\.created_at/);
+  assert.match(actions, /eq\(creator_reward_claims\.status, "pending"\)/);
+  assert.match(actions, /gt\(creator_reward_claims\.requested_at/);
+  assert.match(actions, /lte\(\s*creator_reward_claims\.requested_at/);
+  assert.match(actions, /gt\(creator_reward_claims\.reinstated_at/);
+  assert.match(actions, /lte\(\s*creator_reward_claims\.reinstated_at/);
   assert.match(monitor, /"\/v1\/signups\/unseen-count"/);
   assert.match(monitor, /first_seen_at > \$1::timestamptz/);
   assert.match(monitor, /first_seen_at <= \$2::timestamptz/);
@@ -53,4 +58,22 @@ test("badge counts use bounded indexed event timestamps", async () => {
   // subselect instead of LEAST() over a full count.
   assert.match(monitor, /LIMIT 100\s*\)\s*bounded/);
   assert.match(signups, /until: checkedAt\.toISOString\(\)/);
+});
+
+test("Creator Rewards lives in Overview with request-first navigation and alerts", async () => {
+  const [sidebar, page, content, badge] = await Promise.all([
+    source("src/app/(creator-hub)/creator-hub/_components/creator-hub-sidebar.tsx"),
+    source("src/app/(creator-hub)/creator-hub/rewards/page.tsx"),
+    source("src/app/(creator-hub)/creator-hub/rewards/content.tsx"),
+    source("src/components/nav-alert-badge.tsx"),
+  ]);
+
+  const overview = sidebar.match(/label: "Overview"[\s\S]*?\n  },/i)?.[0] ?? "";
+  const programs = sidebar.match(/label: "Programs & Payouts"[\s\S]*?\n  },/i)?.[0] ?? "";
+  assert.match(overview, /label: "Creator Rewards"/);
+  assert.doesNotMatch(programs, /label: "Creator Rewards"/);
+  assert.match(sidebar, /alertKey: "creatorRewards"/);
+  assert.match(badge, /"creatorRewards"/);
+  assert.match(page, /activeTab=\{tab \?\? "requests"\}/);
+  assert.ok(content.indexOf('value: "requests"') < content.indexOf('value: "programs"'));
 });

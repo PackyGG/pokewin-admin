@@ -224,7 +224,7 @@ export default async function CreatorHubLayout({
           <TopProgressBar />
         </Suspense>
         {/* The swapped nav — Creator Hub's own sidebar replaces AppSidebar. */}
-        <CreatorHubSidebar access={appAccess} />
+        <CreatorHubSidebar viewerId={session.userId} access={appAccess} />
         <SidebarInset className="min-w-0">
           {dbEnv === "dev" && <DevDbBanner />}
           <AdminHeader

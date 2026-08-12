@@ -41,8 +41,8 @@ export function CreatorVipContent({
   programs: CreatorRewardProgramWithStats[];
   claims: CreatorRewardClaimRow[];
   /**
-   * Which side is showing, resolved by the server from `?tab=` (falling back
-   * to whichever side needs attention). Authoritative: the tab bar below only
+   * Which side is showing, resolved by the server from `?tab=` (Requests when
+   * omitted). Authoritative: the tab bar below only
    * renders links, it holds no state of its own.
    */
   activeTab: CreatorVipTab;
@@ -86,10 +86,8 @@ export function CreatorVipContent({
   const liveCount = programs.filter((p) => p.archivedAt == null).length;
 
   /**
-   * `?tab=` is always written explicitly, on both tabs. The no-param default is
-   * data-dependent (land on Requests when claims are waiting), so a bare href
-   * would mean "whatever the queue looks like right now" rather than the tab
-   * the operator just clicked.
+   * `?tab=` is always written explicitly on both tabs, keeping navigation and
+   * Back behavior deterministic.
    */
   function hrefFor(tab: CreatorVipTab): string {
     const params = new URLSearchParams(searchParams.toString());
@@ -98,16 +96,6 @@ export function CreatorVipContent({
   }
 
   const tabs = [
-    {
-      value: "programs" as const,
-      label: "Programs",
-      Icon: Crown,
-      badge: (
-        <span className="tabular-nums text-xs text-muted-foreground">
-          {liveCount}
-        </span>
-      ),
-    },
     {
       value: "requests" as const,
       label: "Requests",
@@ -124,6 +112,16 @@ export function CreatorVipContent({
             </span>
           </Badge>
         ) : null,
+    },
+    {
+      value: "programs" as const,
+      label: "Programs",
+      Icon: Crown,
+      badge: (
+        <span className="tabular-nums text-xs text-muted-foreground">
+          {liveCount}
+        </span>
+      ),
     },
   ];
 

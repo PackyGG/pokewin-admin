@@ -183,15 +183,12 @@ async function Body({ tab }: { tab: CreatorVipTab | undefined }) {
           />
         </div>
 
-        {/* The tab bar is URL-driven, so the active tab is resolved HERE and
-            passed down as a value — no client state to re-seed, and hence no
-            `key=` remount hack. Land on whichever side needs attention when
-            `?tab=` says nothing: an operator opening this page with claims
-            waiting almost certainly came to review them, not to read config. */}
+        {/* Requests is the stable first/default view. Programs remains
+            explicitly deep-linkable through `?tab=programs`. */}
         <CreatorVipContent
           programs={programs.data ?? []}
           claims={claims.data ?? []}
-          activeTab={tab ?? (pending.length > 0 ? "requests" : "programs")}
+          activeTab={tab ?? "requests"}
           basePath="/creator-hub/rewards"
           creatorHrefBase="/creator-hub/creators"
           claimsCap={CLAIMS_CAP}
