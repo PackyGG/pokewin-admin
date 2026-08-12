@@ -17,7 +17,7 @@ import type { CreatorDealResponse } from "@/lib/backend-api";
  *   dealCost = Σ over the weekly deals in the frame of
  *                ( FULL withdraw cap                                 // not the used amount
  *                  + (tip/stream + sponsor/stream) × fills_allowed ) // per-stream caps recur per fill
- *              + leaderboard net prize × 50%                         // house always pays half
+ *              + leaderboard net prize × stored house-share %
  *   expectedWager = dealCost / 7.5%                                  // house value rate
  *
  * There is NO separate per-fill / daily-fill cost — the withdraw cap already
@@ -36,8 +36,20 @@ import type { CreatorDealResponse } from "@/lib/backend-api";
 /** House value generated per $ wagered. `expectedWager = dealCost / HOUSE_EDGE`. */
 export const HOUSE_EDGE = 0.075;
 
-/** House share of every affiliate-leaderboard prize (owner rule: always 50%). */
+/** Legacy/default modeled share where a caller has no stored board terms. */
 export const LB_HOUSE_SHARE = 0.5;
+
+/** Missing admin sponsorship annotations mean the house funds the full pool. */
+export const DEFAULT_LB_HOUSE_SHARE_PCT = 100;
+
+export function normalizeLeaderboardHouseSharePct(
+  value: string | number | null | undefined,
+  fallback = DEFAULT_LB_HOUSE_SHARE_PCT,
+): number {
+  if (value == null || value === "") return fallback;
+  const pct = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(pct) ? Math.min(100, Math.max(0, pct)) : fallback;
+}
 
 /** Coerce a backend string|number|null money field to a finite number (0 fallback). */
 export function toFiniteNumber(
@@ -49,7 +61,7 @@ export function toFiniteNumber(
 }
 
 /**
- * House cost of a single leaderboard prize pool: `max(0, prize − refund) × 50%`.
+ * House cost of a single leaderboard prize pool, weighted by its house share.
  * The one place LB house cost is defined — use it everywhere (deal cost AND the
  * standalone Leaderboard-Spend figures) so a board's LB cost is identical
  * across the app. Replaces the old admin per-board "sponsored %" (which
@@ -58,9 +70,14 @@ export function toFiniteNumber(
 export function leaderboardHouseCost(
   prizeUsd: string | number | null | undefined,
   refundUsd: string | number | null | undefined = 0,
+  houseSharePct: string | number | null | undefined =
+    LB_HOUSE_SHARE * 100,
 ): number {
   const net = Math.max(0, toFiniteNumber(prizeUsd) - toFiniteNumber(refundUsd));
-  return net * LB_HOUSE_SHARE;
+  return net * (normalizeLeaderboardHouseSharePct(
+    houseSharePct,
+    LB_HOUSE_SHARE * 100,
+  ) / 100);
 }
 
 /**
@@ -101,7 +118,7 @@ export type DealCost = {
   capUsd: number;
   /** Σ (tip/stream + sponsor/stream) × fills over the frame's weekly deals. */
   tipSponsorUsd: number;
-  /** Leaderboard net prize × 50%. */
+  /** Leaderboard net prize × the supplied house share. */
   leaderboardUsd: number;
   /** capUsd + tipSponsorUsd + leaderboardUsd. */
   dealCost: number;
@@ -115,13 +132,13 @@ export type DealCost = {
  * @param weeklyDeals the weekly fill-deals inside the frame (see
  *        {@link weeklyDealsInFrame}); their FULL caps + tip/sponsor allowances
  *        are summed.
- * @param lbPrizeUsd the frame's leaderboard total prize (net of `lbRefundUsd`);
- *        the house pays 50% of it.
+ * @param lbPrizeUsd the frame's leaderboard total prize (net of `lbRefundUsd`).
  */
 export function computeDealCost(args: {
   weeklyDeals: CreatorDealResponse[];
   lbPrizeUsd: string | number | null | undefined;
   lbRefundUsd?: string | number | null | undefined;
+  lbHouseSharePct?: string | number | null | undefined;
 }): DealCost {
   let capUsd = 0;
   let tipSponsorUsd = 0;
@@ -132,7 +149,11 @@ export function computeDealCost(args: {
     const fills = Math.max(0, d.fills_allowed ?? 0);
     tipSponsorUsd += (tip + sponsor) * fills;
   }
-  const leaderboardUsd = leaderboardHouseCost(args.lbPrizeUsd, args.lbRefundUsd);
+  const leaderboardUsd = leaderboardHouseCost(
+    args.lbPrizeUsd,
+    args.lbRefundUsd,
+    args.lbHouseSharePct,
+  );
   const dealCost = capUsd + tipSponsorUsd + leaderboardUsd;
   const expectedWager = HOUSE_EDGE > 0 ? dealCost / HOUSE_EDGE : 0;
   return { capUsd, tipSponsorUsd, leaderboardUsd, dealCost, expectedWager };

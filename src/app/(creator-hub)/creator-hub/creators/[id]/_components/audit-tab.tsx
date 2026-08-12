@@ -67,11 +67,15 @@ export async function CreatorAuditTab({
                   {request.declinedAt && <span>Declined {formatDateTime(request.declinedAt)}</span>}
                   {request.completedAt && <span>Completed {formatDateTime(request.completedAt)}</span>}
                 </div>
-                {(request.backendDealId || request.rewardProgramId) && (
-                  <div className="font-mono text-xs text-muted-foreground">
-                    {request.backendDealId && <>Deal {request.backendDealId}</>}
-                    {request.backendDealId && request.rewardProgramId && " · "}
-                    {request.rewardProgramId && <>Reward {request.rewardProgramId}</>}
+                {(request.backendDealIds.length > 0 || request.rewardProgramId) && (
+                  <div className="space-y-1 font-mono text-xs text-muted-foreground">
+                    {request.backendDealIds.map((dealId, index) => (
+                      <div key={dealId}>
+                        Deal{request.backendDealIds.length > 1 ? ` period ${index + 1}/${request.backendDealIds.length}` : ""}{" "}
+                        {dealId}
+                      </div>
+                    ))}
+                    {request.rewardProgramId && <div>Reward {request.rewardProgramId}</div>}
                   </div>
                 )}
                 {request.lastErrorMessage && (

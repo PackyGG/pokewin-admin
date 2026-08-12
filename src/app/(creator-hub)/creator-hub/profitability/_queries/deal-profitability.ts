@@ -12,6 +12,7 @@ import {
   computeDealCost,
   weeklyDealsInFrame,
 } from "@/lib/deal-economics";
+import { summarizeDealTermPeriods } from "@/lib/deal-term-periods";
 
 import { mapPool, pagedWalk } from "../../_lib/backend-walk";
 import { getCodeAndWagerByUser } from "../../../../(admin)/creators/_queries/code-and-wager-by-user";
@@ -32,13 +33,13 @@ import { getFrameAffiliatePnlByUser } from "./frame-affiliate-pnl-by-user";
  * is always compared against the wager driven in the same window.
  *
  *   dealCost      = the canonical `@/lib/deal-economics` `computeDealCost`
- *                   over the weekly fill-deals overlapping the current frame:
+ *                   over the enforced fill-deal periods overlapping the frame:
  *                   Σ ( FULL withdraw cap + (tip + sponsor) × fills_allowed )
- *                   + leaderboard net prize × 50%. A 2-week (bi-weekly) frame
- *                   spanning two weekly deals sums both weeks' cap + tip/
- *                   sponsor legs (per-stream caps recur for every fill, owner
- *                   directive 2026-06-23); the LB is ALWAYS 50% of the net
- *                   prize (owner rule), never the admin sponsored-%.
+ *                   + leaderboard net prize × stored house share. A multi-period frame sums
+ *                   each actual backend period's cap + tip/sponsor legs
+ *                   (per-stream caps recur for every fill, owner
+ *                   directive 2026-06-23); the leaderboard leg uses its
+ *                   admin-side sponsored percentage.
  *   expectedWager = dealCost / house edge (7.5%).
  *   actualWager   = code-cohort wager inside [frame start, min(now, end)];
  *                   0 for a not-yet-started (upcoming) frame.
@@ -69,7 +70,7 @@ const DEAL_FETCH_CONCURRENCY = 6;
 
 /**
  * Number of whole weeks in a deal frame — the FRAME-LENGTH label only (the
- * cost no longer scales by it; `computeDealCost` sums the actual weekly deals
+ * cost no longer scales by it; `computeDealCost` sums the actual enforced rows
  * overlapping the frame). Boards run in weekly multiples (weekly / bi-weekly),
  * so the duration is rounded to the nearest week and floored at 1.
  */
@@ -107,25 +108,25 @@ export type CreatorProfitabilityRow = {
   frameEndMs: number | null;
   /** True when the frame is running right now. */
   isLive: boolean;
-  /** Per-week withdraw cap from the deal (`total_withdraw_cap_usd`). */
-  weeklyCapUsd: number;
+  /** Uniform withdrawal cap per independently enforced deal period. */
+  capPerPeriodUsd: number | null;
+  /** Length of that enforced cap period; null for mixed/invalid legacy rows. */
+  termPeriodDays: number | null;
+  /** Number of enforced deal periods contributing to this frame. */
+  termPeriodCount: number;
   /** Whole weeks in the deal frame (= leaderboard length). */
   dealWeeks: number;
-  /** Total withdraw cap over the deal length (`weeklyCapUsd × dealWeeks`). */
+  /** Total withdraw cap over every enforced deal period in the frame. */
   capUsd: number;
   leaderboardUsd: number;
   /**
-   * Per-week tip + sponsor allowance from the deal
+   * Uniform per-period tip + sponsor allowance from the deal
    * (`(perStreamTip + perStreamSponsor) × fills_allowed`). The per-fill
-   * caps recur for every fill the deal grants in the weekly window — this
-   * is the weekly ceiling before frame-scaling.
+   * caps recur for every fill the deal grants in its enforced period.
    */
-  weeklyTipSponsorUsd: number;
+  tipSponsorPerPeriodUsd: number | null;
   /**
-   * Total tip + sponsor allowance over the deal length
-   * (`weeklyTipSponsorUsd × dealWeeks`). Scales by frame weeks the same
-   * way `capUsd` does: a 2-week (bi-weekly) board counts the weekly
-   * allowance twice (owner directive 2026-06-23).
+   * Total tip + sponsor allowance across all enforced periods in the frame.
    */
   tipSponsorUsd: number;
   dealCost: number;
@@ -239,8 +240,8 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
       console.error("[profitability] leaderboard frame fetch failed:", err);
       return new Map<string, CreatorLbFrame>();
     }),
-    // Each fill creator's FULL deal history — the canonical cost sums the
-    // weekly fill-deals overlapping the current frame (not a single deal).
+    // Each fill creator's FULL deal history — the canonical cost sums every
+    // enforced fill-deal period overlapping the current frame.
     // Bounded concurrency (mapPool) so a large roster can't stampede the
     // backend admin API; a failed lookup degrades that creator to [] instead
     // of sinking the roster.
@@ -330,9 +331,9 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
     const fr = resolved.get(c.id)!;
     const dealWeeks = frameWeeks(fr.startMs, fr.endMs);
 
-    // Canonical deal cost — the weekly fill-deals overlapping THIS creator's
+    // Canonical deal cost — the enforced fill-deal periods overlapping THIS creator's
     // current frame, each at FULL cap + (tip + sponsor) × fills, plus the
-    // frame board's leaderboard net prize × 50% (owner rule). One source of
+    // frame board's leaderboard net prize × stored house share. One source of
     // truth via `computeDealCost`.
     const deals = dealsByOwner.get(c.id) ?? [];
     const wds = weeklyDealsInFrame(fr.startMs, fr.endMs, deals);
@@ -343,16 +344,12 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
       // past-deals / four-week pass gross prize + refund instead).
       lbPrizeUsd: fr.board?.prizeUsd ?? 0,
       lbRefundUsd: 0,
+      lbHouseSharePct: fr.board?.sponsoredPct,
     });
 
-    // DISPLAY-only per-week fields for the "$Y/wk × N" sub-text. `dealWeeks`
-    // stays the frame-length label; the "/wk" figures are the average per
-    // weekly deal in the frame (coherent for uniform weeks).
-    const weeklyDealsCount = wds.length;
-    const weeklyCapUsd = weeklyDealsCount ? capUsd / weeklyDealsCount : 0;
-    const weeklyTipSponsorUsd = weeklyDealsCount
-      ? tipSponsorUsd / weeklyDealsCount
-      : 0;
+    // DISPLAY-only recurrence comes from each backend row's actual enforced
+    // window. A single 14-day row is therefore "per 2 weeks", not "/wk".
+    const termPeriods = summarizeDealTermPeriods(wds);
 
     const expectedWager = dealCost / HOUSE_EDGE;
     const actualWager = wagerByUser.get(c.id) ?? 0;
@@ -370,11 +367,13 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
       frameStartMs: Number.isFinite(fr.startMs) ? fr.startMs : null,
       frameEndMs: Number.isFinite(fr.endMs) ? fr.endMs : null,
       isLive: fr.isLive,
-      weeklyCapUsd,
+      capPerPeriodUsd: termPeriods.capPerPeriodUsd,
+      termPeriodDays: termPeriods.periodDays,
+      termPeriodCount: termPeriods.periodCount,
       dealWeeks,
       capUsd,
       leaderboardUsd,
-      weeklyTipSponsorUsd,
+      tipSponsorPerPeriodUsd: termPeriods.tipSponsorPerPeriodUsd,
       tipSponsorUsd,
       dealCost,
       expectedWager,

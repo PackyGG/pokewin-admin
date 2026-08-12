@@ -52,30 +52,43 @@ export function dealLengthLabel(args: {
 /**
  * Cost-breakdown string: Cap · LB · Tip+Sponsor — the deal-cost legs
  * (cap + leaderboard + tips; there is NO daily-fill leg). Multi-week frames
- * show the "$Y/wk × N" maths so the total is auditable.
+ * show the real enforced recurrence (per week, per 2 weeks, etc.) so the
+ * total is auditable without inventing a weekly equivalent.
  */
 export function costBreakdown(args: {
   dealWeeks: number;
   capUsd: number;
-  weeklyCapUsd: number;
+  capPerPeriodUsd: number | null;
+  termPeriodDays: number | null;
+  termPeriodCount: number;
   tipSponsorUsd: number;
-  weeklyTipSponsorUsd: number;
+  tipSponsorPerPeriodUsd: number | null;
   leaderboardUsd: number;
 }): string {
+  const recurrence = (
+    amount: number | null,
+  ): string | null => {
+    if (amount == null || amount <= 0 || args.termPeriodDays == null) return null;
+    const duration = args.termPeriodDays === 7
+      ? "week"
+      : args.termPeriodDays % 7 === 0
+        ? `${args.termPeriodDays / 7} weeks`
+        : `${args.termPeriodDays} days`;
+    const count = args.termPeriodCount > 1
+      ? ` × ${args.termPeriodCount} periods`
+      : "";
+    return `${formatCurrency(amount)} per ${duration}${count}`;
+  };
+  const capRecurrence = recurrence(args.capPerPeriodUsd);
   const capLabel =
-    args.dealWeeks > 1 && args.weeklyCapUsd > 0
-      ? `Cap ${formatCurrency(args.capUsd)} (${formatCurrency(
-          args.weeklyCapUsd,
-        )}/wk × ${args.dealWeeks})`
+    capRecurrence
+      ? `Cap ${formatCurrency(args.capUsd)} (${capRecurrence})`
       : `Cap ${formatCurrency(args.capUsd)}`;
-  // Tip+sponsor recurs every fill the deal grants in its weekly window, and
-  // the weekly figure scales across the leaderboard frame the same way cap
-  // does (owner directive 2026-06-23) — show the multiplication.
+  // Tip+sponsor recurs every fill the deal grants in each enforced period.
+  const tipRecurrence = recurrence(args.tipSponsorPerPeriodUsd);
   const tipLabel =
-    args.dealWeeks > 1 && args.weeklyTipSponsorUsd > 0
-      ? `Tip+Sponsor ${formatCurrency(args.tipSponsorUsd)} (${formatCurrency(
-          args.weeklyTipSponsorUsd,
-        )}/wk × ${args.dealWeeks})`
+    tipRecurrence
+      ? `Tip+Sponsor ${formatCurrency(args.tipSponsorUsd)} (${tipRecurrence})`
       : `Tip+Sponsor ${formatCurrency(args.tipSponsorUsd)}`;
   return `${capLabel} · LB ${formatCurrency(
     args.leaderboardUsd,

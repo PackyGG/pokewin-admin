@@ -7,10 +7,12 @@ import {
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
 import {
-  LB_HOUSE_SHARE,
+  DEFAULT_LB_HOUSE_SHARE_PCT,
   leaderboardHouseCost,
+  normalizeLeaderboardHouseSharePct,
   toFiniteNumber,
 } from "@/lib/deal-economics";
+import { getLeaderboardSponsorshipMap } from "./leaderboard-sponsorship";
 
 // The backend caps `limit` per request; 100 mirrors the page size the
 // creators-stats walk uses. MAX_PAGES guards against a runaway loop if
@@ -85,9 +87,9 @@ export type LeaderboardCostBoard = {
   prizeUsd: number;
   /** Refund already netted out of `prizeUsd` (cancelled boards). */
   refundUsd: number;
-  /** House share of this board — always the canonical 50% (owner rule). */
+  /** Stored admin-side house share of this board. */
   sponsoredPct: number;
-  /** House's share of this board: net prize × 50% (rose). */
+  /** House's share of this board: net prize × stored share (rose). */
   houseCostUsd: number;
 };
 
@@ -198,6 +200,7 @@ export type LeaderboardCostTotals = {
  */
 export async function getLeaderboardCostTotal(): Promise<LeaderboardCostTotals> {
   const all = await fetchAllApprovedLeaderboards();
+  const sponsorship = await getLeaderboardSponsorshipMap(all.map((lb) => lb.id));
 
   // NOW once, reused for the past/active partition below so every board
   // is bucketed against a single consistent clock.
@@ -205,7 +208,7 @@ export async function getLeaderboardCostTotal(): Promise<LeaderboardCostTotals> 
 
   let totalPrizeUsd = 0;
   let houseCoveredUsd = 0;
-  // Time-split house cost accumulators (canonical 50% house share).
+  // Time-split house cost accumulators (stored per-board house share).
   let pastHouseCostUsd = 0;
   let activeHouseCostUsd = 0;
   let activeGrossUsd = 0;
@@ -216,9 +219,11 @@ export async function getLeaderboardCostTotal(): Promise<LeaderboardCostTotals> 
     const prize = toFiniteNumber(lb.total_prize_usd);
     const refund = toFiniteNumber(lb.refund_amount_usd);
     const net = Math.max(0, prize - refund);
-    // Canonical LB house cost — always 50% of the net prize (owner rule),
-    // replacing the old admin per-board "sponsored %".
-    const houseCost = leaderboardHouseCost(prize, refund);
+    const sponsoredPct = normalizeLeaderboardHouseSharePct(
+      sponsorship.get(lb.id),
+      DEFAULT_LB_HOUSE_SHARE_PCT,
+    );
+    const houseCost = leaderboardHouseCost(prize, refund, sponsoredPct);
     totalPrizeUsd += net;
     houseCoveredUsd += houseCost;
 
@@ -250,17 +255,16 @@ export async function getLeaderboardCostTotal(): Promise<LeaderboardCostTotals> 
       creatorUserId: lb.creator_user_id,
       prizeUsd: net,
       refundUsd: refund,
-      sponsoredPct: LB_HOUSE_SHARE * 100,
+      sponsoredPct,
       houseCostUsd: houseCost,
     });
   }
   // Priciest house cost first so the panel's mini-breakdown surfaces the
   // boards that move the headline most.
   boards.sort((a, b) => b.houseCostUsd - a.houseCostUsd);
-  // House share of the active boards — the canonical constant 50% (owner
-  // rule). 0 when there's no active gross prize (nothing running, or the
-  // active pool is fully refunded).
-  const activeCoveragePct = activeGrossUsd > 0 ? LB_HOUSE_SHARE * 100 : 0;
+  const activeCoveragePct = activeGrossUsd > 0
+    ? (activeHouseCostUsd / activeGrossUsd) * 100
+    : 0;
   return {
     totalPrizeUsd,
     houseCoveredUsd,
@@ -278,12 +282,11 @@ export async function getLeaderboardCostTotal(): Promise<LeaderboardCostTotals> 
 const WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 export type Lb2wkInfo = {
-  /** Leaderboard house cost (net prize × 50%) over the next 14 days. */
+  /** Leaderboard house cost (net prize × stored share) over the next 14 days. */
   costUsd: number;
   /**
-   * House share "% we pay" across the creator's in-window leaderboards —
-   * the canonical constant 50% (owner rule). 0 when there's no in-window
-   * prize.
+   * Blended stored house share across the creator's in-window leaderboards.
+   * 0 when there's no in-window prize.
    */
   effectivePct: number;
 };
@@ -304,6 +307,7 @@ export async function getLeaderboard2wkCostByUser(): Promise<
   Map<string, Lb2wkInfo>
 > {
   const all = await fetchAllApprovedLeaderboards();
+  const sponsorship = await getLeaderboardSponsorshipMap(all.map((lb) => lb.id));
 
   const now = Date.now();
   const windowEnd = now + WINDOW_MS;
@@ -316,21 +320,33 @@ export async function getLeaderboard2wkCostByUser(): Promise<
     return start <= windowEnd && end >= now;
   });
 
-  // Canonical 50% house share per board (owner rule) — no sponsored-% map.
   const costByCreator = new Map<string, number>();
+  const grossByCreator = new Map<string, number>();
   for (const lb of inWindow) {
     const cid = lb.creator_user_id;
+    const gross = Math.max(
+      0,
+      toFiniteNumber(lb.total_prize_usd) - toFiniteNumber(lb.refund_amount_usd),
+    );
+    const pct = normalizeLeaderboardHouseSharePct(
+      sponsorship.get(lb.id),
+      DEFAULT_LB_HOUSE_SHARE_PCT,
+    );
     costByCreator.set(
       cid,
       (costByCreator.get(cid) ?? 0) +
-        leaderboardHouseCost(lb.total_prize_usd, lb.refund_amount_usd),
+        leaderboardHouseCost(lb.total_prize_usd, lb.refund_amount_usd, pct),
     );
+    grossByCreator.set(cid, (grossByCreator.get(cid) ?? 0) + gross);
   }
 
   const out = new Map<string, Lb2wkInfo>();
   for (const [cid, costUsd] of costByCreator) {
-    // Every board is a flat 50% house share, so the blended figure is 50.
-    out.set(cid, { costUsd, effectivePct: LB_HOUSE_SHARE * 100 });
+    const grossUsd = grossByCreator.get(cid) ?? 0;
+    out.set(cid, {
+      costUsd,
+      effectivePct: grossUsd > 0 ? (costUsd / grossUsd) * 100 : 0,
+    });
   }
   return out;
 }
@@ -348,7 +364,9 @@ export type CreatorLbFrame = {
   prizeUsd: number;
   /** Refund already netted out of `prizeUsd` (cancelled boards). */
   refundUsd: number;
-  /** House cost of this board — net prize × 50% (rose). */
+  /** Stored admin-side percentage of the prize pool funded by the house. */
+  sponsoredPct: number;
+  /** House cost of this board — net prize × stored share (rose). */
   houseCostUsd: number;
   /** True when now ∈ [start, end] (the frame is running right now). */
   isLive: boolean;
@@ -370,6 +388,7 @@ export async function getActiveLeaderboardFrameByUser(): Promise<
   Map<string, CreatorLbFrame>
 > {
   const all = await fetchAllApprovedLeaderboards();
+  const sponsorship = await getLeaderboardSponsorshipMap(all.map((lb) => lb.id));
   const now = Date.now();
 
   const byCreator = new Map<string, CreatorLbFrame>();
@@ -382,8 +401,15 @@ export async function getActiveLeaderboardFrameByUser(): Promise<
 
     const refund = toFiniteNumber(lb.refund_amount_usd);
     const net = Math.max(0, toFiniteNumber(lb.total_prize_usd) - refund);
-    // Canonical LB house cost — net prize × 50% (owner rule).
-    const houseCostUsd = leaderboardHouseCost(lb.total_prize_usd, refund);
+    const sponsoredPct = normalizeLeaderboardHouseSharePct(
+      sponsorship.get(lb.id),
+      DEFAULT_LB_HOUSE_SHARE_PCT,
+    );
+    const houseCostUsd = leaderboardHouseCost(
+      lb.total_prize_usd,
+      refund,
+      sponsoredPct,
+    );
     const isLive = startMs <= now && endMs >= now;
 
     const cand: CreatorLbFrame = {
@@ -393,6 +419,7 @@ export async function getActiveLeaderboardFrameByUser(): Promise<
       endMs,
       prizeUsd: net,
       refundUsd: refund,
+      sponsoredPct,
       houseCostUsd,
       isLive,
     };

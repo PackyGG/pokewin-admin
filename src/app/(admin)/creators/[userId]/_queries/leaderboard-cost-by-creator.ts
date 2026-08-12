@@ -6,8 +6,14 @@ import {
   affiliateLeaderboardsApi,
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
-import { leaderboardHouseCost, toFiniteNumber } from "@/lib/deal-economics";
+import {
+  DEFAULT_LB_HOUSE_SHARE_PCT,
+  leaderboardHouseCost,
+  normalizeLeaderboardHouseSharePct,
+  toFiniteNumber,
+} from "@/lib/deal-economics";
 import { CREATOR_COST_CACHE_TTL_SECONDS } from "./_cost-cache";
+import { getLeaderboardSponsorshipMap } from "../../_queries/leaderboard-sponsorship";
 
 // Backend caps `limit` per request; 100 mirrors the page size the
 // global leaderboard-cost walk uses. A single creator owning >100
@@ -18,10 +24,10 @@ const MAX_PAGES = 20;
 
 export type CreatorLeaderboardCost = {
   /**
-   * Net house cost across this creator's APPROVED leaderboards, at the
-   * canonical 50% house share (owner rule):
+   * Net house cost across this creator's APPROVED leaderboards, at each
+   * board's stored admin-side house share:
    *
-   *   costUsd = Σ max(0, total_prize_usd − refund_amount_usd) × 50%
+   *   costUsd = Σ max(0, total_prize_usd − refund_amount_usd) × house share
    *
    * Same formula + scope the global `getLeaderboardCostTotal` KPI tile on
    * /creators uses, filtered to one `creator_user_id`. House cost → the
@@ -102,15 +108,18 @@ async function computeCreatorLeaderboardCost(
     return { costUsd: 0, grossPrizeUsd: 0, refundedUsd: 0, leaderboardCount: 0 };
   }
 
-  // Canonical LB house cost — net prize × 50% (owner rule), same as the
-  // global tile. No admin sponsored-% map anymore.
+  const sponsorship = await getLeaderboardSponsorshipMap(all.map((lb) => lb.id));
   let costUsd = 0;
   let grossPrizeUsd = 0;
   let refundedUsd = 0;
   for (const lb of all) {
     const prize = toFiniteNumber(lb.total_prize_usd);
     const refund = toFiniteNumber(lb.refund_amount_usd);
-    costUsd += leaderboardHouseCost(prize, refund);
+    const pct = normalizeLeaderboardHouseSharePct(
+      sponsorship.get(lb.id),
+      DEFAULT_LB_HOUSE_SHARE_PCT,
+    );
+    costUsd += leaderboardHouseCost(prize, refund, pct);
     grossPrizeUsd += prize;
     refundedUsd += refund;
   }
@@ -134,7 +143,10 @@ async function computeCreatorLeaderboardCost(
 const cachedCreatorLeaderboardCost = unstable_cache(
   computeCreatorLeaderboardCost,
   ["creators-detail-leaderboard-cost-v1"],
-  { revalidate: CREATOR_COST_CACHE_TTL_SECONDS },
+  {
+    revalidate: CREATOR_COST_CACHE_TTL_SECONDS,
+    tags: ["creators-leaderboard-cost"],
+  },
 );
 
 export async function getCreatorLeaderboardCost(

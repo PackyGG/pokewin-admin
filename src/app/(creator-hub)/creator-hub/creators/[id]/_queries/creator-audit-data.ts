@@ -4,6 +4,8 @@ import { and, desc, eq, inArray, like, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import { auditActorVisibilityPredicate } from "@/lib/audit-visibility";
+import { creatorsApi, type CreatorDealResponse } from "@/lib/backend-api";
+import { indexCreatorApprovalDealIds } from "@/lib/creator-approval-deal-ids";
 import {
   admin_audit_events,
   creator_deal_approval_events,
@@ -25,6 +27,24 @@ export async function getCreatorAuditDetail(
     .limit(100);
 
   const requestIds = approvalRequests.map((request) => request.id);
+  let dealIdsByApproval = new Map<string, string[]>();
+  if (approvalRequests.some((request) => request.request_kind === "deal")) {
+    try {
+      const deals: CreatorDealResponse[] = [];
+      const limit = 100;
+      for (let offset = 0; offset < 10_000; ) {
+        const page = await creatorsApi.listDeals(creatorUserId, { offset, limit });
+        deals.push(...page.data);
+        if (deals.length >= page.total || page.data.length === 0) break;
+        offset += page.data.length;
+      }
+      dealIdsByApproval = indexCreatorApprovalDealIds(deals);
+    } catch (error) {
+      // Audit history remains available if the customer backend is degraded;
+      // the primary ID stored in ADMIN is still displayed below.
+      console.warn("[creator-audit] segmented deal IDs unavailable", error);
+    }
+  }
   const approvalEvents =
     requestIds.length === 0
       ? []
@@ -77,6 +97,9 @@ export async function getCreatorAuditDetail(
       declinedAt: request.declined_at,
       completedAt: request.completed_at,
       backendDealId: request.backend_deal_id,
+      backendDealIds:
+        dealIdsByApproval.get(request.id) ??
+        (request.backend_deal_id ? [request.backend_deal_id] : []),
       pnlDealId: request.pnl_deal_id,
       linkedFundingDealId:
         request.request_kind === "pnl_deal" ? request.backend_deal_id : null,

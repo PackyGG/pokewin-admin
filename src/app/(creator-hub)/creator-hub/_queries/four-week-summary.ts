@@ -12,6 +12,7 @@ import { inArray } from "drizzle-orm";
 import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import { computeDealCost, weeklyDealsInFrame } from "@/lib/deal-economics";
+import { getLeaderboardSponsorshipMap } from "../../../(admin)/creators/_queries/leaderboard-sponsorship";
 
 import { mapPool, pagedWalk } from "../_lib/backend-walk";
 import {
@@ -35,7 +36,7 @@ import {
  *   wds              = weeklyDealsInFrame(startMs, endMs, deals)   (any overlap)
  *   dealCost         = Σ over wds of ( full withdraw cap
  *                        + (tip + sponsor) × fills_allowed )
- *                      + leaderboard net prize × 50%
+ *                      + leaderboard net prize × stored house share
  *   expectedWager    = dealCost / 0.075                            (house edge)
  *
  * A frame with NO overlapping weekly deal contributes only its leaderboard
@@ -226,6 +227,9 @@ const getFourWeekBase = unstable_cache(
     const ownerIds = Array.from(
       new Set(inWindow.map((lb) => lb.creator_user_id)),
     );
+    const sponsorship = await getLeaderboardSponsorshipMap(
+      inWindow.map((lb) => lb.id),
+    );
     const dealsByOwner = new Map<string, CreatorDealResponse[]>();
     await mapPool(ownerIds, DEAL_FETCH_CONCURRENCY, async (id) => {
       try {
@@ -254,6 +258,7 @@ const getFourWeekBase = unstable_cache(
         weeklyDeals: wds,
         lbPrizeUsd: lb.total_prize_usd,
         lbRefundUsd: lb.refund_amount_usd,
+        lbHouseSharePct: sponsorship.get(lb.id) ?? 100,
       });
 
       frames.push({

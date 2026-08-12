@@ -236,6 +236,9 @@ function revalidate(id: string): void {
     // unstable_cache entry (120s TTL) which revalidatePath does NOT bust —
     // flush its tag so approvals/cancellations/etc. show immediately.
     revalidateTag("creator-leaderboards");
+    // Cost/profitability surfaces combine backend board terms with the
+    // admin-side per-board house-share annotation.
+    revalidateTag("creators-leaderboard-cost");
 }
 
 /**

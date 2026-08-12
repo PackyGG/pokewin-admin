@@ -16,18 +16,20 @@ import {
   computeDealCost,
   weeklyDealsInFrame,
 } from "@/lib/deal-economics";
+import { summarizeDealTermPeriods } from "@/lib/deal-term-periods";
 import { mapPool, pagedWalk } from "../../_lib/backend-walk";
 import { getBoardAffiliatePnl } from "./frame-affiliate-pnl-by-board";
 import { getDealWagerByDeal } from "./frame-wager-by-deal";
+import { getLeaderboardSponsorshipMap } from "../../../../(admin)/creators/_queries/leaderboard-sponsorship";
 
 /**
  * Creator Hub — Past Deals data.
  *
  * A PAST deal is an ENDED LEADERBOARD FRAME — the SAME entity the Active tab
  * uses (the owner's model: "the leaderboard window IS the deal";
- * `getActiveLeaderboardFrameByUser` in `leaderboard-cost.ts`). A frame is
- * weekly OR bi-weekly; a bi-weekly frame spans two weekly backend deals, so
- * the frame — not a single weekly `CreatorDealResponse` — is the unit of
+ * `getActiveLeaderboardFrameByUser` in `leaderboard-cost.ts`). A frame can
+ * contain one or more independently enforced backend deal periods, so the
+ * frame — not a single `CreatorDealResponse` — is the unit of
  * length, past-detection and cost.
  *
  *   • PAST-DETECTION: a frame is past iff its `end_date < now`. A frame still
@@ -50,13 +52,12 @@ import { getDealWagerByDeal } from "./frame-wager-by-deal";
  *                   `max_sponsorship_per_stream_usd`) × `fills_allowed` —
  *                   per-stream caps recur for every fill (owner directive
  *                   2026-06-23), summed across every weekly deal in the frame.
- *   leaderboardUsd= leaderboard net prize × 50% (`leaderboardHouseCost`) —
- *                   the canonical owner rule (house always pays half).
+ *   leaderboardUsd= leaderboard net prize × stored admin-side house share.
  *   dealCost      = capUsd + leaderboardUsd + tipSponsorUsd.
  *   expectedWager = dealCost / house edge (7.5%).
  *   frameWeeks    = round((endMs − startMs) / week), floored at 1 (length label).
- *   weeklyCapUsd / weeklyTipSponsorUsd = the frame totals ÷ wds.length —
- *                   display-only per-weekly-deal averages for the "/wk" sub-text.
+ *   period terms  = derived from each row's actual start/end window, so a
+ *                   14-day cap is shown per 2 weeks rather than per week.
  *   actualWager   = code-cohort wager inside the frame window (per-frame, keyed
  *                   by board id so a creator's multiple past frames don't
  *                   collapse).
@@ -69,9 +70,9 @@ import { getDealWagerByDeal } from "./frame-wager-by-deal";
  *                   itself).
  *
  * ─── Overlapping-deal terms ──────────────────────────────────────────────
- * Each ended frame is costed from ALL of the creator's backend weekly deals
- * whose window overlaps the frame (any overlap counts). A bi-weekly frame
- * spanning two weekly deals sums both weeks' full cap + tip/sponsor legs. A
+ * Each ended frame is costed from ALL of the creator's backend deal periods
+ * whose window overlaps the frame (any overlap counts). Recurring periods
+ * sum each period's full cap + tip/sponsor legs. A
  * frame with NO overlapping deal has no deal-term legs (cap / tip = 0); only
  * its LB leg costs — it is still a real ended board.
  *
@@ -121,8 +122,8 @@ const PAST_DEALS_LEG_TIMEOUT_MS = 60_000;
  * resolver THROWS so the page's empty-state path is taken.
  */
 /**
- * Whole weeks in a frame — used to scale the per-week withdraw cap +
- * tip/sponsor allowance over the frame length. Boards run in weekly multiples
+ * Whole weeks in a frame, used only for the frame-length label. Deal-term
+ * recurrence is derived separately from the actual backend rows. Boards run in weekly multiples
  * (weekly / bi-weekly), so the duration is rounded to the nearest week and
  * floored at 1. Mirrors `frameWeeks` in `deal-profitability.ts`.
  */
@@ -135,7 +136,7 @@ export function frameWeeks(startMs: number, endMs: number): number {
 
 /**
  * Whole days in a frame — display-only frame length (`dealDays`). There is
- * NO daily-fill cost leg (the deal cost is cap + leaderboard × 50%
+ * NO daily-fill cost leg (the deal cost is cap + leaderboard × stored share
  * `LB_HOUSE_SHARE` + tips). Rounded to the nearest day and floored at 1.
  */
 function frameDays(startMs: number, endMs: number): number {
@@ -166,15 +167,19 @@ export type PastDealRow = {
   dealWeeks: number;
   /** Whole days in the frame (frame length display). */
   dealDays: number;
-  /** Per-week withdraw cap from the overlapping deal (0 when uncapped / no deal). */
-  weeklyCapUsd: number;
-  /** Total withdraw cap over the frame (`weeklyCapUsd × dealWeeks`). */
+  /** Uniform cap per enforced deal period; null for mixed legacy terms. */
+  capPerPeriodUsd: number | null;
+  /** Actual duration of one cap period; null for mixed legacy terms. */
+  termPeriodDays: number | null;
+  /** Number of enforced deal periods included in the frame. */
+  termPeriodCount: number;
+  /** Total withdraw cap over all enforced periods in the frame. */
   capUsd: number;
-  /** Per-week tip + sponsor allowance (`(tip + sponsor) × fills_allowed`). */
-  weeklyTipSponsorUsd: number;
-  /** Total tip + sponsor allowance over the frame (`weekly × dealWeeks`). */
+  /** Uniform per-period tip + sponsor allowance. */
+  tipSponsorPerPeriodUsd: number | null;
+  /** Total tip + sponsor allowance over every enforced period in the frame. */
   tipSponsorUsd: number;
-  /** The frame's leaderboard house cost (net prize × 50% `LB_HOUSE_SHARE`, rose). */
+  /** The frame's leaderboard house cost (net prize × stored share, rose). */
   leaderboardUsd: number;
   /** capUsd + leaderboardUsd + tipSponsorUsd (rose house cost). */
   dealCost: number;
@@ -246,11 +251,11 @@ type PastDealBaseRow = {
   frameEndMs: number;
   dealWeeks: number;
   dealDays: number;
-  /** Number of weekly fill-deals overlapping the frame (for the "/wk" averages). */
-  weeklyDealsCount: number;
-  weeklyCapUsd: number;
+  termPeriodDays: number | null;
+  termPeriodCount: number;
+  capPerPeriodUsd: number | null;
   capUsd: number;
-  weeklyTipSponsorUsd: number;
+  tipSponsorPerPeriodUsd: number | null;
   tipSponsorUsd: number;
   leaderboardUsd: number;
   dealCost: number;
@@ -312,8 +317,12 @@ const getEndedDealsBase = unstable_cache(
       return { rows: [], backendUnavailable: false };
     }
 
+    const sponsorship = await getLeaderboardSponsorshipMap(
+      endedFrames.map((lb) => lb.id),
+    );
+
     // Deal terms live per creator — fetch each frame-owner's deal history once
-    // with bounded concurrency, then sum the weekly fill-deals overlapping
+    // with bounded concurrency, then sum the enforced deal periods overlapping
     // each frame for the cost terms. One failed owner degrades to [].
     const ownerIds = Array.from(
       new Set(endedFrames.map((lb) => lb.creator_user_id)),
@@ -340,7 +349,7 @@ const getEndedDealsBase = unstable_cache(
       const dealWeeks = frameWeeks(startMs, endMs);
       const dealDays = frameDays(startMs, endMs);
 
-      // Canonical deal cost — the weekly fill-deals overlapping THIS frame,
+      // Canonical deal cost — the enforced fill-deal periods overlapping THIS frame,
       // each at FULL cap + (tip + sponsor) × fills, plus the leaderboard net
       // prize × 50% (owner rule). One source of truth via `computeDealCost`.
       const deals = dealsByOwner.get(lb.creator_user_id) ?? [];
@@ -350,16 +359,10 @@ const getEndedDealsBase = unstable_cache(
           weeklyDeals: wds,
           lbPrizeUsd: lb.total_prize_usd,
           lbRefundUsd: lb.refund_amount_usd,
+          lbHouseSharePct: sponsorship.get(lb.id) ?? 100,
         });
 
-      // DISPLAY-only per-week fields for the "$Y/wk × N" sub-text. `dealWeeks`
-      // stays the frame-length label; the "/wk" figures are the average per
-      // weekly deal in the frame (coherent for uniform weeks).
-      const weeklyDealsCount = wds.length;
-      const weeklyCapUsd = weeklyDealsCount ? capUsd / weeklyDealsCount : 0;
-      const weeklyTipSponsorUsd = weeklyDealsCount
-        ? tipSponsorUsd / weeklyDealsCount
-        : 0;
+      const termPeriods = summarizeDealTermPeriods(wds);
 
       ended.push({
         boardId: lb.id,
@@ -371,10 +374,11 @@ const getEndedDealsBase = unstable_cache(
         frameEndMs: endMs,
         dealWeeks,
         dealDays,
-        weeklyDealsCount,
-        weeklyCapUsd,
+        termPeriodDays: termPeriods.periodDays,
+        termPeriodCount: termPeriods.periodCount,
+        capPerPeriodUsd: termPeriods.capPerPeriodUsd,
         capUsd,
-        weeklyTipSponsorUsd,
+        tipSponsorPerPeriodUsd: termPeriods.tipSponsorPerPeriodUsd,
         tipSponsorUsd,
         leaderboardUsd,
         dealCost,
@@ -388,10 +392,10 @@ const getEndedDealsBase = unstable_cache(
   // v6-canon: cost now routes through the canonical `computeDealCost`
   // (Σ full cap + (tip+sponsor)×fills over the frame's weekly deals + LB net
   // × 50%) instead of best-overlap × frameWeeks + sponsored-% LB; the base
-  // row also carries `weeklyDealsCount`. Fresh namespace so a prior version's
+  // row also carries the real backend period duration. Fresh namespace so a prior version's
   // cached rows (Vercel persists unstable_cache across deployments) can't
   // shadow the new shape.
-  ["profitability-past-deals-base-v6-canon"],
+  ["profitability-past-deals-base-v7-period-aware"],
   { revalidate: 300, tags: ["profitability-past-deals"] },
 );
 
@@ -570,9 +574,11 @@ async function computePastDealsFromPostgres(
       frameEndMs: r.frameEndMs,
       dealWeeks: r.dealWeeks,
       dealDays: r.dealDays,
-      weeklyCapUsd: r.weeklyCapUsd,
+      capPerPeriodUsd: r.capPerPeriodUsd,
+      termPeriodDays: r.termPeriodDays,
+      termPeriodCount: r.termPeriodCount,
       capUsd: r.capUsd,
-      weeklyTipSponsorUsd: r.weeklyTipSponsorUsd,
+      tipSponsorPerPeriodUsd: r.tipSponsorPerPeriodUsd,
       tipSponsorUsd: r.tipSponsorUsd,
       leaderboardUsd: r.leaderboardUsd,
       dealCost: r.dealCost,
