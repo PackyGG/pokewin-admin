@@ -548,7 +548,7 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   );
   const readinessMigration = await readFile(
     new URL(
-      "../migrations/077_fiat_review_delivery_readiness.sql",
+      "../migrations/079_fiat_review_delivery_readiness.sql",
       import.meta.url,
     ),
     "utf8",
