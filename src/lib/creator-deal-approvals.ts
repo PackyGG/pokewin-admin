@@ -27,6 +27,7 @@ import { sanitizeProgramName } from "@/lib/creator-vip/sanitize";
 import { rewardProgramsCanContinue } from "@/lib/creator-vip/continuity";
 import { getPublishedCreatorAgreementTerms } from "@/lib/creator-agreement-terms";
 import { isPostgresError } from "@/lib/postgres-errors";
+import { buildBackendDealPeriods } from "@/lib/creator-deal-periods";
 
 const DiscordId = z.string().regex(/^\d{17,20}$/);
 const UserId = z.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/);
@@ -44,6 +45,7 @@ const DealPayloadSchema = z.object({
   per_fill_amount_usd: PositiveCents(1_000_000),
   conversion_rate_bps: z.number().int().min(0).max(10_000),
   total_withdraw_cap_usd: Cents(10_000_000).nullable(),
+  withdraw_cap_period_days: z.union([z.literal(7), z.literal(14)]).nullable().optional(),
   cooldown_minutes: z.number().int().min(0).max(525_600),
   max_tip_per_stream_usd: Cents(1_000_000),
   max_tip_per_user_usd: Cents(1_000_000),
@@ -62,6 +64,14 @@ const DealPayloadSchema = z.object({
   }
   const durationDays = (endMs - startMs) / dayMs;
   if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3650) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["week_end_utc"], message: "Deal duration must be 1 to 3650 whole UTC days." });
+  if (deal.withdraw_cap_period_days != null) {
+    if (deal.total_withdraw_cap_usd === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["withdraw_cap_period_days"], message: "An uncapped deal cannot have a withdrawal-cap period." });
+    }
+    if (durationDays < deal.withdraw_cap_period_days || durationDays % deal.withdraw_cap_period_days !== 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["withdraw_cap_period_days"], message: "Deal duration must be evenly divisible by its withdrawal-cap period." });
+    }
+  }
   if (deal.max_sponsorship_per_stream_usd < deal.max_sponsored_battle_usd) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["max_sponsorship_per_stream_usd"], message: "Per-stream sponsorship cap must cover at least one battle." });
   }
@@ -649,9 +659,13 @@ export async function retryCreatorDealApprovalDelivery(input: {
   });
 }
 
-function markerDeal(deal: CreatorDealResponse, requestId: string): boolean {
+function markerDeal(deal: CreatorDealResponse, requestId: string, periodIndex?: number): boolean {
   const terms = deal.terms;
-  return !!terms && typeof terms === "object" && (terms as Record<string, unknown>).creator_approval_request_id === requestId;
+  if (!terms || typeof terms !== "object") return false;
+  const record = terms as Record<string, unknown>;
+  if (record.creator_approval_request_id !== requestId) return false;
+  return periodIndex === undefined
+    || Number(record.creator_approval_period_index ?? 0) === periodIndex;
 }
 
 type ContinuityProgram = {
@@ -759,7 +773,7 @@ async function continueAdjacentRewardProgram(input: {
 
 function dealWindowsOverlap(
   existing: Pick<CreatorDealResponse, "week_start_utc" | "week_end_utc">,
-  proposed: z.infer<typeof DealPayloadSchema>,
+  proposed: { week_start_utc: string; week_end_utc: string },
 ): boolean {
   const existingStart = new Date(existing.week_start_utc).getTime();
   const existingEnd = new Date(existing.week_end_utc).getTime();
@@ -801,12 +815,18 @@ async function ensureBackendDeal(request: typeof creator_deal_approval_requests.
     // this invariant under its own per-creator database lock for every caller.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`creator-deal-window:${request.creator_user_id}`}, 0))`);
     const payload = DealPayloadSchema.parse(request.deal_payload);
+    const periods = buildBackendDealPeriods(payload);
     const listed = await listAllCreatorDeals(request.creator_user_id);
-    const existing = listed.find((deal) => markerDeal(deal, request.id));
-    if (existing) return { ok: true, dealId: existing.id };
+    const existingPeriods = periods.map((period) =>
+      listed.find((deal) => markerDeal(deal, request.id, period.index)),
+    );
+    if (existingPeriods.every(Boolean)) {
+      return { ok: true, dealId: existingPeriods[0]!.id };
+    }
     const overlap = listed.find((deal) =>
       (deal.status === "active" || deal.status === "scheduled")
-      && dealWindowsOverlap(deal, payload));
+      && !markerDeal(deal, request.id)
+      && periods.some((period) => dealWindowsOverlap(deal, period.payload)));
     if (overlap) {
       error(
         409,
@@ -814,26 +834,44 @@ async function ensureBackendDeal(request: typeof creator_deal_approval_requests.
         `Creator already has an ${overlap.status} deal during the proposed window.`,
       );
     }
-    if (request.backend_create_attempted_at) {
+    if (periods.length === 1 && request.backend_create_attempted_at) {
       error(409, "backend_create_unconfirmed", "The original backend create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
     }
-    const [claimed] = await tx.update(creator_deal_approval_requests).set({
-      backend_create_attempted_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).where(and(
-      eq(creator_deal_approval_requests.id, request.id),
-      sql`${creator_deal_approval_requests.backend_create_attempted_at} IS NULL`,
-    )).returning({ id: creator_deal_approval_requests.id });
-    if (!claimed) error(409, "backend_create_in_progress", "Another worker already started backend deal creation.");
+    if (!request.backend_create_attempted_at) {
+      const [claimed] = await tx.update(creator_deal_approval_requests).set({
+        backend_create_attempted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).where(and(
+        eq(creator_deal_approval_requests.id, request.id),
+        sql`${creator_deal_approval_requests.backend_create_attempted_at} IS NULL`,
+      )).returning({ id: creator_deal_approval_requests.id });
+      if (!claimed) error(409, "backend_create_in_progress", "Another worker already started backend deal creation.");
+    }
     try {
-      const created = await creatorsApi.createDeal(request.creator_user_id, {
-        ...payload,
-        terms: { creator_approval_request_id: request.id, agreement_version: request.agreement_version, agreement_checksum: request.agreement_checksum },
-      } satisfies CreateDealInput);
-      return { ok: true, dealId: created.id };
+      const dealIds: string[] = [];
+      for (const period of periods) {
+        const existing = existingPeriods[period.index];
+        if (existing) {
+          dealIds.push(existing.id);
+          continue;
+        }
+        const created = await creatorsApi.createDeal(request.creator_user_id, {
+          ...period.payload,
+          terms: {
+            creator_approval_request_id: request.id,
+            creator_approval_period_index: period.index,
+            creator_approval_period_count: period.count,
+            agreement_version: request.agreement_version,
+            agreement_checksum: request.agreement_checksum,
+          },
+        } satisfies CreateDealInput);
+        dealIds.push(created.id);
+      }
+      return { ok: true, dealId: dealIds[0] };
     } catch (cause) {
-      // Commit the attempted-at marker even when the remote outcome is
-      // ambiguous. A retry must reconcile by marker instead of creating twice.
+      // A segmented retry reconciles every period by its terms marker. If a
+      // response was lost after commit, the backend overlap lock is an extra
+      // guard until the committed row becomes visible to the next list read.
       return { ok: false, cause };
     }
   });

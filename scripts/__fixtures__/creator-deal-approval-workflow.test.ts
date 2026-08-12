@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { buildBackendDealPeriods } from "../../src/lib/creator-deal-periods";
+
 const read = (path: string) => readFile(path, "utf8");
 
 test("creator deal approval is durable, identity-bound, and recoverable", async () => {
@@ -41,6 +43,11 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
 
   assert.match(workflow, /export async function createCreatorDealApprovalRequest/);
   assert.match(workflow, /Deal start must be 00:00 UTC/);
+  assert.match(workflow, /withdraw_cap_period_days: z\.union\(\[z\.literal\(7\), z\.literal\(14\)\]\)/);
+  assert.match(workflow, /buildBackendDealPeriods\(payload\)/);
+  assert.match(workflow, /creator_approval_period_index: period\.index/);
+  assert.match(workflow, /creator_approval_period_count: period\.count/);
+  assert.match(workflow, /for \(const period of periods\)/);
   assert.match(workflow, /already has an unresolved deal approval/);
   assert.match(workflow, /agreement_checksum: agreement\.checksum/);
   assert.match(workflow, /FOR UPDATE SKIP LOCKED/);
@@ -72,6 +79,27 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
   assert.equal(overlaps(10, 20, 0, 10), false, "back-to-back start == end must be allowed");
   assert.equal(overlaps(0, 11, 10, 20), true, "one-unit intersection must be rejected");
   assert.equal(overlaps(10, 20, 0, 11), true, "reverse one-unit intersection must be rejected");
+  const periods = (durationDays: number, capPeriodDays: 7 | 14 | null) =>
+    buildBackendDealPeriods({
+      week_start_utc: "2026-08-01T00:00:00.000Z",
+      week_end_utc: new Date(Date.UTC(2026, 7, 1 + durationDays)).toISOString(),
+      withdraw_cap_period_days: capPeriodDays,
+      total_withdraw_cap_usd: 750,
+      fills_allowed: 7,
+    });
+  assert.equal(periods(14, 7).length, 2, "a two-week deal with a weekly cap becomes two deals");
+  assert.equal(periods(28, 7).length, 4, "a four-week deal with a weekly cap becomes four deals");
+  assert.equal(periods(28, 14).length, 2, "a four-week deal with a two-week cap becomes two deals");
+  assert.equal(periods(28, null).length, 1, "a full-duration cap remains one deal");
+  assert.deepEqual(
+    periods(14, 7).map((period) => [period.payload.week_start_utc, period.payload.week_end_utc]),
+    [
+      ["2026-08-01T00:00:00.000Z", "2026-08-08T00:00:00.000Z"],
+      ["2026-08-08T00:00:00.000Z", "2026-08-15T00:00:00.000Z"],
+    ],
+    "periods are exactly adjacent and never overlap",
+  );
+  assert.equal("withdraw_cap_period_days" in periods(14, 7)[0].payload, false, "UI-only period metadata is not sent to the backend");
   assert.ok(
     workflow.indexOf("pg_advisory_xact_lock(hashtextextended") < workflow.indexOf("const listed = await listAllCreatorDeals")
       && workflow.indexOf("const listed = await listAllCreatorDeals") < workflow.indexOf("creatorsApi.createDeal"),

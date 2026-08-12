@@ -46,6 +46,11 @@ test("new creator deal chooses fill, multiplier, or P&L and never creates before
   assert.match(fields, /duration_preset === "custom"/);
   assert.match(fields, /cooldown_minutes: "300"/);
   assert.match(fields, /withdraw_cap_mode/);
+  assert.match(fields, /withdraw_cap_period/);
+  assert.match(fields, /Every week/);
+  assert.match(fields, /Every 2 weeks/);
+  assert.match(fields, /withdraw_cap_period_days/);
+  assert.match(dialog, /independent cap counters/);
   assert.match(fields, /choose No limit/i);
   assert.match(fields, /forceLeaderboardsOff/);
   assert.doesNotMatch(fields, /title="Leaderboards"/);

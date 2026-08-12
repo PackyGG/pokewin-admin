@@ -28,6 +28,7 @@ export type DealFormState = {
   conversion_rate_pct: string;
   total_withdraw_cap_usd: string;
   withdraw_cap_mode: "" | "limited" | "unlimited";
+  withdraw_cap_period: "deal" | "7" | "14";
   cooldown_minutes: string;
   max_tip_per_stream_usd: string;
   max_tip_per_user_usd: string;
@@ -60,6 +61,7 @@ export const dealFormSchema = z
       .max(100, "Conversion rate must be at most 100%"),
     total_withdraw_cap_usd: z.string(),
     withdraw_cap_mode: z.enum(["", "limited", "unlimited"]),
+    withdraw_cap_period: z.enum(["deal", "7", "14"]),
     cooldown_minutes: z.coerce
       .number()
       .int("Cooldown must be a whole number")
@@ -143,6 +145,16 @@ export const dealFormSchema = z
         });
       }
     }
+    if (data.withdraw_cap_mode === "limited" && data.withdraw_cap_period !== "deal") {
+      const periodDays = Number(data.withdraw_cap_period);
+      if (data.duration_days < periodDays || data.duration_days % periodDays !== 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Deal length must be a multiple of ${periodDays} days for this withdrawal-cap period`,
+          path: ["withdraw_cap_period"],
+        });
+      }
+    }
 
     if (data.max_sponsorship_per_stream_usd < data.max_sponsored_battle_usd) {
       ctx.addIssue({
@@ -217,6 +229,7 @@ export function buildCreateDefaults(): DealFormState {
     conversion_rate_pct: "50",
     total_withdraw_cap_usd: "",
     withdraw_cap_mode: "",
+    withdraw_cap_period: "deal",
     cooldown_minutes: "300",
     max_tip_per_stream_usd: "100",
     max_tip_per_user_usd: "20",
@@ -250,6 +263,7 @@ export function buildDefaultsFromDeal(deal: CreatorDealResponse): DealFormState 
     total_withdraw_cap_usd: deal.total_withdraw_cap_usd ?? "",
     withdraw_cap_mode:
       deal.total_withdraw_cap_usd == null ? "unlimited" : "limited",
+    withdraw_cap_period: "deal",
     cooldown_minutes: String(deal.cooldown_minutes),
     max_tip_per_stream_usd: deal.max_tip_per_stream_usd,
     max_tip_per_user_usd: deal.max_tip_per_user_usd,
@@ -267,6 +281,8 @@ export type DealPayload = {
   per_fill_amount_usd: number;
   conversion_rate_bps: number;
   total_withdraw_cap_usd: number | null;
+  /** Null means one cap for the full window; otherwise each period is a separate backend deal. */
+  withdraw_cap_period_days: number | null;
   cooldown_minutes: number;
   max_tip_per_stream_usd: number;
   max_tip_per_user_usd: number;
@@ -297,6 +313,10 @@ export function toDealPayload(
     conversion_rate_bps: Math.round(parsed.conversion_rate_pct * 100),
     total_withdraw_cap_usd:
       parsed.withdraw_cap_mode === "unlimited" ? null : Number(capTrim),
+    withdraw_cap_period_days:
+      parsed.withdraw_cap_mode === "limited" && parsed.withdraw_cap_period !== "deal"
+        ? Number(parsed.withdraw_cap_period)
+        : null,
     cooldown_minutes: parsed.cooldown_minutes,
     max_tip_per_stream_usd: parsed.max_tip_per_stream_usd,
     max_tip_per_user_usd: parsed.max_tip_per_user_usd,
@@ -581,8 +601,12 @@ export function DealFormFields({
       <Separator />
 
       <DealFormSection
-        title="Total withdraw cap"
-        description="Choose a lifetime USD ceiling or explicitly select No limit."
+        title="Withdrawal cap"
+        description={
+          mode === "create"
+            ? "Set one cap for the full deal or reset it in independent weekly periods."
+            : "Set the USD ceiling for this backend deal period."
+        }
       >
         <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
           <DealFormField label="Cap" htmlFor={id("cap")} suffix="USD">
@@ -609,12 +633,48 @@ export function DealFormFields({
             onClick={() => {
               update("withdraw_cap_mode", "unlimited");
               update("total_withdraw_cap_usd", "");
+              update("withdraw_cap_period", "deal");
             }}
             disabled={pending}
           >
             No limit
           </Button>
         </div>
+        {mode === "create" && form.withdraw_cap_mode !== "unlimited" && (
+          <DealFormField label="Cap applies" htmlFor={id("cap_period")}>
+            <div
+              id={id("cap_period")}
+              className="flex flex-wrap gap-2"
+              role="group"
+              aria-label="Withdrawal cap period"
+            >
+              {([
+                ["deal", "Full deal"],
+                ["7", "Every week"],
+                ["14", "Every 2 weeks"],
+              ] as const).map(([value, label]) => (
+                <Button
+                  key={value}
+                  type="button"
+                  size="sm"
+                  variant={form.withdraw_cap_period === value ? "default" : "outline"}
+                  onClick={() => {
+                    update("withdraw_cap_period", value);
+                    if (form.withdraw_cap_mode === "") update("withdraw_cap_mode", "limited");
+                  }}
+                  disabled={pending}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+            {form.withdraw_cap_mode === "limited" && form.withdraw_cap_period !== "deal" && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Creates {Number(form.duration_days) / Number(form.withdraw_cap_period) || "—"} consecutive backend deals, each with its own cap counter and the same fill terms.
+              </p>
+            )}
+          </DealFormField>
+        )}
       </DealFormSection>
 
       <Separator />

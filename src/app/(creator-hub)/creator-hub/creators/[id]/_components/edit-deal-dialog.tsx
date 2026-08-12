@@ -81,10 +81,11 @@ export function EditDealDialog({ userId, deal, open, onOpenChange }: Props) {
       toast.error("Enter valid start and end dates");
       return;
     }
+    const { withdraw_cap_period_days: _withdrawCapPeriodDays, ...patch } = payload;
 
     startTransition(async () => {
       try {
-        await updateCreatorDeal(userId, deal.id, deal.version, payload);
+        await updateCreatorDeal(userId, deal.id, deal.version, patch);
         toast.success("Deal terms updated");
         onOpenChange(false);
         router.refresh();

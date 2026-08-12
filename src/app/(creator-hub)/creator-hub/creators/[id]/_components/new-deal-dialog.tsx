@@ -339,10 +339,30 @@ export function NewDealDialog({ userId }: { userId: string }) {
             <ReviewSection title="Deal">
               <ReviewRow label="Starts" value={formatDate(dealPayload.week_start_utc, "UTC")} />
               <ReviewRow label="Ends" value={formatDate(dealPayload.week_end_utc, "UTC")} />
-              <ReviewRow label="Fills" value={`${dealPayload.fills_allowed} × ${formatCurrency(dealPayload.per_fill_amount_usd)}`} />
+              <ReviewRow
+                label="Fills"
+                value={`${dealPayload.fills_allowed} × ${formatCurrency(dealPayload.per_fill_amount_usd)}${dealPayload.withdraw_cap_period_days === 7 ? " per week" : dealPayload.withdraw_cap_period_days === 14 ? " per 2 weeks" : ""}`}
+              />
               <ReviewRow label="Creator keeps" value={`${dealPayload.conversion_rate_bps / 100}%`} />
               <ReviewRow label="Fill cooldown" value={`${dealPayload.cooldown_minutes} minutes`} />
-              <ReviewRow label="Withdrawal cap" value={dealPayload.total_withdraw_cap_usd == null ? "No limit" : formatCurrency(dealPayload.total_withdraw_cap_usd)} />
+              <ReviewRow
+                label="Withdrawal cap"
+                value={
+                  dealPayload.total_withdraw_cap_usd == null
+                    ? "No limit"
+                    : dealPayload.withdraw_cap_period_days === 7
+                      ? `${formatCurrency(dealPayload.total_withdraw_cap_usd)} per week`
+                      : dealPayload.withdraw_cap_period_days === 14
+                        ? `${formatCurrency(dealPayload.total_withdraw_cap_usd)} per 2 weeks`
+                        : `${formatCurrency(dealPayload.total_withdraw_cap_usd)} for the full deal`
+                }
+              />
+              {dealPayload.withdraw_cap_period_days != null && (
+                <ReviewRow
+                  label="Backend schedule"
+                  value={`${(new Date(dealPayload.week_end_utc).getTime() - new Date(dealPayload.week_start_utc).getTime()) / (dealPayload.withdraw_cap_period_days * 86_400_000)} × ${dealPayload.withdraw_cap_period_days === 7 ? "1-week" : "2-week"} deals with independent cap counters`}
+                />
+              )}
               <ReviewRow label="Tips" value={`${formatCurrency(dealPayload.max_tip_per_user_usd)} per user · ${formatCurrency(dealPayload.max_tip_per_stream_usd)} per stream`} />
               <ReviewRow label="Sponsorships" value={`${formatCurrency(dealPayload.max_sponsored_battle_usd)} per battle · ${formatCurrency(dealPayload.max_sponsorship_per_stream_usd)} per stream`} />
             </ReviewSection>
