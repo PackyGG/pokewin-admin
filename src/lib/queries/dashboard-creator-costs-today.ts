@@ -63,6 +63,10 @@ import {
  *     `getMetricsScope()` convention) — so creator-role affiliate earners are
  *     correctly counted as recipients here.
  *
+ *   • Creator Rewards today — completed `admin_balance_adjustment` credits
+ *     tagged `metadata.adjustment_category = 'creator_vip_reward'`. These are
+ *     approved payouts from the new creator reward programs.
+ *
  *   • Sponsored battles today — the `creator_fill_spend_battle` leg of
  *     `creators/_queries/tips-sponsor-spend.ts` (creator-funded battle
  *     sponsorships from the SAME house-funded tips/sponsor pool as the `tips`
@@ -80,9 +84,8 @@ import {
  *
  * House-POV per CLAUDE.md: every line is money the house PAID OUT (creators
  * cashing out deal payouts, house-funded tips, house-funded battle
- * sponsorships, house-funded leaderboard prizes, affiliate commissions) → a
- * house cost → rose in the UI. The TOTAL is converted deal payouts + tips +
- * sponsored battles + the FULL leaderboard gross + affiliate commissions.
+ * sponsorships, house-funded leaderboard prizes, affiliate commissions, and
+ * Creator Rewards) → a house cost → rose in the UI. The TOTAL is every line.
  *
  * ─── PERFORMANCE ────────────────────────────────────────────────────────
  *
@@ -91,7 +94,7 @@ import {
  * reward-costs tile), wrapped in `safeQuery` at the call site, streamed in its
  * own `<Suspense>` so it never blocks the dashboard shell. Three today-bounded
  * reads (one withdrawal-voucher aggregate, one ledger tips+sponsor+leaderboard
- * aggregate, one ledger affiliate-claim aggregate). SCOPE: the admin-managed
+ * aggregate, one ledger creator-program payout aggregate). SCOPE: the admin-managed
  * `excluded_users` BLACKLIST is applied to the receiving `user_id` on every
  * line so a blacklisted user who receives a leaderboard prize, tip, sponsored
  * battle, converted/multiplier payout, or affiliate commission never shows
@@ -118,7 +121,7 @@ type CreatorCostsToday = {
   /**
    * Total creator cost today — creator withdrawals + tips + sponsored
    * battles + the FULL leaderboard gross (every leaderboard prize is a
-   * creator-run-event cost) + affiliate commissions.
+   * creator-run-event cost) + affiliate commissions + Creator Rewards.
    */
   total: number;
   /** Itemized lines, largest magnitude first. */
@@ -140,6 +143,8 @@ type CreatorCostsToday = {
    * blacklist-only scope — moved wholesale from Reward Costs, owner 2026-07-02).
    */
   affiliate: number;
+  /** Approved Creator Rewards payouts credited today (rose). */
+  creatorRewards: number;
   /** ISO timestamp of the window start (today 00:00 UTC). */
   dayStartIso: string;
 };
@@ -162,7 +167,7 @@ function utcStartOfDay(now: Date): Date {
  *   1. Converted deal-payout vouchers minted today (voucher aggregate).
  *   2. Today's creator tips + sponsored battles + the full leaderboard prize
  *      gross (ledger).
- *   3. Today's affiliate commissions (`affiliate_claim`, ledger).
+ *   3. Today's affiliate commissions and Creator Rewards (ledger).
  *
  * The leaderboard figure is the FULL gross (`Σ |amount|`) — every leaderboard
  * prize is a creator-run-event cost (owner, 2026-06-04), so there is no
@@ -179,6 +184,7 @@ const cachedCreatorCostsToday = unstable_cache(
     sponsoredBattles: number;
     leaderboardGross: number;
     affiliate: number;
+    creatorRewards: number;
   }> => {
     void dayKey; // part of the cache key only
     void blacklistKey; // part of the cache key only (ids re-resolved below)
@@ -187,7 +193,7 @@ const cachedCreatorCostsToday = unstable_cache(
       return creatorCostsTodayFromPg(sinceIso);
     });
   },
-  ["dashboard-creator-costs-today-v8-sponsor"],
+  ["dashboard-creator-costs-today-v9-creator-rewards"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -197,6 +203,7 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
   sponsoredBattles: number;
   leaderboardGross: number;
   affiliate: number;
+  creatorRewards: number;
 }> {
   const queryDb = await getReadDrizzleDb();
   const since = `'${sinceIso}'::timestamptz`;
@@ -279,7 +286,7 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
       );
   const leaderboardGross = toNumber(leaderboardRows[0]?.gross);
 
-      // ── Affiliate commissions today (`affiliate_claim`, full sum) ────
+      // ── Affiliate commissions + Creator Rewards today ───────────────
       // MOVED WHOLESALE here from the sibling Reward Costs box (owner,
       // 2026-07-02): affiliate-code earners are creator-program recipients,
       // same reasoning as the other three lines on this box. Scoped with
@@ -289,16 +296,41 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
       // Costs box's `getMetricsScope()` convention, which this box does
       // NOT use). The Reward Costs box counts $0 of it now, so no
       // double-count between the two boxes.
-      type AffiliateRow = { affiliate: string };
-      const affiliateRows = await queryRows<AffiliateRow[]>(queryDb,
-        `SELECT COALESCE(SUM(ABS(amount::numeric)), 0)::text AS affiliate
+      // Creator Rewards are immutable balance credits written only by an
+      // approved creator_reward_claims row. Both payout types use this box's
+      // blacklist-only recipient scope and UTC window, so aggregate them in
+      // one bounded ledger read.
+      type CreatorProgramPayoutRow = {
+        affiliate: string;
+        creator_rewards: string;
+      };
+      const creatorProgramPayoutRows = await queryRows<
+        CreatorProgramPayoutRow[]
+      >(queryDb,
+        `SELECT
+           COALESCE(SUM(ABS(amount::numeric)) FILTER (
+             WHERE type::text = 'affiliate_claim'
+           ), 0)::text AS affiliate,
+           COALESCE(SUM(ABS(amount::numeric)) FILTER (
+             WHERE type::text = 'admin_balance_adjustment'
+               AND metadata->>'adjustment_category' = 'creator_vip_reward'
+           ), 0)::text AS creator_rewards
          FROM ledger_transactions
          WHERE status = 'completed'
-           AND type::text = 'affiliate_claim'
            AND created_at >= ${since}
+           AND (
+             type::text = 'affiliate_claim'
+             OR (
+               type::text = 'admin_balance_adjustment'
+               AND metadata->>'adjustment_category' = 'creator_vip_reward'
+             )
+           )
            ${blacklistNotInClause("user_id", excludedIds)}`,
       );
-  const affiliate = toNumber(affiliateRows[0]?.affiliate);
+  const affiliate = toNumber(creatorProgramPayoutRows[0]?.affiliate);
+  const creatorRewards = toNumber(
+    creatorProgramPayoutRows[0]?.creator_rewards,
+  );
 
   return {
     creatorWithdrawals,
@@ -306,6 +338,7 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
     sponsoredBattles,
     leaderboardGross,
     affiliate,
+    creatorRewards,
   };
 }
 
@@ -329,12 +362,9 @@ export async function getCreatorCostsSince(
  * cached today-windowed aggregate and assembles the line roster + total.
  *
  * The TOTAL is converted deal payouts + tips + sponsored battles + the FULL
- * leaderboard gross + affiliate commissions — every leaderboard prize is a
- * creator-run-event cost counted in full here (owner, 2026-06-04), sponsored
- * battles are the sibling leg of tips from the house-funded tips/sponsor pool
- * (owner, 2026-07-02), and affiliate commissions moved here wholesale from
- * Reward Costs (owner, 2026-07-02). No sponsored-% weighting on the
- * dashboard.
+ * leaderboard gross + affiliate commissions + Creator Rewards. Every
+ * leaderboard prize is a creator-run-event cost counted in full here (owner,
+ * 2026-06-04); no sponsored-% weighting is applied on the dashboard.
  */
 export async function getCreatorCostsToday(): Promise<CreatorCostsToday> {
   return withTiming("dashboard.creatorCostsToday.entry", async () => {
@@ -351,8 +381,14 @@ export async function getCreatorCostsToday(): Promise<CreatorCostsToday> {
     const blacklist = await getExcludedUserIds();
     const blacklistKey = [...blacklist].sort().join(",");
 
-    const { creatorWithdrawals, tips, sponsoredBattles, leaderboardGross, affiliate } =
-      await cachedCreatorCostsToday(dayKey, sinceIso, blacklistKey);
+    const {
+      creatorWithdrawals,
+      tips,
+      sponsoredBattles,
+      leaderboardGross,
+      affiliate,
+      creatorRewards,
+    } = await cachedCreatorCostsToday(dayKey, sinceIso, blacklistKey);
 
     // Lines for the breakdown popover. The leaderboard line carries the FULL
     // gross (the figure that sums into the total). Keep every line — even $0
@@ -380,10 +416,20 @@ export async function getCreatorCostsToday(): Promise<CreatorCostsToday> {
         label: "Affiliate commissions",
         amount: affiliate,
       },
+      {
+        key: "creator_rewards",
+        label: "Creator rewards",
+        amount: creatorRewards,
+      },
     ].sort((a, b) => b.amount - a.amount);
 
     const total =
-      creatorWithdrawals + tips + sponsoredBattles + leaderboardGross + affiliate;
+      creatorWithdrawals +
+      tips +
+      sponsoredBattles +
+      leaderboardGross +
+      affiliate +
+      creatorRewards;
 
     return {
       total,
@@ -393,6 +439,7 @@ export async function getCreatorCostsToday(): Promise<CreatorCostsToday> {
       sponsoredBattles,
       leaderboardGross,
       affiliate,
+      creatorRewards,
       dayStartIso: sinceIso,
     };
   });

@@ -377,7 +377,7 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     key: "creator_vip_reward",
     label: "Creator VIP reward",
     costLabel: "Creator VIP wager rewards (uncounted)",
-    why: "Wager-milestone reward paid to a user under a creator's VIP program (\"wager $X under my code, get $Y\"). Written ONLY by an approved `creator_reward_claims` row, never by hand — the ledger row carries `metadata.creator_id`, `metadata.vip_claim_id` and `metadata.vip_program_id` so every payout traces back to the claim and the program that authorized it. NOT counted in GGR/NGR/cost YET — it follows the `leaderboard` / `official_stream` precedent of persisting the creator link first; lifting it into reward cost requires updating the canonical PostgreSQL counted-category lists (see COUNTED_ADJUSTMENT_CATEGORY_KEYS).",
+    why: "Wager-milestone reward paid to a user under a creator's VIP program (\"wager $X under my code, get $Y\"). Written ONLY by an approved `creator_reward_claims` row, never by hand — the ledger row carries `metadata.creator_id`, `metadata.vip_claim_id` and `metadata.vip_program_id` so every payout traces back to the claim and the program that authorized it. Reported separately under dashboard Creator Costs, but not counted in canonical GGR/NGR reward cost; lifting it into that metric requires updating the canonical PostgreSQL counted-category lists (see COUNTED_ADJUSTMENT_CATEGORY_KEYS).",
     counted: false,
   },
   creator_pnl_share: {

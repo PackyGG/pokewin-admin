@@ -8,6 +8,7 @@ import {
   Gift,
   ArrowUpFromLine,
   Percent,
+  Sparkles,
   Swords,
 } from "lucide-react";
 import {
@@ -47,6 +48,9 @@ import { CreatorWithdrawalsDrilldown } from "./creator-cost-withdrawals-drilldow
  *                             breakdown's own blacklist-only convention (NOT
  *                             the Reward Costs breakdown's full
  *                             customer-scope drop).
+ *   • Creator rewards        — approved payouts from the new creator reward
+ *                             programs, identified by their immutable ledger
+ *                             adjustment category and claim references.
  *
  * The leaderboard line carries a click-to-reveal per-claimant drilldown
  * (`LeaderboardGrossClaimants`); the creator-withdrawals line carries a
@@ -125,6 +129,8 @@ function lineIcon(key: string) {
       return Trophy;
     case "affiliate":
       return Percent;
+    case "creator_rewards":
+      return Sparkles;
     default:
       return HandCoins;
   }
@@ -177,7 +183,8 @@ export function CreatorCostsInfoPopover({
             <strong>{dayLabel}</strong> — not a rolling 24h window. Every line
             is money paid out (a house cost): deal payouts converted from
             sessions (voucher minted), house-funded tips, house-funded battle
-            sponsorships, leaderboard prizes, and affiliate commissions.
+            sponsorships, leaderboard prizes, affiliate commissions, and
+            approved Creator Rewards payouts.
             Sponsored battles are the sibling leg of Tips from the same
             house-funded tips/sponsor pool.
             Every affiliate leaderboard is a creator-run event, so its{" "}

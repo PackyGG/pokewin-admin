@@ -34,7 +34,7 @@ const REWARD_PINNED_CHIP_KEYS = [
 ] as const;
 
 /**
- * Fixed set of all five lines promoted to always-visible chips on the
+ * Fixed set of all six lines promoted to always-visible chips on the
  * Creators Costs half, in display order — mirrors the standalone card's
  * former `PINNED_CHIP_KEYS`.
  */
@@ -44,6 +44,7 @@ const CREATOR_PINNED_CHIP_KEYS = [
   "sponsored_battles",
   "leaderboard",
   "affiliate",
+  "creator_rewards",
 ] as const;
 
 /**
