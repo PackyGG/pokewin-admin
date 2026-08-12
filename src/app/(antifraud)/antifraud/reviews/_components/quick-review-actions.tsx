@@ -370,21 +370,26 @@ function QuickActionButton({
           credential: sensitive ? credential : undefined,
           banReason: sensitive ? effectiveReason : undefined,
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
+        const outcome = result.data;
         setCredential("");
         setReasonOption("");
         setCustomReason("");
         onActionCompleted?.();
-        if (result.withdrawalRelease === "failed") {
+        if (outcome.withdrawalRelease === "failed") {
           toast.warning(
             "Account approved, but one or more review locks could not be removed. Check the user profile.",
           );
-        } else if (result.withdrawalRelease === "kyc_gated") {
+        } else if (outcome.withdrawalRelease === "kyc_gated") {
           toast.warning(
             "Account approved. KYC-controlled locks stay active until KYC is approved.",
           );
         } else {
           toast.success(
-            result.withdrawalRelease === "released"
+            outcome.withdrawalRelease === "released"
               ? "Account approved — review locks removed"
               : success,
           );

@@ -24,7 +24,13 @@ import { getPrimaryDrizzleDb } from "@/lib/db";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
 import { blockKnownUserIdentifiers } from "@/lib/antifraud/user-identifier-blocking";
-import { isPostgresError } from "@/lib/postgres-errors";
+import { isPostgresError, postgresErrorCode } from "@/lib/postgres-errors";
+import { logError } from "@/lib/errors/logger";
+import {
+  fail,
+  ok,
+  type ServerActionResult,
+} from "@/lib/errors/server-action-result";
 import {
   REVIEW_STATUSES,
   REVIEW_STATUS_LABELS,
@@ -935,6 +941,58 @@ export async function massBanReviewLinkedAccounts(
   return { bannedCount: result.length, bannedUserIds: result };
 }
 
+const QUICK_ACTION_SAFE_ERROR = [
+  /^A 2FA code or passkey is required/,
+  /^Passkey reuse is available only/,
+  /^Passkey verification expired/,
+  /^That verification was already used/,
+  /^Verification replay protection is unavailable/,
+  /^Admin user not found/,
+  /^2FA is not enabled/,
+  /^Invalid 2FA code/,
+  /^That 2FA code was already used/,
+  /^You do not have permission/,
+  /^That case no longer exists/,
+  /^This case is already closed/,
+  /^Someone else changed this case/,
+  /^Select or write a ban reason/,
+  /^The account (?:could not be banned|or its known)/,
+  /^That status retry key was already used/,
+];
+
+function quickActionPublicError(error: unknown): string {
+  if (
+    error instanceof Error &&
+    postgresErrorCode(error) === undefined &&
+    QUICK_ACTION_SAFE_ERROR.some((pattern) => pattern.test(error.message))
+  ) {
+    return error.message;
+  }
+  return "The account action could not be completed. Reload the case before trying again.";
+}
+
+/**
+ * Never throw an expected Account Review failure across the Server Action
+ * boundary. Next.js redacts thrown production errors into the generic Server
+ * Components message, which left Fraud staff unable to tell whether a ban or
+ * its 2FA/status guard failed.
+ */
+export async function runQuickReviewAccountAction(
+  input: unknown,
+): Promise<ServerActionResult<QuickReviewAccountActionResult>> {
+  const session = await requireAntifraudAccess();
+  try {
+    return ok(await executeQuickReviewAccountAction(input, session));
+  } catch (error) {
+    logError(
+      "antifraud.reviews.quickAccountAction",
+      "quick account action failed",
+      error,
+    );
+    return fail(quickActionPublicError(error));
+  }
+}
+
 /**
  * Account Review's deliberately small containment surface. The analyst clicks
  * once, confirms once in the client, and this action performs the mutation
@@ -945,10 +1003,10 @@ export async function massBanReviewLinkedAccounts(
  * the shared `updateReviewStatus` path — the two entry points cannot disagree
  * about what a clear means.
  */
-export async function runQuickReviewAccountAction(
+async function executeQuickReviewAccountAction(
   input: unknown,
+  session: Awaited<ReturnType<typeof requireAntifraudAccess>>,
 ): Promise<QuickReviewAccountActionResult> {
-  const session = await requireAntifraudAccess();
   const parsed = quickAccountActionSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const { reviewId, action, expectedStatus, idempotencyKey, banReason } = parsed.data;
@@ -1070,7 +1128,7 @@ export async function runQuickReviewAccountAction(
       );
     }
 
-    await createAdminAuditEvent({
+    const auditOutcome = await createAdminAuditEventDurable({
       adminUserId: session.userId,
       eventType: "account_banned",
       targetUserId: review.targetUserId,
@@ -1088,6 +1146,12 @@ export async function runQuickReviewAccountAction(
         blocklist_changes: identifiers.changedCount,
       },
     });
+    if (auditOutcome.status === "lost") {
+      console.error(
+        "[antifraud] quick review successful-ban audit lost:",
+        auditOutcome.error,
+      );
+    }
     revalidateTag("users-list");
     revalidateTag("users-list-stats");
     revalidateTag(userDetailTag(review.targetUserId));
