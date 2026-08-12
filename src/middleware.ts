@@ -103,7 +103,10 @@ export async function middleware(request: NextRequest) {
     });
   };
 
-  const isPublicRoute = PUBLIC_ROUTES.includes(pathname);
+  const isPublicRoute =
+    PUBLIC_ROUTES.includes(pathname) ||
+    (process.env.NODE_ENV !== "production" &&
+      pathname === "/account-tab-preview");
   const isPending2FARoute = PENDING_2FA_ROUTES.includes(pathname);
   const token = request.cookies.get("admin_session")?.value;
   const pendingToken = request.cookies.get("admin_2fa_pending")?.value;

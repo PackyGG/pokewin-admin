@@ -8,11 +8,14 @@ import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboar
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
 import { logError } from "@/lib/errors/logger";
+import { hasWagerProgressColumns } from "./users-wager-progress";
 
 const TIP_RECENT_LIMIT = 10;
 
 function toIso(value: string | Date): string {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+  return value instanceof Date
+    ? value.toISOString()
+    : new Date(value).toISOString();
 }
 
 function toMillis(value: string | Date | null): number {
@@ -31,64 +34,100 @@ function toMillis(value: string | Date | null): number {
  * metadata flag we fall back to the balance delta to infer direction.
  */
 async function getUserTips(userId: string) {
-  const [rows, aggregateRows, recentRows] =
-    await Promise.all([
-      queryMainRows<
-        {
-          id: string;
-          amount: string;
-          balance_before: string;
-          balance_after: string;
-          metadata: unknown;
-          created_at: Date | string;
-        }[]
-      >(
-        `SELECT id, amount::text, balance_before::text, balance_after::text,
-                metadata, created_at
-           FROM ledger_transactions
-          WHERE user_id = $1 AND type::text = 'creator_tip'
-          ORDER BY created_at DESC`,
-        userId,
-      ),
-      queryMainRows<
-        { type: string; count: string; total: string | null }[]
-      >(
-        `SELECT type::text AS type, COUNT(*)::text AS count,
-                SUM(amount::numeric)::text AS total
-           FROM ledger_transactions
-          WHERE user_id = $1
-            AND type::text = ANY($2::text[])
-          GROUP BY type`,
-        userId,
-        ["rain_win", "affiliate_leaderboard_prize", "race_prize"],
-      ),
-      queryMainRows<
-        {
-          id: string;
-          type: string;
-          amount: string;
-          created_at: Date | string;
-          metadata: unknown;
-        }[]
-      >(
-        `SELECT id, type, amount, created_at, metadata
+  const [rows, prizeRows] = await Promise.all([
+    queryMainRows<
+      {
+        id: string;
+        amount: string;
+        balance_before: string;
+        balance_after: string;
+        metadata: unknown;
+        created_at: Date | string;
+        sent: boolean;
+        direction_count: string;
+        direction_total: string | null;
+        counterparty_id: string | null;
+        counterparty_name: string | null;
+      }[]
+    >(
+      `WITH classified AS (
+           SELECT lt.id, lt.amount, lt.balance_before, lt.balance_after,
+                  lt.metadata, lt.created_at,
+                  CASE
+                    WHEN lt.metadata->>'direction' = 'sent' THEN true
+                    WHEN lt.metadata->>'direction' = 'received' THEN false
+                    ELSE lt.balance_after < lt.balance_before
+                  END AS sent,
+                  COALESCE(
+                    lt.metadata->>'sender_user_id',
+                    lt.metadata->>'recipient_user_id'
+                  ) AS counterparty_id
+             FROM ledger_transactions lt
+            WHERE lt.user_id = $1
+              AND lt.type = 'creator_tip'::ledger_transaction_type
+         ), ranked AS (
+           SELECT c.*,
+                  COUNT(*) OVER (PARTITION BY c.sent) AS direction_count,
+                  SUM(c.amount::numeric) OVER (PARTITION BY c.sent) AS direction_total,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY c.sent ORDER BY c.created_at DESC
+                  ) AS row_num
+             FROM classified c
+         )
+         SELECT r.id, r.amount::text, r.balance_before::text,
+                r.balance_after::text, r.metadata, r.created_at, r.sent,
+                r.direction_count::text, r.direction_total::text,
+                r.counterparty_id,
+                COALESCE(u.username, u.email, u.id) AS counterparty_name
+           FROM ranked r
+           LEFT JOIN "user" u ON u.id = r.counterparty_id
+          WHERE r.row_num <= $2
+          ORDER BY r.created_at DESC`,
+      userId,
+      TIP_RECENT_LIMIT,
+    ),
+    queryMainRows<
+      {
+        id: string;
+        type: string;
+        amount: string;
+        created_at: Date | string;
+        metadata: unknown;
+        type_count: string;
+        type_total: string | null;
+      }[]
+    >(
+      `SELECT id, type, amount::text, created_at, metadata,
+                type_count::text, type_total::text
            FROM (
-             SELECT id, type::text AS type, amount::text AS amount,
-                    created_at, metadata,
-                    ROW_NUMBER() OVER (PARTITION BY type ORDER BY created_at DESC) AS rn
+             SELECT id, type::text AS type, amount, created_at, metadata,
+                    COUNT(*) OVER (PARTITION BY type) AS type_count,
+                    SUM(amount::numeric) OVER (PARTITION BY type) AS type_total,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY type ORDER BY created_at DESC
+                    ) AS row_num
                FROM ledger_transactions
               WHERE user_id = $1
-                AND type::text = ANY($2::text[])
+                AND type IN (
+                  'rain_win'::ledger_transaction_type,
+                  'affiliate_leaderboard_prize'::ledger_transaction_type,
+                  'race_prize'::ledger_transaction_type
+                )
            ) ranked
-          WHERE rn <= $3`,
-        userId,
-        ["rain_win", "affiliate_leaderboard_prize", "race_prize"],
-        TIP_RECENT_LIMIT,
-      ),
-    ]);
-  const aggregate = new Map(aggregateRows.map((row) => [row.type, row]));
+          WHERE row_num <= $2
+          ORDER BY created_at DESC`,
+      userId,
+      TIP_RECENT_LIMIT,
+    ),
+  ]);
+  const aggregate = new Map(
+    prizeRows.map((row) => [
+      row.type,
+      { count: row.type_count, total: row.type_total },
+    ]),
+  );
   const recentByType = (type: string) =>
-    recentRows.filter((row) => row.type === type);
+    prizeRows.filter((row) => row.type === type);
   const rainAgg = aggregate.get("rain_win");
   const leaderboardAgg = aggregate.get("affiliate_leaderboard_prize");
   const raceAgg = aggregate.get("race_prize");
@@ -105,61 +144,27 @@ async function getUserTips(userId: string) {
     sent: boolean;
   };
 
-  const entries: Entry[] = rows.map((r) => {
-    const meta =
-      r.metadata && typeof r.metadata === "object" && !Array.isArray(r.metadata)
-        ? (r.metadata as Record<string, unknown>)
-        : {};
-    const dir = typeof meta.direction === "string" ? meta.direction : null;
-    const sent =
-      dir === "sent" ||
-      (dir == null && toNumber(r.balance_after) < toNumber(r.balance_before));
-    const counterpartyId =
-      typeof meta.sender_user_id === "string"
-        ? meta.sender_user_id
-        : typeof meta.recipient_user_id === "string"
-          ? meta.recipient_user_id
-          : null;
-    return {
-      id: r.id,
-      amountUsd: toNumber(r.amount),
-      counterpartyId,
-      counterpartyName: null,
-      createdAt: new Date(r.created_at).toISOString(),
-      sent,
-    };
-  });
+  const entries: Entry[] = rows.map((r) => ({
+    id: r.id,
+    amountUsd: toNumber(r.amount),
+    counterpartyId: r.counterparty_id,
+    counterpartyName: r.counterparty_name,
+    createdAt: new Date(r.created_at).toISOString(),
+    sent: r.sent,
+  }));
 
   const received = entries.filter((e) => !e.sent);
   const sent = entries.filter((e) => e.sent);
 
-  // Resolve counterparty usernames only for the rows we'll render.
-  const shown = [
-    ...received.slice(0, TIP_RECENT_LIMIT),
-    ...sent.slice(0, TIP_RECENT_LIMIT),
-  ];
-  const ids = [
-    ...new Set(
-      shown.map((e) => e.counterpartyId).filter((x): x is string => !!x),
-    ),
-  ];
-  if (ids.length > 0) {
-    const users = await queryMainRows<
-      { id: string; username: string | null; email: string | null }[]
-    >(
-      `SELECT id, username, email FROM "user" WHERE id = ANY($1::text[])`,
-      ids,
-    );
-    const nameById = new Map(
-      users.map((u) => [u.id, u.username ?? u.email ?? u.id]),
-    );
-    for (const e of shown) {
-      if (e.counterpartyId)
-        e.counterpartyName = nameById.get(e.counterpartyId) ?? null;
-    }
-  }
-
-  const sum = (arr: Entry[]) => arr.reduce((s, e) => s + e.amountUsd, 0);
+  const directionStats = new Map(
+    rows.map((row) => [
+      row.sent,
+      {
+        count: Number(row.direction_count ?? 0),
+        totalUsd: toNumber(row.direction_total),
+      },
+    ]),
+  );
   const strip = (e: Entry) => ({
     id: e.id,
     amountUsd: e.amountUsd,
@@ -170,13 +175,13 @@ async function getUserTips(userId: string) {
 
   return {
     received: {
-      count: received.length,
-      totalUsd: sum(received),
+      count: directionStats.get(false)?.count ?? 0,
+      totalUsd: directionStats.get(false)?.totalUsd ?? 0,
       recent: received.slice(0, TIP_RECENT_LIMIT).map(strip),
     },
     sent: {
-      count: sent.length,
-      totalUsd: sum(sent),
+      count: directionStats.get(true)?.count ?? 0,
+      totalUsd: directionStats.get(true)?.totalUsd ?? 0,
       recent: sent.slice(0, TIP_RECENT_LIMIT).map(strip),
     },
     // Rain prizes have no counterparty — they come from the rain pool.
@@ -228,8 +233,7 @@ function parseRaceClaimMetadata(metadata: unknown): {
     metadata && typeof metadata === "object" && !Array.isArray(metadata)
       ? (metadata as Record<string, unknown>)
       : null;
-  const raceType =
-    m && typeof m.race_type === "string" ? m.race_type : null;
+  const raceType = m && typeof m.race_type === "string" ? m.race_type : null;
   const position =
     m && typeof m.position === "number" && Number.isFinite(m.position)
       ? m.position
@@ -323,7 +327,8 @@ async function enrichLeaderboardWins(
   return rows.map((r, i) => {
     const p = parsed[i];
     const resolvedTitle =
-      p.title ?? (p.leaderboardId ? titleById.get(p.leaderboardId) ?? null : null);
+      p.title ??
+      (p.leaderboardId ? (titleById.get(p.leaderboardId) ?? null) : null);
     return {
       id: r.id,
       amountUsd: toNumber(r.amount),
@@ -410,71 +415,38 @@ export async function getUserHeader(id: string): Promise<{
   return { id: user.id, username: user.username, email: user.email };
 }
 
+type UserDetailBalanceRow = {
+  available_balance: string;
+  locked_balance: string;
+  total_wagered: string;
+  total_won: string;
+  unlock_at: Date | string | null;
+  wager_requirement_remaining: string | null;
+  wager_requirement_progress: string | null;
+};
+
 /**
- * Reads the per-user wager-requirement debt + cleared progress, drift-safe
- * across DBs that don't carry the columns yet.
- *
- * Source columns (added by backend migration 0130 — see
- * `users-wager-progress.ts` for the full model docs):
- *   • `balances.wager_requirement_remaining` — the FROZEN-RATE debt counter
- *     that gates withdrawals. Bonus credits add to it (at the rate in effect
- *     at credit time); weighted wagers burn it down. Surfaced as the new
- *     "Locked" line in the balance breakdown — it's spendable on wagers but
- *     reserves that many balance dollars from withdrawal until cleared.
- *   • `balances.wager_requirement_progress` — lifetime weighted wager that's
- *     already been cleared toward the requirement. Used for the row subtitle
- *     ("$X cleared"). Drift-safe: if either column is absent on the connected
- *     DB the row hides on null.
- *
- * The columns are probed via `information_schema.columns` BEFORE selecting
- * so a missing column returns `null` instead of throwing 42703. Same pattern
- * as the per-source weighting / wager-progress reads.
+ * Fetch the rendered balance fields and the two wager-debt fields together.
+ * The shared capability probe keeps dev/prod schema drift safe and is also
+ * reused by getUserWagerProgress during the same request.
  */
-async function fetchWagerLocked(
+async function getUserDetailBalances(
   id: string,
-): Promise<{ wagerLocked: number | null; wagerProgress: number | null }> {
-  // Cheap indexed catalog read — runs once per detail load.
-  const colCheck = await queryMainRows<{ exists: boolean }[]>(`
-    SELECT EXISTS (
-      SELECT 1
-        FROM information_schema.columns
-       WHERE table_schema = 'public'
-         AND table_name = 'balances'
-         AND column_name = 'wager_requirement_remaining'
-    ) AS exists`);
-  if (!colCheck[0]?.exists) {
-    return { wagerLocked: null, wagerProgress: null };
-  }
-  try {
-    const rows = await queryMainRows<
-      { wager_requirement_remaining: string | null; wager_requirement_progress: string | null }[]
-    >(
-      `
-      SELECT
-        wager_requirement_remaining::text  AS wager_requirement_remaining,
-        wager_requirement_progress::text   AS wager_requirement_progress
-      FROM balances
-      WHERE user_id = $1
-      LIMIT 1`,
-      id,
-    );
-    const row = rows[0];
-    if (!row) return { wagerLocked: null, wagerProgress: null };
-    const num = (v: string | null): number => {
-      if (v == null) return 0;
-      const n = Number(v);
-      return Number.isFinite(n) ? n : 0;
-    };
-    return {
-      wagerLocked: num(row.wager_requirement_remaining),
-      wagerProgress: num(row.wager_requirement_progress),
-    };
-  } catch (e) {
-    // Defence-in-depth: the column probe already succeeded, but a single
-    // catch keeps the page rendering if a transient query failure hits.
-    logError("users.detail.wagerLocked", "query failed", e);
-    return { wagerLocked: null, wagerProgress: null };
-  }
+): Promise<UserDetailBalanceRow | null> {
+  const hasWagerColumns = await hasWagerProgressColumns();
+  const wagerColumns = hasWagerColumns
+    ? `wager_requirement_remaining::text AS wager_requirement_remaining,
+       wager_requirement_progress::text AS wager_requirement_progress`
+    : `NULL::text AS wager_requirement_remaining,
+       NULL::text AS wager_requirement_progress`;
+  const rows = await queryMainRows<UserDetailBalanceRow[]>(
+    `SELECT available_balance::text, locked_balance::text,
+            total_wagered::text, total_won::text, unlock_at,
+            ${wagerColumns}
+       FROM balances WHERE user_id = $1 LIMIT 1`,
+    id,
+  );
+  return rows[0] ?? null;
 }
 
 export async function getUserDetail(id: string) {
@@ -503,8 +475,8 @@ export async function getUserDetail(id: string) {
             `SELECT type::text AS type, SUM(amount::numeric)::text AS amount
                FROM ledger_transactions
               WHERE user_id = $1
-                AND type::text = ANY($2::text[])
-                AND status::text = 'completed'
+                AND type = ANY($2::ledger_transaction_type[])
+                AND status = 'completed'::ledger_transaction_status
               GROUP BY type`,
             id,
             types,
@@ -571,6 +543,7 @@ export async function getUserDetail(id: string) {
   // aggregate ran in the same Promise.all without a .catch and would
   // surface to the page error boundary.
   const userPnlPromise = calculateUserPnl(id);
+  const balancesPromise = getUserDetailBalances(id);
 
   // Device-fingerprint alt-account signal (fingerprints table — device
   // fingerprinting on signup/login, index-backed on user_id + visitor_id;
@@ -593,12 +566,15 @@ export async function getUserDetail(id: string) {
   // Keyed on the user ID, not on signup_ip, so it can run inside the same
   // parallel fan-out — resolving the IP first would cost a sequential
   // round-trip. GREATEST(...,0) keeps a NULL signup_ip at 0 rather than -1.
-  const signupIpSharedPromise = queryMainRows<{ others: number | null }[]>(`
+  const signupIpSharedPromise = queryMainRows<{ others: number | null }[]>(
+    `
       SELECT GREATEST(COUNT(*) - 1, 0)::int AS others
         FROM "user"
        WHERE signup_ip IS NOT NULL
          AND signup_ip = (SELECT signup_ip FROM "user" WHERE id = $1)
-    `, id)
+    `,
+    id,
+  )
     .then((rows) => Number(rows[0]?.others ?? 0))
     .catch((e) => {
       logError("users.detail.sharedSignupIp", "query failed", e);
@@ -606,22 +582,22 @@ export async function getUserDetail(id: string) {
     });
 
   const fingerprintSignalPromise = queryMainRows<
-      {
-        suspected_alt: boolean | null;
-        linked_count: string | number | null;
-        capture_count: number | null;
-        captured_at: Date | string | null;
-        best_confidence: number | null;
-        visitor_id: string | null;
-        distinct_visitor_ids: number | null;
-        signup_capture_count: number | null;
-        login_capture_count: number | null;
-        last_login_at: Date | string | null;
-        last_login_ip: string | null;
-        last_login_visitor_id: string | null;
-      }[]
-    >(
-      `
+    {
+      suspected_alt: boolean | null;
+      linked_count: string | number | null;
+      capture_count: number | null;
+      captured_at: Date | string | null;
+      best_confidence: number | null;
+      visitor_id: string | null;
+      distinct_visitor_ids: number | null;
+      signup_capture_count: number | null;
+      login_capture_count: number | null;
+      last_login_at: Date | string | null;
+      last_login_ip: string | null;
+      last_login_visitor_id: string | null;
+    }[]
+  >(
+    `
       WITH my_fp AS (
         SELECT visitor_id, suspected_alt_triggered, confidence, created_at,
           event_type, ip
@@ -654,8 +630,8 @@ export async function getUserDetail(id: string) {
         ) AS linked_count
       FROM my_fp
       `,
-      id,
-    )
+    id,
+  )
     .then((rows) => ({
       suspectedAlt: rows[0]?.suspected_alt ?? false,
       linkedDeviceAccountCount: Number(rows[0]?.linked_count ?? 0),
@@ -711,14 +687,12 @@ export async function getUserDetail(id: string) {
     activeSeed,
     depositAddresses,
     depositAgg,
-    fiatDepositAgg,
     withdrawalCount,
     userPnl,
     wagerBreakdownResolved,
     ownedCodeRows,
     ownedCodeReferralCountRows,
     tips,
-    wagerLockedAgg,
     liveAffiliateRows,
     fingerprintSignal,
     signupIpSharedCount,
@@ -730,9 +704,41 @@ export async function getUserDetail(id: string) {
           accountId: string;
           created_at: string | null;
         }[];
+        referrer_context: {
+          username: string | null;
+          email: string | null;
+          affiliate_code: string | null;
+        } | null;
+        signup_referral_code: string | null;
+        latest_referral_code: string | null;
       })[]
     >(
       `SELECT u.*,
+              (
+                SELECT jsonb_build_object(
+                  'username', r.username,
+                  'email', r.email,
+                  'affiliate_code', r.affiliate_code
+                )
+                  FROM "user" r
+                 WHERE r.id = u.referred_by
+                 LIMIT 1
+              ) AS referrer_context,
+              (
+                SELECT acu.code
+                  FROM affiliate_code_usages acu
+                 WHERE acu.referred_user_id = u.id
+                   AND acu.usage_type::text = 'signup'
+                 ORDER BY acu.created_at DESC
+                 LIMIT 1
+              ) AS signup_referral_code,
+              (
+                SELECT acu.code
+                  FROM affiliate_code_usages acu
+                 WHERE acu.referred_user_id = u.id
+                 ORDER BY acu.created_at DESC
+                 LIMIT 1
+              ) AS latest_referral_code,
               COALESCE(
                 jsonb_agg(jsonb_build_object(
                   'providerId', a."providerId",
@@ -747,21 +753,7 @@ export async function getUserDetail(id: string) {
         GROUP BY u.id`,
       id,
     ).then((rows) => rows[0] ?? null),
-    // Select only the balance columns this page renders.
-    queryMainRows<
-      {
-        available_balance: string;
-        locked_balance: string;
-        total_wagered: string;
-        total_won: string;
-        unlock_at: Date | string | null;
-      }[]
-    >(
-      `SELECT available_balance::text, locked_balance::text,
-              total_wagered::text, total_won::text, unlock_at
-         FROM balances WHERE user_id = $1 LIMIT 1`,
-      id,
-    ).then((rows) => rows[0] ?? null),
+    balancesPromise,
     queryMainRows<(typeof mainSchema.user_statistics.$inferSelect)[]>(
       `SELECT * FROM user_statistics WHERE user_id = $1 LIMIT 1`,
       id,
@@ -782,7 +774,9 @@ export async function getUserDetail(id: string) {
     queryMainRows<(typeof mainSchema.user_battle_limits.$inferSelect)[]>(
       `SELECT * FROM user_battle_limits WHERE user_id = $1 LIMIT 1`,
       id,
-    ).then((rows) => rows[0] ?? null).catch(() => null),
+    )
+      .then((rows) => rows[0] ?? null)
+      .catch(() => null),
     queryMainRows<{ count: string }[]>(
       `SELECT COUNT(*)::text AS count FROM user_inventory
         WHERE user_id = $1 AND sold_at IS NULL AND exchanged_at IS NULL`,
@@ -830,30 +824,27 @@ export async function getUserDetail(id: string) {
     // as a completed deposit / withdrawal. Combined count + sum into one
     // aggregate call so we hit the deposit ledger filter exactly once
     // instead of twice — same plan, half the round-trips.
-    queryMainRows<{ count: string; total: string | null }[]>(
-      `SELECT COUNT(*)::text AS count, SUM(amount::numeric)::text AS total
+    queryMainRows<
+      { count: string; total: string | null; fiat_total: string | null }[]
+    >(
+      `SELECT COUNT(*)::text AS count,
+              SUM(amount::numeric)::text AS total,
+              SUM(amount::numeric) FILTER (
+                WHERE crypto_asset IS NULL
+              )::text AS fiat_total
          FROM ledger_transactions
-        WHERE user_id = $1 AND type::text = 'deposit'
-          AND status::text = 'completed'`,
+        WHERE user_id = $1
+          AND type = 'deposit'::ledger_transaction_type
+          AND status = 'completed'::ledger_transaction_status`,
       id,
     ).then(([row]) => ({
       _count: { _all: Number(row?.count ?? 0) },
       _sum: { amount: row?.total ?? null },
+      fiatAmount: row?.fiat_total ?? null,
     })),
-    // Fiat (non-crypto) deposits only — completed deposit-ledger rows with no
-    // crypto_asset. Splits the completed-deposit total into fiat vs crypto so
-    // the P&L / KYC / dashboard surfaces can show "of which $X fiat". Same
-    // filter as depositAgg above, plus crypto_asset IS NULL.
-    queryMainRows<{ total: string | null }[]>(
-      `SELECT SUM(amount::numeric)::text AS total
-         FROM ledger_transactions
-        WHERE user_id = $1 AND type::text = 'deposit'
-          AND status::text = 'completed' AND crypto_asset IS NULL`,
-      id,
-    ).then(([row]) => ({ _sum: { amount: row?.total ?? null } })),
     queryMainRows<{ count: string }[]>(
       `SELECT COUNT(*)::text AS count FROM card_withdrawal_requests
-        WHERE user_id = $1 AND status::text = ANY($2::text[])`,
+        WHERE user_id = $1 AND status = ANY($2::card_withdrawal_status[])`,
       id,
       ["completed", "shipped"],
     ).then((rows) => Number(rows[0]?.count ?? 0)),
@@ -889,10 +880,6 @@ export async function getUserDetail(id: string) {
     // metadata.direction). Runs in parallel; resolves counterparty names
     // for the shown rows internally.
     getUserTips(id),
-    // Wager-requirement debt + cleared progress for the new "Locked" line in
-    // the balance breakdown (see fetchWagerLocked). Drift-safe: returns nulls
-    // if the columns aren't on this DB → the row hides.
-    fetchWagerLocked(id),
     // LIVE affiliate aggregates — sourced from the canonical
     // affiliate_code_usages table the leaderboard reads (see
     // creators-leaderboards.ts:142-161). The denormalized
@@ -958,68 +945,29 @@ export async function getUserDetail(id: string) {
   // the rest of the app scopes on this list.
   const isBlacklisted = (await getExcludedUserIds()).includes(user.id);
 
-  // Resolve referred_by username + the EXACT code that was used at
-  // signup time (from affiliate_code_usages). The code string is what
-  // admins ask for ("which code did this user use?") — having it on
-  // the page next to the referrer link removes the ambiguity between
-  // the user's OWN code (user.affiliate_code) and the code they
-  // joined under. The signup-time row is the source of truth: even
-  // if the owner has since rotated their code, that row preserves
-  // the original string.
+  // Referrer identity + the latest usage code are folded into the main user
+  // query above. This avoids a serial post-aggregate query tail for every
+  // referred account while preserving the historical signup-code fallback
+  // for environments whose affiliate_usage_type enum includes that member.
   let referredByUsername: string | null = null;
   let referredByCode: string | null = null;
   if (user.referred_by) {
-    const [referrer, signupUsage, latestUsage] = await Promise.all([
-      queryMainRows<
-        {
-          username: string | null;
-          email: string | null;
-          affiliate_code: string | null;
-        }[]
-      >(
-        `SELECT username, email, affiliate_code
-           FROM "user" WHERE id = $1 LIMIT 1`,
-        user.referred_by,
-      ).then((rows) => rows[0] ?? null),
-      // Historical signup-time code — preferred, since it preserves the
-      // exact string even if the owner later rotated their code.
-      // The LIVE prod affiliate_usage_type enum is {deposit,wager} only —
-      // `signup` exists just in the generated client, so this filter throws
-      // 22P02 on prod. Zero rows could carry the missing member anyway, so
-      // null is the TRUE result; the fallback chain below (user.affiliate_code
-      // → latestUsage → referrer) absorbs it. No live-probe infra for this
-      // enum — a single .catch is the house rule for one-off enum reads.
-      queryMainRows<{ code: string }[]>(
-        `SELECT code FROM affiliate_code_usages
-          WHERE referred_user_id = $1 AND usage_type::text = 'signup'
-          ORDER BY created_at DESC LIMIT 1`,
-        user.id,
-      ).then((rows) => rows[0] ?? null).catch(() => null),
-      // Most recent usage row of ANY type. The admin "set referrer"
-      // path writes a non-signup usage row, so this surfaces the code
-      // when there's no signup row — without it the code shows as
-      // "unknown" after a manual attribution.
-      queryMainRows<{ code: string }[]>(
-        `SELECT code FROM affiliate_code_usages
-          WHERE referred_user_id = $1 ORDER BY created_at DESC LIMIT 1`,
-        user.id,
-      ).then((rows) => rows[0] ?? null),
-    ]);
+    const referrer = user.referrer_context;
     referredByUsername =
       referrer?.username ?? referrer?.email ?? user.referred_by;
     // Resolution order:
-    //   1. historical signup row (exact code at signup),
+    //   1. historical signup usage (when the environment records it),
     //   2. the active code the user is on now (user.affiliate_code —
     //      set by the admin override), which is what wager income
     //      follows,
-    //   3. any recorded usage row (catches manual/deposit attributions),
+    //   3. the latest recorded usage row (manual/deposit attribution),
     //   4. the referrer's own code as a last resort.
     // NOTE: referrer.affiliate_code is the code the OWNER is carrying,
     // not necessarily a code they own, so it's the weakest fallback.
     referredByCode =
-      signupUsage?.code ??
+      user.signup_referral_code ??
       user.affiliate_code ??
-      latestUsage?.code ??
+      user.latest_referral_code ??
       referrer?.affiliate_code ??
       null;
   }
@@ -1086,8 +1034,12 @@ export async function getUserDetail(id: string) {
       // platform (the betting/withdrawal routes 403 for them).
       isSelfExcluded: user.is_self_excluded,
       selfExcludedReason: user.self_excluded_reason,
-      selfExcludedAt: user.self_excluded_at ? toIso(user.self_excluded_at) : null,
-      selfExcludedUntil: user.self_excluded_until ? toIso(user.self_excluded_until) : null,
+      selfExcludedAt: user.self_excluded_at
+        ? toIso(user.self_excluded_at)
+        : null,
+      selfExcludedUntil: user.self_excluded_until
+        ? toIso(user.self_excluded_until)
+        : null,
       // Device-fingerprint alt-account signal — see fingerprintSignalPromise
       // above. suspectedAlt mirrors the platform's own heuristic;
       // linkedDeviceAccountCount is the broader device-overlap count (can be
@@ -1173,17 +1125,23 @@ export async function getUserDetail(id: string) {
           // own money, just inside the cooldown window paired with unlockAt.
           lockedBalance: toNumber(balances.locked_balance),
           // FROZEN-RATE bonus debt that gates withdrawals — distinct from
-          // the vault cooldown (lockedBalance above). See fetchWagerLocked
-          // for source columns + drift handling.
-          wagerLocked: wagerLockedAgg.wagerLocked,
-          wagerProgress: wagerLockedAgg.wagerProgress,
+          // the vault cooldown (lockedBalance above). These come from the
+          // same balance-row query as the visible balance fields.
+          wagerLocked:
+            balances.wager_requirement_remaining == null
+              ? null
+              : toNumber(balances.wager_requirement_remaining),
+          wagerProgress:
+            balances.wager_requirement_progress == null
+              ? null
+              : toNumber(balances.wager_requirement_progress),
           // P&L components come from the shared helper so this view can
           // never drift from users-list / dashboard.
           totalDeposited: userPnl.deposits,
           // Fiat (non-crypto / card) portion of completed deposits — from the
-          // fiatDepositAgg query above. Lifetime; surfaced on the P&L box, KYC
+          // combined deposit aggregate above. Lifetime; surfaced on the P&L box, KYC
           // decision panel, and Account tab as an "of which fiat" figure.
-          fiatDeposits: toNumber(fiatDepositAgg._sum.amount ?? 0),
+          fiatDeposits: toNumber(depositAgg.fiatAmount ?? 0),
           // Blacklisted user → hide the lifetime withdrawn total. Every
           // consumer composes the displayed P&L client-side as
           // `deposits − totalWithdrawn − onSiteBalance − inventory − vouchers`
@@ -1202,12 +1160,21 @@ export async function getUserDetail(id: string) {
             : null,
           inventoryValue: userPnl.inventoryValue,
           vouchersValue: userPnl.unclaimedVouchers,
-          packsWagered: Math.abs(toNumber(
-            wagerBreakdown.find((w) => w.type === "pack_opening")?._sum.amount ?? 0,
-          )),
+          packsWagered: Math.abs(
+            toNumber(
+              wagerBreakdown.find((w) => w.type === "pack_opening")?._sum
+                .amount ?? 0,
+            ),
+          ),
           battlesWagered: Math.abs(
-            toNumber(wagerBreakdown.find((w) => w.type === "battle_bet")?._sum.amount ?? 0) +
-              toNumber(wagerBreakdown.find((w) => w.type === "battle_sponsorship")?._sum.amount ?? 0),
+            toNumber(
+              wagerBreakdown.find((w) => w.type === "battle_bet")?._sum
+                .amount ?? 0,
+            ) +
+              toNumber(
+                wagerBreakdown.find((w) => w.type === "battle_sponsorship")
+                  ?._sum.amount ?? 0,
+              ),
           ),
         }
       : null,
@@ -1223,13 +1190,16 @@ export async function getUserDetail(id: string) {
             : null,
           currentDayWageredUsd: toNumber(statistics.current_day_wagered_usd),
           currentWeekWageredUsd: toNumber(statistics.current_week_wagered_usd),
-          currentMonthWageredUsd: toNumber(statistics.current_month_wagered_usd),
+          currentMonthWageredUsd: toNumber(
+            statistics.current_month_wagered_usd,
+          ),
           isProfilePrivate: statistics.is_profile_private,
         }
       : null,
     featureLocks: featureLocks
       ? {
-          lockedWithdrawalsCrypto: featureLocks.locked_withdrawals_crypto.length > 0,
+          lockedWithdrawalsCrypto:
+            featureLocks.locked_withdrawals_crypto.length > 0,
           lockedWithdrawalsItems: featureLocks.locked_withdrawals_items,
           lockedInventorySales: featureLocks.locked_inventory_sales,
           lockedExchanges: featureLocks.locked_exchanges,
@@ -1278,9 +1248,15 @@ export async function getUserDetail(id: string) {
         // source of truth even when click/wager totals are stale).
         // Falls back to 0 / null when no account row exists yet —
         // the panel still renders so admins see the live numbers.
-        totalEarnedUsd: affiliateAccount ? toNumber(affiliateAccount.total_earned_usd) : 0,
-        availableUsd: affiliateAccount ? toNumber(affiliateAccount.available_usd) : 0,
-        totalPaidOutUsd: affiliateAccount ? toNumber(affiliateAccount.total_paid_out_usd) : 0,
+        totalEarnedUsd: affiliateAccount
+          ? toNumber(affiliateAccount.total_earned_usd)
+          : 0,
+        availableUsd: affiliateAccount
+          ? toNumber(affiliateAccount.available_usd)
+          : 0,
+        totalPaidOutUsd: affiliateAccount
+          ? toNumber(affiliateAccount.total_paid_out_usd)
+          : 0,
         totalBonusDistributedUsd: affiliateAccount
           ? toNumber(affiliateAccount.total_bonus_distributed_usd)
           : 0,
@@ -1329,7 +1305,9 @@ export async function getUserDetail(id: string) {
           id: cw.id,
           method: cw.method,
           totalValueUsd: toNumber(cw.total_value_usd),
-          shippingFeeUsd: cw.shipping_fee_usd ? toNumber(cw.shipping_fee_usd) : null,
+          shippingFeeUsd: cw.shipping_fee_usd
+            ? toNumber(cw.shipping_fee_usd)
+            : null,
           trackingNumber: cw.tracking_number,
           carrier: cw.carrier,
           status: cw.status,

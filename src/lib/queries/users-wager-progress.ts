@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 
 import { queryMainRows } from "@/lib/drizzle-query";
@@ -62,6 +63,24 @@ import {
 const EPSILON_USD = 0.005;
 
 /**
+ * Request-memoized schema capability shared by the user-detail aggregate and
+ * the full wager-progress read. Both run concurrently on a user page; without
+ * this shared promise they each queried information_schema for the same
+ * column on every render.
+ */
+export const hasWagerProgressColumns = cache(async (): Promise<boolean> => {
+  const rows = await queryMainRows<{ exists: boolean }[]>(`
+    SELECT EXISTS (
+      SELECT 1
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'balances'
+         AND column_name = 'wager_requirement_remaining'
+    ) AS exists`);
+  return rows[0]?.exists ?? false;
+});
+
+/**
  * Hard wall-clock budget for the OPTIONAL backend bps reads below. The
  * authoritative gate figures (`remaining`/`withdrawable`/`met`) are pure
  * column reads and do NOT depend on the backend; the bps knobs only feed the
@@ -92,11 +111,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
 }
 
 export type WagerProgressSourceKey =
-  | "deposit"
-  | "bonus"
-  | "affiliate"
-  | "rakeback"
-  | "tips";
+  "deposit" | "bonus" | "affiliate" | "rakeback" | "tips";
 
 export type WagerProgressSource = {
   key: WagerProgressSourceKey;
@@ -200,15 +215,7 @@ export async function getUserWagerProgress(
   // migration 0130) before selecting it, so a DB that lacks it gets the muted
   // card (null) instead of a 42703 "column does not exist" throw. Cheap,
   // indexed catalog read — runs only on the Account tab.
-  const colCheck = await queryMainRows<{ exists: boolean }[]>(`
-    SELECT EXISTS (
-      SELECT 1
-        FROM information_schema.columns
-       WHERE table_schema = 'public'
-         AND table_name = 'balances'
-         AND column_name = 'wager_requirement_remaining'
-    ) AS exists`);
-  if (!colCheck[0]?.exists) return null;
+  if (!(await hasWagerProgressColumns())) return null;
 
   // ── Read the backend-written columns for this user ───────────────────
   const rows = await queryMainRows<RawBalanceRow[]>(
