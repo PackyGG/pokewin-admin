@@ -15,6 +15,7 @@ import {
 import { toNumber } from "@/lib/utils/decimal";
 import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 import type { FrameWindow } from "./frame-wager-by-user";
+import { CREATOR_PNL_ATTRIBUTION_LOOKBACK_DAYS } from "@/lib/creator-pnl-contract";
 
 /**
  * "Affiliates made us" per creator, summed strictly INSIDE each creator's
@@ -45,7 +46,9 @@ import type { FrameWindow } from "./frame-wager-by-user";
  * "Creator Net" lifetime figure). Only the deposit/withdrawal EVENT times
  * are narrowed to the frame; membership stays on the lifetime sets so a
  * card withdrawn during the deal still attributes even when the producing
- * wager / first deposit predates the frame.
+ * wager / first deposit predates the frame. The lookback is anchored to the
+ * immutable frame end, never query time, so delayed settlement recomputes the
+ * same cohort.
  *
  * One batched scan covers the whole roster: per-creator `[start, end)`
  * bounds arrive via a VALUES list (same shape as `getFrameWagerByUser`).
@@ -56,8 +59,6 @@ import type { FrameWindow } from "./frame-wager-by-user";
  *
  * MAIN/prod game DB is READ-ONLY; this only SELECTs.
  */
-
-const LIFETIME_LOOKBACK_DAYS = 365;
 
 type FrameAffiliatePnl = {
   /**
@@ -106,11 +107,15 @@ async function readFramePnl(
           VALUES ${tuples.join(", ")}
         ),
         bounds AS (
-          SELECT MIN(start_ts) AS min_start, MAX(end_ts) AS max_end FROM frames
+          SELECT MIN(start_ts) AS min_start,
+                 MAX(end_ts) AS max_end,
+                 MIN(end_ts - INTERVAL '${CREATOR_PNL_ATTRIBUTION_LOOKBACK_DAYS} days') AS min_membership_start
+            FROM frames
         ),
         -- Coverage-attributed deposits over the widest window we need
-        -- (frame span ∪ the 365d membership lookback). The correlated
-        -- coverage subquery is evaluated once per deposit row here.
+        -- (frame span ∪ the frame-end-anchored 365d membership lookback).
+        -- Each frame's cohort is anchored to its own end; bounds only widen
+        -- the shared scan. The coverage subquery runs once per deposit row.
         dep_raw AS (
           SELECT lt.user_id,
                  lt.created_at,
@@ -125,7 +130,7 @@ async function readFramePnl(
              AND lt.status = 'completed'
              AND lt.created_at >= LEAST(
                    (SELECT min_start FROM bounds),
-                   NOW() - INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'
+                   (SELECT min_membership_start FROM bounds)
                  )
              AND lt.created_at < (SELECT max_end FROM bounds)
         ),
@@ -151,7 +156,8 @@ async function readFramePnl(
             FROM dep_raw dr
             JOIN frames f ON f.cid = dr.creator_id
            WHERE dr.creator_id IS NOT NULL
-             AND dr.created_at >= NOW() - INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'
+             AND dr.created_at >= f.end_ts - INTERVAL '${CREATOR_PNL_ATTRIBUTION_LOOKBACK_DAYS} days'
+             AND dr.created_at < f.end_ts
         ),
         -- Creator's wager-session membership over 365d (mirrors creator_sessions).
         sess AS (
@@ -162,7 +168,8 @@ async function readFramePnl(
             JOIN frames f ON f.cid = acu.affiliate_user_id
            WHERE acu.usage_type::text = 'wager'
              AND acu.game_session_id IS NOT NULL
-             AND acu.created_at >= NOW() - INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'
+             AND acu.created_at >= f.end_ts - INTERVAL '${CREATOR_PNL_ATTRIBUTION_LOOKBACK_DAYS} days'
+             AND acu.created_at < f.end_ts
              AND u.role NOT IN ('admin', 'support', 'creator')
              AND u.id <> acu.affiliate_user_id${blacklistSessAnd}
         ),
@@ -241,7 +248,7 @@ const cachedFramePnl = (
   unstable_cache(
     () => readFramePnl(env, frames, blacklistIds),
     [
-      "profitability-frame-affiliate-pnl-v3-half-open",
+      "profitability-frame-affiliate-pnl-v4-frame-end-cohort",
       env,
       ...frames.map((f) => `${f.userId}:${f.startIso}:${f.endIso}`),
       ...blacklistIds,

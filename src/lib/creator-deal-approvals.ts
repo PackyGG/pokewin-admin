@@ -33,6 +33,11 @@ import {
   type PnlMultiplierFundingSnapshot,
 } from "@/lib/creator-pnl-funding-snapshot";
 import {
+  CREATOR_PNL_MAX_FRAME_DAYS,
+  CREATOR_PNL_MAX_MULTIPLIER_BPS,
+  creatorPnlFrameDurationDays,
+} from "@/lib/creator-pnl-contract";
+import {
   creatorApprovalWindowHasEnded,
   hasAllCreatorApprovalAssets,
 } from "@/lib/creator-deal-provisioning-window";
@@ -123,9 +128,7 @@ const PnlPayloadSchema = z.object({
     z.object({
       type: z.literal("new_multiplier"),
       required_deposit_usd: PositiveCents(1_000_000),
-      // Product rule: any multiplier from 2x upward. The only upper bound is
-      // the signed PostgreSQL integer used by the backend contract.
-      multiplier_bps: z.number().int().min(20_000).max(2_147_000_000),
+      multiplier_bps: z.number().int().min(20_000).max(CREATOR_PNL_MAX_MULTIPLIER_BPS),
       withdrawable_bps: z.number().int().min(0).max(10_000),
       wager_requirement_bps: z.number().int().min(0).max(10_000_000),
       max_total_wager_usd: Cents(10_000_000).nullable(),
@@ -152,6 +155,14 @@ const PnlPayloadSchema = z.object({
   const endMs = new Date(deal.frame_end_utc).getTime();
   if (endMs <= startMs) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["frame_end_utc"], message: "P&L frame end must be after its start." });
+  }
+  const durationDays = creatorPnlFrameDurationDays(deal.frame_start_utc, deal.frame_end_utc);
+  if (!Number.isFinite(durationDays) || durationDays < 1 || durationDays > CREATOR_PNL_MAX_FRAME_DAYS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["frame_end_utc"],
+      message: `P&L frame duration must be 1 to ${CREATOR_PNL_MAX_FRAME_DAYS} days.`,
+    });
   }
   if (
     deal.max_sponsorship_per_stream_usd != null

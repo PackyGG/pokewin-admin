@@ -4,6 +4,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import {
+  CREATOR_PNL_MAX_FRAME_DAYS,
+  CREATOR_PNL_MAX_MULTIPLIER_X,
+} from "@/lib/creator-pnl-contract";
 
 import type { CreatorPnlApprovalPayload } from "./deal-approval-actions";
 import { endDateForDuration, parseUtcInput, toUtcDateInputValue } from "./deal-form-shared";
@@ -78,8 +82,8 @@ export function parsePnlDealDraft(
   const sharePct = Number(draft.sharePct);
   if (!frameStart || !frameEnd) return { error: "Enter a valid UTC start date and duration" };
   if (new Date(frameEnd) <= new Date()) return { error: "The PnL deal must end in the future" };
-  if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3650) {
-    return { error: "Deal duration must be 1 to 3650 whole days" };
+  if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > CREATOR_PNL_MAX_FRAME_DAYS) {
+    return { error: `Deal duration must be 1 to ${CREATOR_PNL_MAX_FRAME_DAYS} whole days` };
   }
   if (!Number.isFinite(sharePct) || sharePct <= 0 || sharePct > 100) {
     return { error: "Creator PnL share must be greater than 0% and at most 100%" };
@@ -124,8 +128,8 @@ export function parsePnlDealDraft(
     const minBetCount = Number(draft.minBetCount);
     const minWagerToFunding = Number(draft.minWagerToFundingPct);
     if (deposit == null) return { error: "Minimum deposit must be a positive dollar amount" };
-    if (!Number.isFinite(multiplier) || multiplier < 2) {
-      return { error: "PnL multiplier must be at least 2x" };
+    if (!Number.isFinite(multiplier) || multiplier < 2 || multiplier > CREATOR_PNL_MAX_MULTIPLIER_X) {
+      return { error: `PnL multiplier must be between 2x and ${CREATOR_PNL_MAX_MULTIPLIER_X}x` };
     }
     if (!Number.isFinite(wager) || wager < 0) return { error: "Wager requirement must be 0% or higher" };
     if (draft.maxTotalWagerUsd.trim() !== "" && maxWager == null) return { error: "Max wager must be a valid dollar amount or blank" };
@@ -184,7 +188,7 @@ export function PnlDealApprovalFields({
     <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-3">
         <Field label="Starts (UTC)"><Input type="date" value={draft.startsOn} onChange={(event) => set("startsOn", event.target.value)} disabled={disabled} /></Field>
-        <Field label="Length (days)"><Input type="number" min="1" max="3650" step="1" value={draft.durationDays} onChange={(event) => set("durationDays", event.target.value)} disabled={disabled} /></Field>
+        <Field label="Length (days)"><Input type="number" min="1" max={CREATOR_PNL_MAX_FRAME_DAYS} step="1" value={draft.durationDays} onChange={(event) => set("durationDays", event.target.value)} disabled={disabled} /></Field>
         <Field label="Creator share of positive PnL"><Input type="number" min="0.01" max="100" step="0.01" value={draft.sharePct} onChange={(event) => set("sharePct", event.target.value)} disabled={disabled} /></Field>
       </div>
 
@@ -195,7 +199,7 @@ export function PnlDealApprovalFields({
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           <FundingButton selected={draft.fundingMode === "fills"} onClick={() => set("fundingMode", "fills")} title="Non-withdrawable fills" text="House-funded content balance. Conversion and withdrawal are disabled." />
-          <FundingButton selected={draft.fundingMode === "multiplier"} onClick={() => set("fundingMode", "multiplier")} title="New multiplier" text="Creator deposits real money. Any multiplier from 2x upward." />
+          <FundingButton selected={draft.fundingMode === "multiplier"} onClick={() => set("fundingMode", "multiplier")} title="New multiplier" text={`Creator deposits real money. Multiplier can be 2x to ${CREATOR_PNL_MAX_MULTIPLIER_X}x.`} />
         </div>
       </section>
 
@@ -209,7 +213,7 @@ export function PnlDealApprovalFields({
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Minimum deposit (USD)"><Input type="number" min="0.01" step="0.01" value={draft.requiredDepositUsd} onChange={(event) => set("requiredDepositUsd", event.target.value)} disabled={disabled} /></Field>
-            <Field label="Multiplier"><Input type="number" min="2" step="0.01" value={draft.multiplierX} onChange={(event) => set("multiplierX", event.target.value)} disabled={disabled} /></Field>
+            <Field label="Multiplier"><Input type="number" min="2" max={CREATOR_PNL_MAX_MULTIPLIER_X} step="0.01" value={draft.multiplierX} onChange={(event) => set("multiplierX", event.target.value)} disabled={disabled} /></Field>
             <Field label="Real-money share"><Input readOnly disabled value={realMoneyPct == null ? "—" : `${realMoneyPct.toFixed(2)}%`} /></Field>
             <Field label="Wager requirement"><Input type="number" min="0" step="0.01" value={draft.wagerRequirementPct} onChange={(event) => set("wagerRequirementPct", event.target.value)} disabled={disabled} /></Field>
             <Field label="Max total wager (optional)"><Input type="number" min="0" step="0.01" placeholder="No cap" value={draft.maxTotalWagerUsd} onChange={(event) => set("maxTotalWagerUsd", event.target.value)} disabled={disabled} /></Field>

@@ -168,7 +168,7 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
   assert.match(workflow, /type: z\.literal\("linked_multiplier"\)/);
   assert.match(workflow, /type: z\.literal\("new_multiplier"\)/);
   assert.match(workflow, /multiplier_bps: z\.number\(\)\.int\(\)\.min\(20_000\)/);
-  assert.match(workflow, /\.max\(2_147_000_000\)/);
+  assert.match(workflow, /\.max\(CREATOR_PNL_MAX_MULTIPLIER_BPS\)/);
   assert.match(workflow, /auto_renew: z\.literal\(false\)/);
   assert.match(workflow, /pnlPayload\?: unknown \| null/);
   assert.match(workflow, /kind === "deal" \|\| kind === "multiplier_deal" \|\| kind === "pnl_deal"/);

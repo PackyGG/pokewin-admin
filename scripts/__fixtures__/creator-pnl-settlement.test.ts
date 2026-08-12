@@ -7,6 +7,11 @@ import {
   pnlFundingMultiplierBps,
   snapshotPnlMultiplierFunding,
 } from "../../src/lib/creator-pnl-funding-snapshot";
+import {
+  CREATOR_PNL_MAX_FRAME_DAYS,
+  CREATOR_PNL_MAX_MULTIPLIER_BPS,
+  isCreatorPnlFrameDurationAllowed,
+} from "../../src/lib/creator-pnl-contract";
 
 const read = (path: string) => readFileSync(path, "utf8");
 const service = read("src/lib/creator-pnl-settlement.ts");
@@ -34,6 +39,22 @@ test("preview uses uncached half-open reads and linked multiplier 1/X attributio
   assert.doesNotMatch(service, /multiplier\.multiplier_bps/);
   assert.match(service, /Fill-funded creator play has 0% real-money attribution/);
   assert.match(service, /status: "ambiguous"/);
+});
+
+test("PnL frames stay within deterministic attribution bounds", () => {
+  assert.equal(CREATOR_PNL_MAX_FRAME_DAYS, 365);
+  assert.equal(isCreatorPnlFrameDurationAllowed("2026-01-01T00:00:00.000Z", "2027-01-01T00:00:00.000Z"), true);
+  assert.equal(isCreatorPnlFrameDurationAllowed("2026-01-01T00:00:00.000Z", "2027-01-02T00:00:00.000Z"), false);
+  assert.match(affiliate, /f\.end_ts - INTERVAL/);
+  assert.match(affiliate, /MIN\(end_ts - INTERVAL/);
+  assert.match(affiliate, /dr\.created_at < f\.end_ts/);
+  assert.match(affiliate, /acu\.created_at < f\.end_ts/);
+  assert.doesNotMatch(affiliate, /NOW\(\) - INTERVAL/);
+  assert.match(affiliate, /profitability-frame-affiliate-pnl-v4-frame-end-cohort/);
+});
+
+test("PnL multiplier ceiling matches the Discord contract", () => {
+  assert.equal(CREATOR_PNL_MAX_MULTIPLIER_BPS, 10_000_000);
 });
 
 test("approved multiplier economics remain immutable after a backend edit", () => {
