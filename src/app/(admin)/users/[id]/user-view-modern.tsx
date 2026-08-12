@@ -67,13 +67,11 @@ import {
 } from "./user-tabs";
 import type { UserRewards } from "@/lib/queries/users";
 import type { PaginatedInventory } from "./user-tabs-types";
-import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type { UserFeatureLocks } from "@/lib/backend-api/feature-locks";
 import type { FiatDepositAccess } from "@/lib/backend-api/fiat-deposit-access";
 import type { FiatEligibilityOverride } from "@/lib/antifraud/fiat-eligibility-overrides-api";
 import type { UserKycStatus } from "@/lib/backend-api/kyc";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
-import type { UserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import {
@@ -215,14 +213,12 @@ export function UserViewModern({
   rewardPackOpensPromise,
   inventoryPromise,
   disposedInventoryPromise,
-  wagerRequirementPromise,
   featureLocksPromise,
   fiatDepositAccessPromise,
   preFiatOverridePromise,
   kycPromise,
   auditPromise,
   wagerProgressPromise,
-  balanceWeightingPromise,
   viewerIsAdjustmentOwner,
   viewerCanSeeUltraLossback,
   initialTab,
@@ -269,10 +265,6 @@ export function UserViewModern({
   // Inventory tab:
   inventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
   disposedInventoryPromise: Promise<SafeQueryResult<PaginatedInventory>> | null;
-  // Account tab — per-user withdrawal wager-requirement override (backend
-  // API, NOT the MAIN DB; plain nullable value, its own catch→null wrapper
-  // in page.tsx). null resolution = the card's muted degraded state.
-  wagerRequirementPromise: Promise<UserWagerRequirement | null> | null;
   // Account tab — backend-owned fraud-signal deposit/withdrawal locks
   // (card refund/chargeback). Same catch→null convention as the
   // wager-requirement override above.
@@ -292,10 +284,6 @@ export function UserViewModern({
   // backend-written `balances` columns (dev-only). null = prod / no-balance /
   // read failed → the card's muted "not available" state.
   wagerProgressPromise: Promise<UserWagerProgress | null> | null;
-  // Account tab — how each part of the balance is weighted toward each
-  // destination (funding-source wager-weight matrix × this user's balance
-  // composition). null = tab not active / read failed → muted card.
-  balanceWeightingPromise: Promise<UserBalanceWeighting | null> | null;
   // True only for the owner `motha`. Defence-in-depth UI flag: when false the
   // Finances type-filter dropdown drops the "admin balance adjustment" option
   // so a non-owner never even sees the category label. The real boundary is
@@ -708,12 +696,10 @@ export function UserViewModern({
           <AccountTab
             data={data}
             pnlResultPromise={pnlResultPromise}
-            wagerRequirementPromise={wagerRequirementPromise}
             featureLocksPromise={featureLocksPromise}
             fiatDepositAccessPromise={fiatDepositAccessPromise}
             preFiatOverridePromise={preFiatOverridePromise}
             wagerProgressPromise={wagerProgressPromise}
-            balanceWeightingPromise={balanceWeightingPromise}
             adjustmentsTxPromise={adjustmentsTxPromise}
             viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
             viewerCanSeeUltraLossback={viewerCanSeeUltraLossback}

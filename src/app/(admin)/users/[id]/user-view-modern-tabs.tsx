@@ -33,7 +33,6 @@ import {
 } from "./actions";
 import type { AttributionJourneyEntry } from "@/lib/queries/users";
 import { SetAffiliateCodeDialog } from "./user-tabs-creator";
-import { ManualWithdrawalDialog } from "./user-tabs-dialogs";
 import { StepUpField } from "@/components/step-up-field";
 import {
   Dialog,
@@ -52,7 +51,6 @@ import {
   Coins,
   ShieldCheck,
   ArrowDownToLine,
-  Banknote,
   ArrowUpFromLine,
   ArrowUpRight,
   ArrowLeftRight,
@@ -63,10 +61,7 @@ import {
   Waypoints,
   Loader2,
   Coins as CoinsIcon,
-  Scale,
-  ShieldAlert,
   BadgeCheck,
-  BadgeDollarSign,
   Users,
   Fingerprint,
 } from "lucide-react";
@@ -97,9 +92,6 @@ import {
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
 import { UserVouchersPanel } from "./user-vouchers-panel";
 import { JoinedBattlesPanel } from "./joined-battles-panel";
-import { UserWagerRequirementCard } from "./user-wager-requirement-card";
-import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
-import { FraudLocksCard } from "./fraud-locks-card";
 import type { UserFeatureLocks } from "@/lib/backend-api/feature-locks";
 import { RewardFeatureLocksCard } from "./reward-feature-locks-card";
 import type { FiatDepositAccess } from "@/lib/backend-api/fiat-deposit-access";
@@ -109,8 +101,6 @@ import { KycCard } from "./kyc-card";
 import type { UserKycStatus } from "@/lib/backend-api/kyc";
 import { UserWagerProgressCard } from "./user-wager-progress-card";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
-import { UserBalanceWeightingCard } from "./user-balance-weighting-card";
-import type { UserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
 import { toWagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
 import type {
   PaginatedInventory,
@@ -943,49 +933,12 @@ function AffiliateSection({ data }: { data: UserDetail }) {
   // every other section on this tab. All default COLLAPSED (owner request —
   // same as the rest of the Account tab, which now opens with every section
   // collapsed beneath the pinned, non-collapsible Account Details block).
-  const [creatorDashboardOpen, setCreatorDashboardOpen] = useState(false);
   const [referrerOpen, setReferrerOpen] = useState(false);
   const [attributionOpen, setAttributionOpen] = useState(false);
   const [ownCodeOpen, setOwnCodeOpen] = useState(false);
   const [affiliateStatsOpen, setAffiliateStatsOpen] = useState(false);
   return (
     <div className="space-y-4">
-      {/* Creator deep-link — only for users actually flagged creator.
-          The /creators/[userId] page has the full panel: deals,
-          webhooks, payouts, code analytics, clicks, signup tracking.
-          Inline-duplicating that here would be a maintenance nightmare. */}
-      {user.role === "creator" && (
-        <CollapsibleSection
-          icon={Sparkles}
-          title="Creator Dashboard"
-          open={creatorDashboardOpen}
-          onOpenChange={setCreatorDashboardOpen}
-        >
-          <Card className="overflow-hidden">
-            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="flex size-10 items-center justify-center rounded-lg bg-purple-500/15 shrink-0">
-                  <Sparkles className="size-5 text-purple-500" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold">Creator Dashboard</p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    Deals, webhooks, payouts, click + signup analytics
-                  </p>
-                </div>
-              </div>
-              <a
-                href={`/creators/${user.id}`}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 min-h-[44px] shrink-0"
-              >
-                Open Creator Dashboard
-                <span aria-hidden>→</span>
-              </a>
-            </CardContent>
-          </Card>
-        </CollapsibleSection>
-      )}
-
       {/* Two visually distinct sections — each manages DIFFERENT
           columns on the user table:
             • ReferrerCard ↓ writes user.referred_by (who referred them
@@ -1888,52 +1841,6 @@ function TransferCodeDialog({
 //  ACCOUNT TAB
 // ───────────────────────────────────────────────────────────────────
 
-// "Record manual withdrawal" account action — relocated here from the
-// Balances panel (Overview tab) so account-level balance actions live on the
-// Account tab. Pure dialog trigger: no data fetch until the admin submits, so
-// it carries no Active-Timeframe-Only cost (and the whole Account tab is only
-// mounted when active anyway). The dialog + server-action wiring are unchanged
-// — recording still deducts the user's on-site balance and bumps
-// total_withdrawn so P&L stays correct.
-function AccountManualWithdrawal({
-  userId,
-  availableBalance,
-}: {
-  userId: string;
-  availableBalance: number;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Card>
-        <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">Record a manual withdrawal</p>
-            <p className="text-xs text-muted-foreground">
-              Log an off-platform payout — deducts the user&apos;s on-site
-              balance and bumps total withdrawn so P&amp;L stays correct.
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="shrink-0 border-rose-500/40 text-rose-600 hover:bg-rose-500/10 hover:text-rose-600 dark:text-rose-400 dark:hover:text-rose-400"
-            onClick={() => setOpen(true)}
-          >
-            Record Manual Withdrawal
-          </Button>
-        </CardContent>
-      </Card>
-      <ManualWithdrawalDialog
-        userId={userId}
-        availableBalance={availableBalance}
-        open={open}
-        onOpenChange={setOpen}
-      />
-    </>
-  );
-}
-
 function AccountStatBox({
   label,
   value,
@@ -2047,12 +1954,10 @@ function AccountStatsStreamed({
 export function AccountTab({
   data,
   pnlResultPromise,
-  wagerRequirementPromise,
   featureLocksPromise,
   fiatDepositAccessPromise,
   preFiatOverridePromise,
   wagerProgressPromise,
-  balanceWeightingPromise,
   adjustmentsTxPromise,
   viewerIsAdjustmentOwner,
   viewerCanSeeUltraLossback,
@@ -2063,7 +1968,6 @@ export function AccountTab({
   // branch isn't deployed / the read failed — the card renders its muted
   // "awaiting backend deploy" state for null, exactly as before; only the
   // await point moved off the body gate's serial tail.
-  wagerRequirementPromise: Promise<UserWagerRequirement | null> | null;
   // Backend-API read of the fraud-signal deposit/withdrawal locks (card
   // refund/chargeback). Same catch→null convention as the wager-requirement
   // override above.
@@ -2078,7 +1982,6 @@ export function AccountTab({
   // How each part of the balance is weighted toward each destination
   // (funding-source wager-weight matrix × balance composition). null = tab
   // not active / read failed → muted card.
-  balanceWeightingPromise: Promise<UserBalanceWeighting | null> | null;
   // Owner-only (motha) dedicated uncapped admin_balance_adjustment page —
   // moved here from the Overview tab. Streamed + lazy: page.tsx kicks
   // adjustmentsTxPromise only when the Account tab is active
@@ -2097,14 +2000,9 @@ export function AccountTab({
   // controlled pattern as the Deposits & Withdrawals collapsible on the
   // Overview tab (CollapsibleSection).
   const [adminAdjustmentsOpen, setAdminAdjustmentsOpen] = useState(false);
-  const [featureLocksOpen, setFeatureLocksOpen] = useState(false);
-  const [fiatDepositAccessOpen, setFiatDepositAccessOpen] = useState(false);
+  const [featureAccessOpen, setFeatureAccessOpen] = useState(false);
   const [battleLimitsOpen, setBattleLimitsOpen] = useState(false);
-  const [wagerRequirementOpen, setWagerRequirementOpen] = useState(false);
   const [wagerProgressOpen, setWagerProgressOpen] = useState(false);
-  const [balanceWeightingOpen, setBalanceWeightingOpen] = useState(false);
-  const [manualWithdrawalOpen, setManualWithdrawalOpen] = useState(false);
-  const [fraudLocksOpen, setFraudLocksOpen] = useState(false);
   return (
     <div className="space-y-4">
       {/* Account Details — pinned at the top and not collapsible. Deposit
@@ -2156,9 +2054,9 @@ export function AccountTab({
 
       <CollapsibleSection
         icon={ShieldCheck}
-        title="Feature Locks"
-        open={featureLocksOpen}
-        onOpenChange={setFeatureLocksOpen}
+        title="Feature Locks & Fiat Access"
+        open={featureAccessOpen}
+        onOpenChange={setFeatureAccessOpen}
       >
         <div className="space-y-4">
           <FeatureLocksCard
@@ -2178,46 +2076,21 @@ export function AccountTab({
           ) : (
             <SkeletonCard lines={6} />
           )}
+          <div className="border-t pt-4">
+            {fiatDepositAccessPromise && preFiatOverridePromise ? (
+              <Suspense fallback={<SkeletonCard lines={3} />}>
+                <FiatDepositAccessStreamed
+                  userId={user.id}
+                  fiatDepositAccessPromise={fiatDepositAccessPromise}
+                  preFiatOverridePromise={preFiatOverridePromise}
+                  canManage={data.sessionRole === "admin"}
+                />
+              </Suspense>
+            ) : (
+              <SkeletonCard lines={3} />
+            )}
+          </div>
         </div>
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        icon={BadgeDollarSign}
-        title="Fiat Deposit Allow-list"
-        open={fiatDepositAccessOpen}
-        onOpenChange={setFiatDepositAccessOpen}
-      >
-        {fiatDepositAccessPromise && preFiatOverridePromise ? (
-          <Suspense fallback={<SkeletonCard lines={3} />}>
-            <FiatDepositAccessStreamed
-              userId={user.id}
-              fiatDepositAccessPromise={fiatDepositAccessPromise}
-              preFiatOverridePromise={preFiatOverridePromise}
-              canManage={data.sessionRole === "admin"}
-            />
-          </Suspense>
-        ) : (
-          <SkeletonCard lines={3} />
-        )}
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        icon={ShieldAlert}
-        title="Fraud Locks (Card Deposits)"
-        open={fraudLocksOpen}
-        onOpenChange={setFraudLocksOpen}
-      >
-        {featureLocksPromise ? (
-          <Suspense fallback={<SkeletonCard lines={3} />}>
-            <FraudLocksStreamed
-              userId={user.id}
-              featureLocksPromise={featureLocksPromise}
-              canManage={data.sessionRole === "admin"}
-            />
-          </Suspense>
-        ) : (
-          <SkeletonCard lines={3} />
-        )}
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -2231,25 +2104,6 @@ export function AccountTab({
           limits={battleLimits}
           canManage={data.sessionRole === "admin"}
         />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        icon={Banknote}
-        title="Withdrawal Wager Requirement"
-        open={wagerRequirementOpen}
-        onOpenChange={setWagerRequirementOpen}
-      >
-        {wagerRequirementPromise ? (
-          <Suspense fallback={<SkeletonCard lines={3} />}>
-            <WagerRequirementStreamed
-              userId={user.id}
-              wagerRequirementPromise={wagerRequirementPromise}
-              canManage={data.sessionRole === "admin"}
-            />
-          </Suspense>
-        ) : (
-          <SkeletonCard lines={3} />
-        )}
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -2270,43 +2124,6 @@ export function AccountTab({
           <SkeletonCard lines={3} />
         )}
       </CollapsibleSection>
-
-      <CollapsibleSection
-        icon={Scale}
-        title="Balance Wager Weighting"
-        open={balanceWeightingOpen}
-        onOpenChange={setBalanceWeightingOpen}
-      >
-        {balanceWeightingPromise ? (
-          <Suspense fallback={<SkeletonCard lines={4} />}>
-            <BalanceWeightingStreamed
-              balanceWeightingPromise={balanceWeightingPromise}
-            />
-          </Suspense>
-        ) : (
-          <SkeletonCard lines={4} />
-        )}
-      </CollapsibleSection>
-
-      {/* Record manual withdrawal — relocated here from the Overview
-          Balances panel, and moved further down within the Account tab
-          itself (owner request) so it sits near the bottom with the other
-          account-management collapsibles instead of up top. Gated by the
-          capability; also useful at $0 balance for backfilling past
-          off-platform payouts so P&L counts them. */}
-      {capabilities.canRecordManualWithdrawal && (
-        <CollapsibleSection
-          icon={ArrowUpFromLine}
-          title="Manual Withdrawal"
-          open={manualWithdrawalOpen}
-          onOpenChange={setManualWithdrawalOpen}
-        >
-          <AccountManualWithdrawal
-            userId={user.id}
-            availableBalance={balances?.availableBalance ?? 0}
-          />
-        </CollapsibleSection>
-      )}
 
       {/* Affiliate — folded in from the old standalone Affiliate tab.
           AffiliateSection renders the referrer card, attribution journey,
@@ -2508,40 +2325,6 @@ function KycDecisionInfo({
   );
 }
 
-function WagerRequirementStreamed({
-  userId,
-  wagerRequirementPromise,
-  canManage,
-}: {
-  userId: string;
-  wagerRequirementPromise: Promise<UserWagerRequirement | null>;
-  canManage: boolean;
-}) {
-  const wagerRequirement = use(wagerRequirementPromise);
-  return (
-    <UserWagerRequirementCard
-      userId={userId}
-      data={wagerRequirement}
-      canManage={canManage}
-    />
-  );
-}
-
-function FraudLocksStreamed({
-  userId,
-  featureLocksPromise,
-  canManage,
-}: {
-  userId: string;
-  featureLocksPromise: Promise<UserFeatureLocks | null>;
-  canManage: boolean;
-}) {
-  const featureLocks = use(featureLocksPromise);
-  return (
-    <FraudLocksCard userId={userId} data={featureLocks} canManage={canManage} />
-  );
-}
-
 function RewardFeatureLocksStreamed({
   userId,
   featureLocksPromise,
@@ -2626,13 +2409,4 @@ function WagerProgressStreamed({
       canManage={canManage}
     />
   );
-}
-
-function BalanceWeightingStreamed({
-  balanceWeightingPromise,
-}: {
-  balanceWeightingPromise: Promise<UserBalanceWeighting | null>;
-}) {
-  const weighting = use(balanceWeightingPromise);
-  return <UserBalanceWeightingCard data={weighting} />;
 }

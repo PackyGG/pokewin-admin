@@ -32,7 +32,6 @@ import {
   safeQueryOrNull,
   type SafeQueryResult,
 } from "@/lib/errors/safe-query";
-import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { getUserFeatureLocks } from "@/lib/backend-api/feature-locks";
 import { getFiatDepositAccess } from "@/lib/backend-api/fiat-deposit-access";
 import { getFiatEligibilityOverride } from "@/lib/antifraud/fiat-eligibility-overrides-api";
@@ -42,7 +41,6 @@ import {
   EMPTY_USER_ADMIN_AUDIT,
 } from "@/lib/queries/users-admin-audit";
 import { getUserWagerProgress } from "@/lib/queries/users-wager-progress";
-import { getUserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
 import { getUserRewardPackOpens } from "@/lib/queries/users-reward-pack-opens";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -532,13 +530,6 @@ async function UserDetailBody({
         )
       : null;
 
-  // Account tab: the backend-API wager-requirement override. Keeps its own
-  // catch→null wrapper (null → the card's muted "awaiting backend deploy"
-  // state) — just kicked instead of serially awaited.
-  const wagerRequirementPromise =
-    initialTab === "account"
-      ? getUserWagerRequirement(id).catch(() => null)
-      : null;
   // Account tab: backend-owned fraud-signal deposit/withdrawal locks
   // (refund/chargeback). Same catch→null convention as the wager-requirement
   // override above — null renders the card's muted "awaiting backend
@@ -582,18 +573,6 @@ async function UserDetailBody({
           "users.detail.adminAudit",
           USER_DETAIL_QUERY_TIMEOUT_MS,
         )
-      : null;
-  // Account tab: how each part of the user's balance is weighted toward each
-  // destination (withdrawal / races / rakeback / shards) — the funding-source
-  // wager-weight matrix projected onto their balance composition. Account-tab
-  // only (Active-Timeframe-Only); timeout-wrapped → muted card on slow/missing.
-  const balanceWeightingPromise =
-    initialTab === "account"
-      ? safeQueryOrNull(
-          () => getUserBalanceWeighting(id),
-          "users.detail.balanceWeighting",
-          USER_DETAIL_QUERY_TIMEOUT_MS,
-        ).then((r) => r.data)
       : null;
   // Wager-requirement PROGRESS from the backend-written `balances` columns.
   // ALWAYS kicked (not tab-gated): the hero shows a "Wager Left" KPI on every
@@ -788,14 +767,12 @@ async function UserDetailBody({
       rewardPackOpensPromise={rewardPackOpensPromise}
       inventoryPromise={inventoryPromise}
       disposedInventoryPromise={disposedInventoryPromise}
-      wagerRequirementPromise={wagerRequirementPromise}
       featureLocksPromise={featureLocksPromise}
       fiatDepositAccessPromise={fiatDepositAccessPromise}
       preFiatOverridePromise={preFiatOverridePromise}
       kycPromise={kycPromise}
       auditPromise={auditPromise}
       wagerProgressPromise={wagerProgressPromise}
-      balanceWeightingPromise={balanceWeightingPromise}
       viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
       viewerCanSeeUltraLossback={viewerCanSeeUltraLossback}
       initialTab={initialTab}

@@ -74,8 +74,8 @@ test("reward feature locks mirror every backend category", () => {
   assert.match(featureApi, /FeatureLocksResponseSchema\.safeParse/);
 });
 
-test("Account Feature Locks contains master, granular, and Fiat override controls", () => {
-  assert.match(accountTab, /title="Feature Locks"/);
+test("combined Account access section contains master, granular, and Fiat override controls", () => {
+  assert.match(accountTab, /title="Feature Locks & Fiat Access"/);
   assert.match(accountTab, /<RewardFeatureLocksStreamed/);
   assert.match(accountCard, /Whole rewards lock/);
   assert.match(accountCard, /Leaderboards & races/);

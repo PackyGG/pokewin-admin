@@ -452,7 +452,6 @@ export function UserDetailFixtureClient({
       rewardPackOpensPromise={ok<UserRewardPackOpensResult>(REWARD_PACK_OPENS)}
       inventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
       disposedInventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
-      wagerRequirementPromise={Promise.resolve(null)}
       featureLocksPromise={Promise.resolve(null)}
       fiatDepositAccessPromise={Promise.resolve({
         user_id: DATA.user.id,
@@ -473,7 +472,6 @@ export function UserDetailFixtureClient({
         error: null,
       })}
       wagerProgressPromise={Promise.resolve(null)}
-      balanceWeightingPromise={Promise.resolve(null)}
       viewerIsAdjustmentOwner
       viewerCanSeeUltraLossback={false}
       initialTab={initialTab}

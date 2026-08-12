@@ -48,7 +48,7 @@ test("Fiat access is lazy on the Account tab and revalidates after mutation", ()
     page,
     /initialTab === "account"[\s\S]*getFiatDepositAccess\(id\)\.catch\(\(\) => null\)/,
   );
-  assert.match(accountTab, /title="Fiat Deposit Allow-list"/);
+  assert.match(accountTab, /title="Feature Locks & Fiat Access"/);
   assert.match(actions, /requirePageAccess\("\/users"\)/);
   assert.match(actions, /requireAdmin\(\)/);
   assert.match(actions, /createAdminAuditEventDurable\(/);
