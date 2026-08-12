@@ -17,12 +17,8 @@ const CWR_STATUSES = new Set<string>(card_withdrawal_status.enumValues);
 const CWR_METHODS = new Set<string>(card_withdrawal_method.enumValues);
 
 /**
- * Cache tag for the Withdrawals tab list. The admin actions in
- * `withdrawals/actions.ts` (process / ship / complete / cancel / fail)
- * call `revalidateTag(WITHDRAWALS_LIST_TAG)` after every mutation so a
- * just-actioned withdrawal never shows a stale status — `revalidatePath`
- * alone does NOT evict `unstable_cache` entries. Exported so the actions
- * import the exact same string (no drift between writer and reader).
+ * Cache tag retained for withdrawal detail entries. The list itself is a
+ * live read, while admin actions evict the detail cache after every mutation.
  */
 export const WITHDRAWALS_LIST_TAG = "transactions-withdrawals-list";
 
@@ -67,10 +63,10 @@ type GetWithdrawalsParams = {
 };
 
 /**
- * Actual Withdrawals-tab list query — the cached `getWithdrawals` below
- * is the public entry point.
+ * Actual Withdrawals-tab list query used by the live `getWithdrawals` entry
+ * point below.
  *
- * ── Why this is now cached (root-caused 2026-06-14) ────────────────────
+ * ── Operational safeguards ────────────────────────────────────────────
  * The Withdrawals tab on `/transactions/deposits?tab=withdrawals` was
  * intermittently degrading to the amber "query timed out or failed"
  * band. EXPLAIN ANALYZE against live prod proved the query itself is
@@ -87,29 +83,31 @@ type GetWithdrawalsParams = {
  * the page AND it re-fired on every render + every 60s `AutoRefresh`,
  * so it sat directly in the contention path.
  *
- * Fix: cache the list (60s, keyed on env + every filter + page) exactly
- * like {@link getDepositTransactions}, so the hot path (no filter /
- * repeated filter) is a cache hit and stops adding pool pressure. The
- * previous "deliberately uncached" note was correct that
- * `revalidatePath` can't evict `unstable_cache` — so the admin actions
- * in `withdrawals/actions.ts` now ALSO call
- * `revalidateTag(WITHDRAWALS_LIST_TAG)`, which keeps a just-actioned
- * withdrawal from showing a stale status. The page's existing
- * `safeQuery` degrade is unchanged (a true DB outage still paints the
- * band rather than crashing the route).
+ * This is an operational surface: a live revision probe makes browser reloads
+ * and periodic refreshes observe newly committed requests/status changes. The
+ * existing `safeQuery` boundary degrades a real DB outage without crashing the
+ * route, the shared mirror admission limiter bounds concurrent reads, and
+ * AutoRefresh refuses overlapping ticks.
  *
- * `env` is threaded in (resolved in the request scope by the public
- * entry point) so the cache callback never resolves request state — which reads
- * the request cookie via `cookies()`, illegal inside `unstable_cache` —
- * and so a dev-DB-toggled admin's cache entries never collide with prod.
- * Mirrors `computeDepositTransactions`.
+ * `env` and the effective lock set are resolved in request scope and threaded
+ * into the query so the prod/dev toggle and exclusion rules remain exact on
+ * every refresh. Mirrors `computeDepositTransactions`.
  */
 async function computeWithdrawals(
   env: DbEnv,
   blacklistKey: string,
   params: GetWithdrawalsParams,
 ): Promise<PaginatedResult<WithdrawalListItem>> {
-  const { page = 1, perPage = 20, status, statuses, method, search, minValue, maxValue } = params;
+  const {
+    page = 1,
+    perPage = 20,
+    status,
+    statuses,
+    method,
+    search,
+    minValue,
+    maxValue,
+  } = params;
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
   const db = readDrizzleForEnv(env);
@@ -267,8 +265,7 @@ async function computeWithdrawals(
     data: withdrawals.map((w) => ({
       id: w.id,
       userId: w.user_id,
-      username:
-        w.requester_username ?? w.requester_email,
+      username: w.requester_username ?? w.requester_email,
       image: w.requester_image,
       method: w.method,
       status: w.status,
@@ -279,11 +276,12 @@ async function computeWithdrawals(
       // gotcha — the column never leaves this function as a Date).
       requestedAt: new Date(w.requested_at).toISOString(),
       processedBy:
-        (w.metadata as Record<string, unknown>)?.processed_by_admin as string ??
+        ((w.metadata as Record<string, unknown>)
+          ?.processed_by_admin as string) ??
         w.processed_username ??
         null,
       shippedBy:
-        (w.metadata as Record<string, unknown>)?.shipped_by_admin as string ??
+        ((w.metadata as Record<string, unknown>)?.shipped_by_admin as string) ??
         w.shipped_username ??
         null,
       trackingNumber: w.tracking_number,
@@ -300,27 +298,42 @@ async function computeWithdrawals(
   };
 }
 
+const WITHDRAWAL_LIST_REVALIDATE_SECONDS = 10;
+
+/** Small-table revision probe; `updated_at` advances on every admin mutation. */
+async function getWithdrawalListRevision(env: DbEnv): Promise<string> {
+  const rows = await queryRows<{ revision: string }[]>(
+    readDrizzleForEnv(env),
+    `SELECT id::text || ':' || updated_at::text AS revision
+       FROM card_withdrawal_requests
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1`,
+  );
+  return rows[0]?.revision ?? "empty";
+}
+
 /**
- * Cross-request cache layer for the Withdrawals tab list.
- *
- * Wraps {@link computeWithdrawals} in a 60s `unstable_cache` keyed on
- * `(env, params)` — every distinct filter/page combination gets its own
- * entry, so re-opening the tab or paging back is an instant cache hit
- * that touches NO database connection (the whole point — see the root
- * cause in `computeWithdrawals`). Tagged so the admin actions can evict
- * it on mutation. Mirrors `cachedDepositTransactions`.
+ * Revision-aware short cache. New requests and status updates change the key
+ * immediately; unchanged concurrent refreshes share at most ten seconds.
  */
 const cachedWithdrawals = unstable_cache(
-  computeWithdrawals,
-  ["transactions-withdrawals-list-v3"],
-  { revalidate: 60, tags: [WITHDRAWALS_LIST_TAG] },
+  async (
+    env: DbEnv,
+    blacklistKey: string,
+    params: GetWithdrawalsParams,
+    _revision: string,
+  ) => computeWithdrawals(env, blacklistKey, params),
+  ["transactions-withdrawals-list-v4"],
+  {
+    revalidate: WITHDRAWAL_LIST_REVALIDATE_SECONDS,
+    tags: [WITHDRAWALS_LIST_TAG],
+  },
 );
 
 /**
  * Public entry point for the Withdrawals tab. Resolves the request's DB
- * env (the cookie read happens HERE, in the request scope) then delegates
- * to the cached compute fn. See {@link computeWithdrawals} for the query
- * itself + the timeout root cause this caching fixes.
+ * environment and lock set in request scope, probes the live revision, then
+ * uses the short revision-aware cache above.
  */
 export async function getWithdrawals(
   params: GetWithdrawalsParams,
@@ -332,13 +345,14 @@ export async function getWithdrawals(
   // are dropped from the list; a motha-unlocked excluded user reappears so
   // their withdrawals can be actioned. Thread a stable sorted key through so
   // it participates in the cache key. Mirrors getDepositTransactions.
-  const [excluded, unlocked] = await Promise.all([
+  const [excluded, unlocked, revision] = await Promise.all([
     getExcludedUserIds(),
     getWithdrawalUnlockedUserIds(),
+    getWithdrawalListRevision(env),
   ]);
   const lockedIds = excluded.filter((id) => !unlocked.has(id));
   const blacklistKey = [...lockedIds].sort().join(",");
-  return cachedWithdrawals(env, blacklistKey, params);
+  return cachedWithdrawals(env, blacklistKey, params, revision);
 }
 
 /**
@@ -417,11 +431,20 @@ async function computeWithdrawalDetail(id: string) {
           withdrawal.inventory_item_ids,
         )
       : Promise.resolve(
-          [] as Array<{ id: string; card_id: string; value_at_obtained: unknown }>,
+          [] as Array<{
+            id: string;
+            card_id: string;
+            value_at_obtained: unknown;
+          }>,
         ),
     withdrawal.voucher_ids.length > 0
       ? queryMainRows<
-          { id: string; value: string; origin: string; description: string | null }[]
+          {
+            id: string;
+            value: string;
+            origin: string;
+            description: string | null;
+          }[]
         >(
           `SELECT id, value::text, origin::text, description
              FROM vouchers WHERE id = ANY($1::uuid[])`,
@@ -437,18 +460,30 @@ async function computeWithdrawalDetail(id: string) {
         ),
   ]);
 
-  let items: { id: string; cardName: string; imageUrl: string | null; rarity: string | null; value: number }[] = [];
+  let items: {
+    id: string;
+    cardName: string;
+    imageUrl: string | null;
+    rarity: string | null;
+    value: number;
+  }[] = [];
   if (inventoryItems.length > 0) {
     const cardIds = [...new Set(inventoryItems.map((i) => i.card_id))];
-    const cards = cardIds.length > 0
-      ? await queryMainRows<
-          { id: string; name: string; image_url: string | null; rarity: string | null }[]
-        >(
-          `SELECT id, name, image_url, rarity::text
+    const cards =
+      cardIds.length > 0
+        ? await queryMainRows<
+            {
+              id: string;
+              name: string;
+              image_url: string | null;
+              rarity: string | null;
+            }[]
+          >(
+            `SELECT id, name, image_url, rarity::text
              FROM cards WHERE id = ANY($1::uuid[])`,
-          cardIds,
-        )
-      : [];
+            cardIds,
+          )
+        : [];
     const cardMap = new Map(cards.map((c) => [c.id, c]));
 
     items = inventoryItems.map((item) => {
@@ -463,7 +498,12 @@ async function computeWithdrawalDetail(id: string) {
     });
   }
 
-  const vouchers: { id: string; value: number; origin: string; description: string | null }[] = voucherRows.map((v) => ({
+  const vouchers: {
+    id: string;
+    value: number;
+    origin: string;
+    description: string | null;
+  }[] = voucherRows.map((v) => ({
     id: v.id,
     value: toNumber(v.value),
     origin: v.origin,
@@ -487,13 +527,31 @@ async function computeWithdrawalDetail(id: string) {
     txHash: withdrawal.tx_hash,
     failureReason: withdrawal.failure_reason,
     requestedAt: new Date(withdrawal.requested_at).toISOString(),
-    processingAt: withdrawal.processing_at ? new Date(withdrawal.processing_at).toISOString() : null,
-    shippedAt: withdrawal.shipped_at ? new Date(withdrawal.shipped_at).toISOString() : null,
-    completedAt: withdrawal.completed_at ? new Date(withdrawal.completed_at).toISOString() : null,
-    failedAt: withdrawal.failed_at ? new Date(withdrawal.failed_at).toISOString() : null,
-    cancelledAt: withdrawal.cancelled_at ? new Date(withdrawal.cancelled_at).toISOString() : null,
-    processedBy: (withdrawal.metadata as Record<string, unknown>)?.processed_by_admin as string ?? withdrawal.processed_username ?? null,
-    shippedBy: (withdrawal.metadata as Record<string, unknown>)?.shipped_by_admin as string ?? withdrawal.shipped_username ?? null,
+    processingAt: withdrawal.processing_at
+      ? new Date(withdrawal.processing_at).toISOString()
+      : null,
+    shippedAt: withdrawal.shipped_at
+      ? new Date(withdrawal.shipped_at).toISOString()
+      : null,
+    completedAt: withdrawal.completed_at
+      ? new Date(withdrawal.completed_at).toISOString()
+      : null,
+    failedAt: withdrawal.failed_at
+      ? new Date(withdrawal.failed_at).toISOString()
+      : null,
+    cancelledAt: withdrawal.cancelled_at
+      ? new Date(withdrawal.cancelled_at).toISOString()
+      : null,
+    processedBy:
+      ((withdrawal.metadata as Record<string, unknown>)
+        ?.processed_by_admin as string) ??
+      withdrawal.processed_username ??
+      null,
+    shippedBy:
+      ((withdrawal.metadata as Record<string, unknown>)
+        ?.shipped_by_admin as string) ??
+      withdrawal.shipped_username ??
+      null,
     items,
     vouchers,
   };
@@ -513,8 +571,8 @@ async function computeWithdrawalDetail(id: string) {
  * complete / cancel / fail) already calls `revalidateTag(WITHDRAWALS_LIST_TAG)`,
  * which evicts this entry too — so a just-actioned withdrawal never shows a
  * stale status here. The 60s TTL is the backstop between actions; withdrawals
- * are not mutated from anywhere but those actions. Same prod-only,
- * env-resolved-outside pattern as `cachedWithdrawals` above.
+ * are not mutated from anywhere but those actions. The list has its separate
+ * revision-aware short cache above.
  *
  * `computeWithdrawalDetail` resolves its request-scoped client internally; inside the cache
  * callback the `admin_db_env` cookie read falls back to "prod", so the cached

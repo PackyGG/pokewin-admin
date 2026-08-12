@@ -36,8 +36,10 @@ import { FadeIn } from "@/components/fade-in";
 import { LinkPendingShell } from "@/components/ux";
 import { BigDepositsToggle } from "./big-deposits-toggle";
 import { CardPaymentsTable } from "./card-payments-table";
+import { AutoRefresh } from "../../dashboard/auto-refresh";
 
 export const metadata = { title: "Transactions" };
+export const dynamic = "force-dynamic";
 
 // Deposits, card payments, and withdrawals share the same "money flow"
 // surface so admins only have one entry-point in the sidebar for all
@@ -103,6 +105,9 @@ export default async function TransactionsPage({
 
   return (
     <div className="space-y-6">
+      {/* Live operational data. AutoRefresh skips hidden tabs and never stacks
+          an interval tick while the previous server refresh is still active. */}
+      <AutoRefresh intervalMs={15_000} />
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
@@ -275,11 +280,9 @@ async function DepositsTableSection({
         <MirrorUnavailableNotice
           message={
             <>
-              Couldn&apos;t load deposits — the query timed out or failed.
-              This is a{" "}
-              <span className="font-medium">
-                query error, not zero results
-              </span>
+              Couldn&apos;t load deposits — the query timed out or failed. This
+              is a{" "}
+              <span className="font-medium">query error, not zero results</span>
               . Refresh to retry, or clear the search and amount filter.
             </>
           }
@@ -580,11 +583,8 @@ async function WithdrawalsTableSection({
             <>
               Couldn&apos;t load withdrawals — the query timed out or failed.
               This is a{" "}
-              <span className="font-medium">
-                query error, not zero results
-              </span>
-              . Refresh to retry, or clear the status / method / value
-              filters.
+              <span className="font-medium">query error, not zero results</span>
+              . Refresh to retry, or clear the status / method / value filters.
             </>
           }
         />

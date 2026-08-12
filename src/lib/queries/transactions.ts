@@ -14,9 +14,7 @@ import {
   resolveUpgraderTargetFromBatch,
 } from "./upgrader-target-batch";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import {
-  excludeStaffAndBlacklisted,
-} from "./_blacklist";
+import { excludeStaffAndBlacklisted } from "./_blacklist";
 import { verifySession } from "@/lib/dal";
 import { canUseUltraLossbackFresh } from "@/lib/ultra-lossback-access.server";
 
@@ -153,15 +151,9 @@ export type TransactionListItem = {
  *
  * Filters supported: search (UUID or username), status.
  *
- * ── Caching ──────────────────────────────────────────────────────────
- * The public entry point is the `unstable_cache`-wrapped
- * {@link getDepositTransactions} below. This `compute*` does the actual
- * work and takes the resolved DB env as its first argument so it can
- * pick the right Drizzle client without reading
- * the request cookie via `cookies()` — illegal inside `unstable_cache`).
- * Resolving the env in the request scope and threading it through as a
- * cache-key dimension keeps the dev-DB toggle honest: a dev-toggled
- * admin's cache entry never collides with the prod one.
+ * The public entry point resolves request-scoped environment/exclusion state
+ * plus a live latest-deposit revision. New rows therefore change the cache key
+ * immediately; the short result cache only coalesces identical refreshes.
  */
 async function computeDepositTransactions(
   env: DbEnv,
@@ -182,14 +174,7 @@ async function computeDepositTransactions(
     minAmount?: number;
   },
 ): Promise<PaginatedResult<TransactionListItem>> {
-  const {
-    page = 1,
-    perPage = 20,
-    search,
-    status,
-    method,
-    minAmount,
-  } = params;
+  const { page = 1, perPage = 20, search, status, method, minAmount } = params;
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
   const offset = (safePage - 1) * safePerPage;
@@ -212,7 +197,7 @@ async function computeDepositTransactions(
   if (search) {
     const isUuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        search
+        search,
       );
     if (isUuid) {
       queryParams.push(search);
@@ -229,15 +214,17 @@ async function computeDepositTransactions(
   // Status is a whitelisted enum — safe to inline after validation.
   const VALID_STATUSES = new Set(["pending", "completed", "failed"]);
   const statusFilter =
-    status && VALID_STATUSES.has(status)
-      ? `AND t.status = '${status}'`
-      : "";
+    status && VALID_STATUSES.has(status) ? `AND t.status = '${status}'` : "";
 
   // Min-amount filter. Bind via positional parameter; coerce to a
   // safe finite non-negative number first so a NaN / negative URL
   // value can't smuggle SQL through. A 0 / undefined value disables.
   let minAmountFilter = "";
-  if (typeof minAmount === "number" && Number.isFinite(minAmount) && minAmount > 0) {
+  if (
+    typeof minAmount === "number" &&
+    Number.isFinite(minAmount) &&
+    minAmount > 0
+  ) {
     queryParams.push(minAmount);
     const idx = queryParams.length;
     minAmountFilter = `AND t.amount::numeric >= $${idx}`;
@@ -333,13 +320,7 @@ async function computeDepositTransactions(
   const drizzleDb = readDrizzleForEnv(env);
   const [countResult, rows] = await Promise.all([
     queryRows<{ total: string }[]>(drizzleDb, countSql, ...queryParams),
-    queryRows<Raw[]>(
-      drizzleDb,
-      dataSql,
-      ...queryParams,
-      safePerPage,
-      offset,
-    ),
+    queryRows<Raw[]>(drizzleDb, dataSql, ...queryParams, safePerPage, offset),
   ]);
 
   const total = Number(countResult[0]?.total ?? "0");
@@ -404,46 +385,49 @@ async function computeDepositTransactions(
   };
 }
 
+const DEPOSIT_LIST_REVALIDATE_SECONDS = 10;
+
 /**
- * Cross-request cache layer for the Deposits tab list.
- *
- * Wraps {@link computeDepositTransactions} in a 300s `unstable_cache`
- * keyed on `(env, blacklistKey, {page, perPage, search, status,
- * minAmount})`. The arguments passed to a cached function participate in
- * its cache key, so each distinct filter/page combination gets its own
- * entry — switching back to a previously-viewed page is an instant cache
- * hit. The compute path seq-scans the ~855k-row ledger (the root fix is
- * an owner-only index, which MAIN's read-only / no-DDL policy forbids),
- * so a COLD miss is expensive (~15s). The 300s window widens warm-key
- * coverage — a distinct search term / minAmount stays warm five minutes
- * instead of one, so the next admin hitting the same filter pays the
- * cache hit, not the seq-scan. Mirrors the `unstable_cache` list pattern
- * in `users-list.ts`.
- *
- * Freshness is safe at 300s: deposits are NOT admin-mutated (the admin
- * never creates/edits a deposit ledger row), and NOTHING calls
- * `revalidateTag("transactions-deposits-list")` — the tag exists only
- * for a future manual bust. The page's 60s `AutoRefresh` simply re-runs
- * the segment, which re-reads the (now warm) cache; it does not require
- * the cache to expire on its cadence.
- *
- * `env` is the FIRST key dimension so a dev-DB-toggled admin's cache
- * entries never collide with the prod ones — behaviour is identical to
- * the uncached request-scoped path, just memoized.
+ * Cheap live revision probe backed by `idx_ledger_tx_deposit_created_at`.
+ * Including the newest row's updated timestamp catches the common pending →
+ * completed transition; the 10s TTL remains the backstop for older-row edits.
+ */
+async function getDepositListRevision(env: DbEnv): Promise<string> {
+  const rows = await queryRows<{ revision: string }[]>(
+    readDrizzleForEnv(env),
+    `SELECT id::text || ':' || updated_at::text AS revision
+       FROM ledger_transactions
+      WHERE type = 'deposit'::ledger_transaction_type
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+  );
+  return rows[0]?.revision ?? "empty";
+}
+
+/**
+ * Revision-aware, ultra-short cache for the expensive deposits list. Every
+ * request performs the indexed revision probe above. A newly inserted deposit
+ * changes `revision` and bypasses this entry immediately; unchanged concurrent
+ * reloads share at most ten seconds of work.
  */
 const cachedDepositTransactions = unstable_cache(
-  computeDepositTransactions,
-  // v3 discards entries whose refreshes failed while mirror pool sessions
-  // were being terminated with PostgreSQL 57P05.
-  ["transactions-deposits-list-v3"],
-  { revalidate: 300, tags: ["transactions-deposits-list"] },
+  async (
+    env: DbEnv,
+    blacklistKey: string,
+    params: Parameters<typeof computeDepositTransactions>[2],
+    _revision: string,
+  ) => computeDepositTransactions(env, blacklistKey, params),
+  ["transactions-deposits-list-v4"],
+  {
+    revalidate: DEPOSIT_LIST_REVALIDATE_SECONDS,
+    tags: ["transactions-deposits-list"],
+  },
 );
 
 /**
  * Public entry point for the Deposits tab. Resolves the request's DB env
- * (cookie read happens HERE, in the request scope) then delegates to the
- * cached compute fn. See {@link computeDepositTransactions} for the
- * query itself.
+ * and exclusion set in request scope, probes the live revision, then uses the
+ * short revision-aware cache above.
  */
 export async function getDepositTransactions(params: {
   page?: number;
@@ -454,9 +438,12 @@ export async function getDepositTransactions(params: {
   minAmount?: number;
 }): Promise<PaginatedResult<TransactionListItem>> {
   const env = await readDbEnv();
-  const excluded = await getExcludedUserIds();
+  const [excluded, revision] = await Promise.all([
+    getExcludedUserIds(),
+    getDepositListRevision(env),
+  ]);
   const blacklistKey = [...excluded].sort().join(",");
-  return cachedDepositTransactions(env, blacklistKey, params);
+  return cachedDepositTransactions(env, blacklistKey, params, revision);
 }
 
 /**
@@ -842,7 +829,8 @@ async function computeTransactions(
   const battleIds = new Set<string>();
   const sessionIds = new Set<string>();
   for (const t of transactions) {
-    const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
+    const gs =
+      t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
     if (gs?.id) sessionIds.add(gs.id);
     for (const pf of gs?.provably_fair_results ?? []) {
       if (pf.battle_id) battleIds.add(pf.battle_id);
@@ -863,7 +851,8 @@ async function computeTransactions(
 
   return {
     data: transactions.map((t) => {
-      const gs = t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
+      const gs =
+        t.game_sessions_ledger_transactions_game_session_idTogame_sessions;
       let housePnl: number | null = null;
       let payout: number | null = null;
       let borrowPercentage: number | null = null;
@@ -880,8 +869,12 @@ async function computeTransactions(
         const cost = toNumber(gs.bet_amount);
         // Card winnings from the session's PF results...
         const cardValue = gs.provably_fair_results.reduce(
-          (sum, pf) => sum + (pf.user_inventory ? toNumber(pf.user_inventory.value_at_obtained) : 0),
-          0
+          (sum, pf) =>
+            sum +
+            (pf.user_inventory
+              ? toNumber(pf.user_inventory.value_at_obtained)
+              : 0),
+          0,
         );
         // ...plus the voucher excess this session spun off. Together
         // they're the full value the user won (cards + vouchers),
@@ -907,7 +900,10 @@ async function computeTransactions(
         if (firstPf?.battle_id) {
           borrowPercentage = battleBorrowMap.get(firstPf.battle_id) ?? null;
         } else if (firstPf) {
-          const meta = firstPf.result_metadata as Record<string, unknown> | null;
+          const meta = firstPf.result_metadata as Record<
+            string,
+            unknown
+          > | null;
           const raw = meta?.borrow_percentage;
           if (typeof raw === "number") borrowPercentage = raw;
           else if (typeof raw === "string") {
@@ -989,8 +985,8 @@ async function computeTransactions(
  * page, perPage), so each distinct filter/page/sort combination — incl.
  * the per-request search term — gets its own entry rather than colliding.
  * `env` + `userScope` lead the key so a dev-DB-toggled admin and a changed
- * blacklist never read a stale entry. Mirrors the
- * `cachedDepositTransactions` 300s window above.
+ * blacklist never read a stale entry. This cache serves non-operational
+ * transaction consumers; the live Deposits tab uses its uncached query above.
  *
  * Freshness at 300s is safe: ledger rows are NOT admin-mutated (the admin
  * never creates/edits a ledger row), and the page's `AutoRefresh` simply
@@ -1205,7 +1201,12 @@ async function computeTransactionDetail(id: string) {
      * house gain (emerald), <0 = house loss (rose).
      */
     housePnl: number;
-    packs: { name: string; imageUrl: string | null; priceUsd: number; quantity: number }[];
+    packs: {
+      name: string;
+      imageUrl: string | null;
+      priceUsd: number;
+      quantity: number;
+    }[];
     cardsObtained: {
       name: string;
       imageUrl: string | null;
@@ -1276,8 +1277,7 @@ async function computeTransactionDetail(id: string) {
   // the battles read overlaps the packs / related / cards waves instead of
   // adding two more strictly serial round trips to the tail of the fan-out.
   let battleInfoPromise:
-    | Promise<{ battleId: string | null; hasPassword: boolean }>
-    | undefined;
+    Promise<{ battleId: string | null; hasPassword: boolean }> | undefined;
 
   if (resolvedSessionId) {
     // Narrow `provably_fair_results` columns to just what downstream uses.
@@ -1369,7 +1369,12 @@ async function computeTransactionDetail(id: string) {
     if (session) {
       // Fetch pack info based on game type, card details, and related
       // transactions in parallel — they're independent.
-      let packs: { name: string; imageUrl: string | null; priceUsd: number; quantity: number }[] = [];
+      let packs: {
+        name: string;
+        imageUrl: string | null;
+        priceUsd: number;
+        quantity: number;
+      }[] = [];
 
       const cardIds = session.provably_fair_results
         .map((pf) => pf.user_inventory?.card_id)
@@ -1389,24 +1394,26 @@ async function computeTransactionDetail(id: string) {
                  FROM packs WHERE id = $1::uuid LIMIT 1`,
               session.game_id,
             ).then(([pack]) => {
-                if (!pack) return [];
-                const cardsCount = session.provably_fair_results.length;
-                const packsOpened =
-                  pack.cards_per_open > 0 ? Math.round(cardsCount / pack.cards_per_open) : 1;
-                return [
-                  {
-                    name: pack.name,
-                    imageUrl: pack.image_url,
-                    priceUsd: toNumber(pack.price),
-                    quantity: packsOpened,
-                  },
-                ];
-              })
+              if (!pack) return [];
+              const cardsCount = session.provably_fair_results.length;
+              const packsOpened =
+                pack.cards_per_open > 0
+                  ? Math.round(cardsCount / pack.cards_per_open)
+                  : 1;
+              return [
+                {
+                  name: pack.name,
+                  imageUrl: pack.image_url,
+                  priceUsd: toNumber(pack.price),
+                  quantity: packsOpened,
+                },
+              ];
+            })
           : session.game_type === "battle"
-          ? queryMainRows<{ pack_ids: string[] }[]>(
-              `SELECT pack_ids FROM battles WHERE id = $1::uuid LIMIT 1`,
-              session.game_id,
-            ).then(async ([battle]) => {
+            ? queryMainRows<{ pack_ids: string[] }[]>(
+                `SELECT pack_ids FROM battles WHERE id = $1::uuid LIMIT 1`,
+                session.game_id,
+              ).then(async ([battle]) => {
                 if (!battle || battle.pack_ids.length === 0) return [];
                 const battlePacks = await queryMainRows<
                   { name: string; image_url: string | null; price: string }[]
@@ -1422,7 +1429,14 @@ async function computeTransactionDetail(id: string) {
                   quantity: 1,
                 }));
               })
-          : Promise.resolve([] as { name: string; imageUrl: string | null; priceUsd: number; quantity: number }[]);
+            : Promise.resolve(
+                [] as {
+                  name: string;
+                  imageUrl: string | null;
+                  priceUsd: number;
+                  quantity: number;
+                }[],
+              );
 
       const relatedTxsPromise = queryMainRows<
         {
@@ -1469,8 +1483,7 @@ async function computeTransactionDetail(id: string) {
       //      is uncertain, so we accept either defensively).
       // Wrapped in a single conditional so non-upgrader sessions skip
       // both queries entirely.
-      const isUpgrader =
-        session.game_type === "upgrader" && !!session.game_id;
+      const isUpgrader = session.game_type === "upgrader" && !!session.game_id;
       const upgraderWonPromise = isUpgrader
         ? queryMainRows<{ won_amount: string }[]>(
             `
@@ -1525,10 +1538,7 @@ async function computeTransactionDetail(id: string) {
       // produced. De-duped so a card that happens to appear in both
       // (defensive — shouldn't happen) only fires once.
       const allCardIds = Array.from(
-        new Set([
-          ...cardIds,
-          ...upgraderInventoryItems.map((i) => i.card_id),
-        ]),
+        new Set([...cardIds, ...upgraderInventoryItems.map((i) => i.card_id)]),
       );
       const cards =
         allCardIds.length > 0
@@ -1576,7 +1586,8 @@ async function computeTransactionDetail(id: string) {
                   cardsMap.has(pf.user_inventory.card_id),
               )
               .reduce(
-                (sum, pf) => sum + toNumber(pf.user_inventory!.value_at_obtained),
+                (sum, pf) =>
+                  sum + toNumber(pf.user_inventory!.value_at_obtained),
                 0,
               );
       const voucherValue = sessionVouchers.reduce(
@@ -1619,7 +1630,9 @@ async function computeTransactionDetail(id: string) {
                   name: card.name,
                   imageUrl: card.image_url,
                   rarity: card.rarity,
-                  valueAtObtained: toNumber(pf.user_inventory!.value_at_obtained),
+                  valueAtObtained: toNumber(
+                    pf.user_inventory!.value_at_obtained,
+                  ),
                   currentPriceUsd: toNumber(card.price),
                 };
               });
@@ -1668,7 +1681,7 @@ async function computeTransactionDetail(id: string) {
               upgraderInventoryItems[idx].value_at_obtained,
             );
           }
-          const card = cardId ? cardsMap.get(cardId) ?? null : null;
+          const card = cardId ? (cardsMap.get(cardId) ?? null) : null;
           return {
             id: pf.id,
             clientSeed: pf.client_seed,
@@ -1737,7 +1750,7 @@ async function computeTransactionDetail(id: string) {
  * `computeTransactionDetail` fans out ~10+ Main-DB round-trips and several
  * of its legs seq-scan on prod (see the doc on `computeTransactionDetail`),
  * so an uncached detail page re-pays that whole fan-out on every load,
- * every 60s AutoRefresh tick, and every segment "Try again" — directly in
+ * every periodic AutoRefresh tick, and every segment "Try again" — directly in
  * the connection-pool contention path (the `max: 3` warm-instance pool).
  * A short cache collapses repeat loads of the same tx onto one warmed
  * entry. Ledger rows are immutable + never admin-mutated, so a 30s TTL is
@@ -1765,9 +1778,10 @@ function cachedTransactionDetail(id: string) {
  */
 export async function getTransactionDetail(id: string) {
   const env = await readDbEnv();
-  const detail = env !== "prod"
-    ? await computeTransactionDetail(id)
-    : await cachedTransactionDetail(id);
+  const detail =
+    env !== "prod"
+      ? await computeTransactionDetail(id)
+      : await cachedTransactionDetail(id);
   if (!detail) return null;
   const metadata = detail.metadata as Record<string, unknown> | null;
   if (metadata?.adjustment_category === "ultra_lossback") {

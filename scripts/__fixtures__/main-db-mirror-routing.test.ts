@@ -31,8 +31,14 @@ test("mirror DB configuration fails closed and forces read-only sessions", () =>
   assert.match(source, /sslmode"\) === "require"/);
   assert.match(source, /getReadDrizzleDb/);
   assert.match(source, /getPrimaryDrizzleDb/);
-  assert.doesNotMatch(source, /MIRROR_PRODUCTION_DB\s*\?\?\s*process\.env\.DATABASE_URL/);
-  assert.doesNotMatch(source, /MIRROR_DEV_DB\s*\?\?\s*process\.env\.DEV_DATABASE_URL/);
+  assert.doesNotMatch(
+    source,
+    /MIRROR_PRODUCTION_DB\s*\?\?\s*process\.env\.DATABASE_URL/,
+  );
+  assert.doesNotMatch(
+    source,
+    /MIRROR_DEV_DB\s*\?\?\s*process\.env\.DEV_DATABASE_URL/,
+  );
 });
 
 test("PostgreSQL health fails closed when logical replication is stopped or stale", () => {
@@ -119,9 +125,17 @@ test("serverless mirror pools preserve shared role connection headroom", () => {
   );
 });
 
-test("mirror session recovery release discards outage-era cache namespaces", () => {
+test("live transaction lists use revision-aware short cache namespaces", () => {
   const deposits = fs.readFileSync(
     path.join(repoRoot, "src/lib/queries/transactions.ts"),
+    "utf8",
+  );
+  const withdrawals = fs.readFileSync(
+    path.join(repoRoot, "src/lib/queries/withdrawals.ts"),
+    "utf8",
+  );
+  const transactionsPage = fs.readFileSync(
+    path.join(repoRoot, "src/app/(admin)/transactions/deposits/page.tsx"),
     "utf8",
   );
   const userDetail = fs.readFileSync(
@@ -129,7 +143,16 @@ test("mirror session recovery release discards outage-era cache namespaces", () 
     "utf8",
   );
 
-  assert.match(deposits, /transactions-deposits-list-v3/);
+  assert.doesNotMatch(deposits, /transactions-deposits-list-v3/);
+  assert.match(deposits, /transactions-deposits-list-v4/);
+  assert.match(deposits, /getDepositListRevision\(env\)/);
+  assert.match(deposits, /DEPOSIT_LIST_REVALIDATE_SECONDS = 10/);
+  assert.doesNotMatch(withdrawals, /transactions-withdrawals-list-v3/);
+  assert.match(withdrawals, /transactions-withdrawals-list-v4/);
+  assert.match(withdrawals, /getWithdrawalListRevision\(env\)/);
+  assert.match(withdrawals, /WITHDRAWAL_LIST_REVALIDATE_SECONDS = 10/);
+  assert.match(transactionsPage, /export const dynamic = "force-dynamic"/);
+  assert.match(transactionsPage, /<AutoRefresh intervalMs=\{15_000\} \/>/);
   assert.match(userDetail, /users-detail-aggregate-v4/);
   assert.match(userDetail, /users-detail-pnl-v7/);
   assert.doesNotMatch(userDetail, /function cachedUserGamingTransactions/);
@@ -209,10 +232,7 @@ test("mirror index tooling can scope production DDL to Antifraud", () => {
     "utf8",
   );
   assert.match(source, /--antifraud-only/);
-  assert.match(
-    source,
-    /scope === "--antifraud-only"\s*\?\s*sourceStatements/,
-  );
+  assert.match(source, /scope === "--antifraud-only"\s*\?\s*sourceStatements/);
 });
 
 test("query modules cannot request the writable MAIN client", () => {
@@ -223,7 +243,11 @@ test("query modules cannot request the writable MAIN client", () => {
 
   for (const file of files) {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
-    assert.doesNotMatch(source, /getPrimaryDrizzleDb|primaryDrizzleForEnv/, file);
+    assert.doesNotMatch(
+      source,
+      /getPrimaryDrizzleDb|primaryDrizzleForEnv/,
+      file,
+    );
   }
 });
 
@@ -266,9 +290,12 @@ test("read clients are not used for direct MAIN mutations", () => {
         readBindings.has(node.expression.expression.text)
       ) {
         const method = node.expression.name.text;
-        const line = sourceFile.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+        const line =
+          sourceFile.getLineAndCharacterOfPosition(node.getStart()).line + 1;
         if (method === "insert" || method === "update" || method === "delete") {
-          violations.push(`${file}:${line} uses ${node.expression.expression.text}.${method}`);
+          violations.push(
+            `${file}:${line} uses ${node.expression.expression.text}.${method}`,
+          );
         }
         if (
           method === "execute" &&
@@ -278,7 +305,9 @@ test("read clients are not used for direct MAIN mutations", () => {
             ),
           )
         ) {
-          violations.push(`${file}:${line} executes a mutation through a read client`);
+          violations.push(
+            `${file}:${line} executes a mutation through a read client`,
+          );
         }
       }
       ts.forEachChild(node, inspect);

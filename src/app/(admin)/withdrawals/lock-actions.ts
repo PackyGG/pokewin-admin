@@ -11,7 +11,11 @@ import { isMainOwner } from "@/lib/owners";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { WITHDRAWALS_LIST_TAG } from "@/lib/queries/withdrawals";
 import { EXCLUDED_USERS_LIST_TAG } from "@/lib/excluded-users/fetch";
-import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
+import {
+  ok,
+  fail,
+  type ServerActionResult,
+} from "@/lib/errors/server-action-result";
 
 /**
  * Withdrawal unlock / re-lock actions — MOTHA-ONLY.
@@ -50,17 +54,15 @@ const unlockSchema = z.object({
 
 function revalidateWithdrawalSurfaces(): void {
   // NARROW, tag-based eviction only — NO broad `revalidatePath`. The lock state
-  // affects exactly two cached surfaces:
-  //   • the withdrawals list (which requests are actionable) → WITHDRAWALS_LIST_TAG
-  //   • the excluded-users page list (the Locked/Unlocked badge)  → EXCLUDED_USERS_LIST_TAG
+  // affects the revision-aware withdrawals list/detail cache and the cached
+  // excluded-users page list (the Locked/Unlocked badge).
   // Busting only those tags keeps the server data fresh WITHOUT forcing a
   // full-route re-render. That narrowness is what lets the excluded-users
   // client toggle stay optimistic (no scroll jump / FadeIn replay). The old
   // `revalidatePath('/withdrawals' | '/transactions/deposits' | '/system/
   // excluded-users')` calls were broad page revalidates: '/withdrawals' was
-  // redundant with WITHDRAWALS_LIST_TAG, '/transactions/deposits' doesn't
-  // consume the lock set at all, and '/system/excluded-users' is the one that
-  // caused the visible re-render — all three are replaced by the two tags.
+  // redundant with WITHDRAWALS_LIST_TAG, and '/system/excluded-users' caused
+  // the visible re-render — all three are replaced by the two narrow tags.
   revalidateTag(WITHDRAWALS_LIST_TAG);
   revalidateTag(EXCLUDED_USERS_LIST_TAG);
 }
@@ -80,7 +82,10 @@ export async function unlockUserWithdrawals(input: {
 
   const parsed = unlockSchema.safeParse(input);
   if (!parsed.success) {
-    return fail(parsed.error.issues[0]?.message ?? "Invalid input", "INVALID_INPUT");
+    return fail(
+      parsed.error.issues[0]?.message ?? "Invalid input",
+      "INVALID_INPUT",
+    );
   }
   const { userId, notes } = parsed.data;
 
@@ -126,7 +131,10 @@ export async function relockUserWithdrawals(
 
   const parsed = userIdSchema.safeParse(userId);
   if (!parsed.success) {
-    return fail(parsed.error.issues[0]?.message ?? "Invalid user ID", "INVALID_INPUT");
+    return fail(
+      parsed.error.issues[0]?.message ?? "Invalid user ID",
+      "INVALID_INPUT",
+    );
   }
 
   const result = await adminDrizzle

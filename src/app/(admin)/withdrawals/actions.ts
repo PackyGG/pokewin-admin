@@ -11,7 +11,11 @@ import { requireCapability } from "@/lib/require-capability";
 import { require2FA } from "@/lib/require-2fa";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { backendApiRequest } from "@/lib/backend-api";
-import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
+import {
+  ok,
+  fail,
+  type ServerActionResult,
+} from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
 import {
   assertWithdrawalNotLocked,
@@ -163,10 +167,7 @@ export async function processWithdrawal(
     metadata: { withdrawal_id: withdrawalId, action: "process" },
   });
 
-  // Evict the cached Withdrawals-tab list so the just-actioned row shows
-  // its new status immediately — `revalidatePath` alone does NOT clear
-  // the `unstable_cache` entry behind getWithdrawals (it clears only on a
-  // matching tag or its 60s TTL).
+  // Evict the revision-aware list and detail entries after the mutation.
   revalidateTag(WITHDRAWALS_LIST_TAG);
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
@@ -176,11 +177,15 @@ export async function processWithdrawal(
 export async function shipWithdrawal(
   withdrawalId: string,
   trackingNumber: string,
-  carrier: string
+  carrier: string,
 ) {
   const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
-  await requireCapability(session, "__can_ship_withdrawals", "mark withdrawals as shipped");
+  await requireCapability(
+    session,
+    "__can_ship_withdrawals",
+    "mark withdrawals as shipped",
+  );
 
   const [withdrawal] = await db
     .select()
@@ -226,13 +231,14 @@ export async function shipWithdrawal(
     adminUserId: session.userId,
     eventType: "withdrawal_shipped",
     targetUserId: withdrawal.user_id,
-    metadata: { withdrawal_id: withdrawalId, tracking_number: trackingNumber, carrier },
+    metadata: {
+      withdrawal_id: withdrawalId,
+      tracking_number: trackingNumber,
+      carrier,
+    },
   });
 
-  // Evict the cached Withdrawals-tab list so the just-actioned row shows
-  // its new status immediately — `revalidatePath` alone does NOT clear
-  // the `unstable_cache` entry behind getWithdrawals (it clears only on a
-  // matching tag or its 60s TTL).
+  // Evict the revision-aware list and detail entries after the mutation.
   revalidateTag(WITHDRAWALS_LIST_TAG);
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
@@ -241,7 +247,11 @@ export async function shipWithdrawal(
 export async function completeWithdrawal(withdrawalId: string) {
   const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
-  await requireCapability(session, "__can_complete_withdrawals", "mark withdrawals as complete");
+  await requireCapability(
+    session,
+    "__can_complete_withdrawals",
+    "mark withdrawals as complete",
+  );
 
   const [withdrawal] = await db
     .select()
@@ -267,10 +277,7 @@ export async function completeWithdrawal(withdrawalId: string) {
     metadata: { withdrawal_id: withdrawalId },
   });
 
-  // Evict the cached Withdrawals-tab list so the just-actioned row shows
-  // its new status immediately — `revalidatePath` alone does NOT clear
-  // the `unstable_cache` entry behind getWithdrawals (it clears only on a
-  // matching tag or its 60s TTL).
+  // Evict the revision-aware list and detail entries after the mutation.
   revalidateTag(WITHDRAWALS_LIST_TAG);
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
@@ -356,10 +363,7 @@ export async function cancelWithdrawal(
     metadata: { withdrawal_id: withdrawalId, reason },
   });
 
-  // Evict the cached Withdrawals-tab list so the just-actioned row shows
-  // its new status immediately — `revalidatePath` alone does NOT clear
-  // the `unstable_cache` entry behind getWithdrawals (it clears only on a
-  // matching tag or its 60s TTL).
+  // Evict the revision-aware list and detail entries after the mutation.
   revalidateTag(WITHDRAWALS_LIST_TAG);
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
@@ -373,7 +377,11 @@ export async function failWithdrawal(
 ) {
   const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
-  await requireCapability(session, "__can_fail_withdrawals", "mark withdrawals as failed");
+  await requireCapability(
+    session,
+    "__can_fail_withdrawals",
+    "mark withdrawals as failed",
+  );
   // Marking shipped-as-failed refunds the user (backend reverts the
   // physical send + restores balance/inventory). Money-moving, gated.
   await require2FA(session.userId, totpCode);
@@ -402,10 +410,7 @@ export async function failWithdrawal(
     metadata: { withdrawal_id: withdrawalId, reason },
   });
 
-  // Evict the cached Withdrawals-tab list so the just-actioned row shows
-  // its new status immediately — `revalidatePath` alone does NOT clear
-  // the `unstable_cache` entry behind getWithdrawals (it clears only on a
-  // matching tag or its 60s TTL).
+  // Evict the revision-aware list and detail entries after the mutation.
   revalidateTag(WITHDRAWALS_LIST_TAG);
   revalidatePath("/withdrawals");
   revalidatePath(`/withdrawals/${withdrawalId}`);
