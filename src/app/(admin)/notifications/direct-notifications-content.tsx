@@ -193,11 +193,7 @@ export function DirectNotificationsContent({
                 ? "Choose a user, game, challenge name, and optional prize."
                 : "Choose a user, then write exactly the title and message they should see."}
           </p>
-          <SingleNotificationForm
-            key={mode}
-            targetEnv={backendEnv}
-            mode={mode}
-          />
+          <SingleNotificationForm key={mode} mode={mode} />
         </div>
       )}
     </div>

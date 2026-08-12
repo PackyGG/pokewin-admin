@@ -43,6 +43,7 @@ test("single and bulk messages expose title and message instead of payload contr
   }
   assert.match(history, /historyDetail\(e\)/);
   assert.doesNotMatch(history, /JSON\.stringify\(e\.samplePayload\)/);
+  assert.doesNotMatch(single, /window\.confirm|PRODUCTION\?/);
 });
 
 test("admin message copy is validated and previewed exactly", () => {

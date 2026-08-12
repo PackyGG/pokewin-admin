@@ -23,7 +23,6 @@ import { sendDirectNotificationAction } from "./direct-actions";
 import { NotificationUserPicker } from "./notification-user-picker";
 import { NotificationPreview } from "./notification-preview";
 import type { AnnouncementPackOption } from "./composer-actions";
-import type { DbEnv } from "@/lib/db-env";
 import { mainSiteUrl, packUrl } from "@/lib/utils/main-site";
 import { PackNotificationComposer } from "./pack-notification-composer";
 
@@ -35,13 +34,7 @@ type Sent =
   | { kind: "not-found"; message: string }
   | { kind: "error"; message: string };
 
-export function SingleNotificationForm({
-  targetEnv,
-  mode,
-}: {
-  targetEnv: DbEnv;
-  mode: SingleNotificationMode;
-}) {
+export function SingleNotificationForm({ mode }: { mode: SingleNotificationMode }) {
   const [userId, setUserId] = useState("");
   const [userLabel, setUserLabel] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -147,15 +140,6 @@ export function SingleNotificationForm({
       toast.error(payloadCheck.error);
       return;
     }
-    if (
-      targetEnv === "prod" &&
-      !window.confirm(
-        `Send this ${mode} notification to the selected user in PRODUCTION?`,
-      )
-    ) {
-      return;
-    }
-
     setSent(null);
     startTransition(async () => {
       const result = await sendDirectNotificationAction({
