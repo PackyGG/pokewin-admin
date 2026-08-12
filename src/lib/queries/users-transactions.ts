@@ -914,6 +914,7 @@ type TimelineRow = {
   id: string;
   synthetic: boolean;
   sort_at: Date | string;
+  total: string;
 };
 
 export async function getUserTransactions(
@@ -1135,8 +1136,7 @@ export async function getUserTransactions(
   const rawOffset = (page - 1) * perPage;
   const where = ledgerWhereSql(filter);
   const doubleDownWhere = doubleDownWhereSql(filter);
-  const [timelineResult, totalResult] = await Promise.all([
-    db.execute<TimelineRow>(sql`
+  const timelineResult = await db.execute<TimelineRow>(sql`
       WITH timeline AS (
         SELECT lt.id, false AS synthetic, lt.created_at AS sort_at
         FROM ledger_transactions lt
@@ -1147,28 +1147,33 @@ export async function getUserTransactions(
         FROM battle_double_down_offers o
         WHERE ${doubleDownWhere}
       )
-      SELECT id, synthetic, sort_at
+      SELECT id, synthetic, sort_at, COUNT(*) OVER ()::text AS total
       FROM timeline
       ORDER BY sort_at DESC, synthetic DESC, id DESC
       LIMIT ${perPage}
       OFFSET ${rawOffset}
-    `),
-    db.execute<{ total: string }>(sql`
+    `);
+  const timeline = timelineResult.rows;
+  // A window count removes the second full scan on every normal page. Only a
+  // stale/out-of-range page can return no row from which to read the window;
+  // preserve exact pagination there with a rare count-only fallback.
+  const total = timeline[0]
+    ? Number(timeline[0].total)
+    : rawOffset > 0
+      ? Number((await db.execute<{ total: string }>(sql`
       SELECT (
         (SELECT count(*) FROM ledger_transactions lt WHERE ${where}) +
         (SELECT count(*) FROM battle_double_down_offers o
           WHERE ${doubleDownWhere})
       )::text AS total
-    `),
-  ]);
-  const timeline = timelineResult.rows;
+    `)).rows[0]?.total ?? 0)
+      : 0;
   const ledgerIds = timeline.filter((row) => !row.synthetic).map((row) => row.id);
   const doubleDownIds = timeline.filter((row) => row.synthetic).map((row) => row.id);
   const [transactions, ddSynthetic] = await Promise.all([
     fetchLedgerRowsByIds(db, ledgerIds),
     fetchUserDoubleDownRows(db, canonicalUserId, doubleDownIds),
   ]);
-  const total = Number(totalResult.rows[0]?.total ?? 0);
   const kenoSummaryByLedgerIdPromise = fetchKenoSummariesByLedgerId(
     db,
     canonicalUserId,
@@ -1385,60 +1390,62 @@ export async function getUserTransactions(
     await Promise.all([
       resolvePacks(),
       resolveInventoryWithCards(),
-      db.execute<{
-        id: string;
-        before_value: string;
-        after_value: string;
-      }>(sql`
-        WITH tx AS (
+      ledgerIds.length > 0
+        ? db.execute<{
+            id: string;
+            before_value: string;
+            after_value: string;
+          }>(sql`
+        WITH tx AS MATERIALIZED (
           SELECT lt.id, lt.created_at
           FROM unnest(${pgArrayParam(ledgerIds)}::uuid[]) requested(id)
           JOIN ledger_transactions lt ON lt.id = requested.id
+        ), holdings AS MATERIALIZED (
+          SELECT ui.value_at_obtained AS value,
+                 ui.obtained_at AS acquired_at,
+                 LEAST(
+                   COALESCE(ui.sold_at, 'infinity'::timestamp),
+                   COALESCE(ui.exchanged_at, 'infinity'::timestamp),
+                   COALESCE(ui.withdrawal_locked_at, 'infinity'::timestamp)
+                 ) AS disposed_at
+          FROM user_inventory ui
+          WHERE ui.user_id = ${canonicalUserId}
+            AND ui.obtained_at <= (SELECT MAX(created_at) FROM tx)
+          UNION ALL
+          SELECT v.value,
+                 v.created_at,
+                 COALESCE(v.claimed_at, 'infinity'::timestamp)
+          FROM vouchers v
+          WHERE v.user_id = ${canonicalUserId}
+            AND v.created_at <= (SELECT MAX(created_at) FROM tx)
         )
         SELECT tx.id,
-               COALESCE(held.before_value, 0)::text AS before_value,
-               COALESCE(held.after_value, 0)::text AS after_value
+               COALESCE(SUM(held.value) FILTER (
+                 WHERE held.acquired_at < tx.created_at
+                   AND held.disposed_at >= tx.created_at
+               ), 0)::text AS before_value,
+               COALESCE(SUM(held.value) FILTER (
+                 WHERE held.acquired_at <= tx.created_at
+                   AND held.disposed_at > tx.created_at
+               ), 0)::text AS after_value
         FROM tx
-        LEFT JOIN LATERAL (
-          SELECT
-            COALESCE(SUM(value) FILTER (
-              WHERE acquired_at < tx.created_at
-                AND disposed_at >= tx.created_at
-            ), 0) AS before_value,
-            COALESCE(SUM(value) FILTER (
-              WHERE acquired_at <= tx.created_at
-                AND disposed_at > tx.created_at
-            ), 0) AS after_value
-          FROM (
-            SELECT ui.value_at_obtained AS value,
-                   ui.obtained_at AS acquired_at,
-                   LEAST(
-                     COALESCE(ui.sold_at, 'infinity'::timestamp),
-                     COALESCE(ui.exchanged_at, 'infinity'::timestamp),
-                     COALESCE(ui.withdrawal_locked_at, 'infinity'::timestamp)
-                   ) AS disposed_at
-            FROM user_inventory ui
-            WHERE ui.user_id = ${canonicalUserId}
-              AND ui.obtained_at <= tx.created_at
-            UNION ALL
-            SELECT v.value,
-                   v.created_at,
-                   COALESCE(v.claimed_at, 'infinity'::timestamp)
-            FROM vouchers v
-            WHERE v.user_id = ${canonicalUserId}
-              AND v.created_at <= tx.created_at
-          ) holdings
-        ) held ON true
-      `).then((result) => result.rows),
-      db.execute<{
-        value: string;
-        origin_id: string | null;
-      }>(sql`
-        SELECT value::text AS value, origin_id
-        FROM vouchers
-        WHERE user_id = ${canonicalUserId}
-          AND origin_id = ANY(${pgArrayParam(pageGameSessionIds)}::uuid[])
-      `).then((result) => result.rows),
+        LEFT JOIN holdings held
+          ON held.acquired_at <= tx.created_at
+         AND held.disposed_at >= tx.created_at
+        GROUP BY tx.id, tx.created_at
+          `).then((result) => result.rows)
+        : Promise.resolve([]),
+      pageGameSessionIds.length > 0
+        ? db.execute<{
+            value: string;
+            origin_id: string | null;
+          }>(sql`
+            SELECT value::text AS value, origin_id
+            FROM vouchers
+            WHERE user_id = ${canonicalUserId}
+              AND origin_id = ANY(${pgArrayParam(pageGameSessionIds)}::uuid[])
+          `).then((result) => result.rows)
+        : Promise.resolve([]),
     ]);
   const { inventoryItems, cards } = invAndCards;
   const cardMap = new Map(cards.map((c) => [c.id, c]));
