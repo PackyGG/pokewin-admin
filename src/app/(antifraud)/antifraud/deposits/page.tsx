@@ -82,7 +82,7 @@ async function DepositList({
         <div className="space-y-3">
           {result.data.map((deposit) => (
             <DepositCard
-              key={deposit.id}
+              key={deposit.rowId}
               deposit={deposit}
               assessment={assessmentsById.get(deposit.id)}
             />

@@ -4,6 +4,7 @@ import { getExcludedUserIdsStrict } from "@/lib/excluded-users/fetch";
 import { queryMainRows } from "@/lib/drizzle-query";
 
 export type FiatDepositOverviewItem = {
+  rowId: string;
   id: string;
   userId: string;
   username: string | null;
@@ -34,6 +35,7 @@ export type FiatDepositsOverviewResult = {
 };
 
 type RawDeposit = {
+  row_id: string;
   id: string;
   user_id: string;
   username: string | null;
@@ -58,10 +60,11 @@ function optionalUsd(cents: string | null): number | null {
 }
 
 /**
- * MAIN intents are the source of truth for this overview. Alongside paid
- * deposits, terminal failed/canceled Whop attempts remain visible so provider
- * declines do not disappear from the operational history. Risk assessments
- * are enrichment and must never decide whether an intent itself is visible.
+ * MAIN intents and their Whop webhook history are the source of truth for this
+ * overview. A checkout can create more than one provider payment, so the feed
+ * is deliberately one row per provider payment attempt. Intents without a
+ * payment event remain visible as a single row while they are being created.
+ * Risk assessments are enrichment and must never decide visibility.
  */
 export async function listFiatDeposits(input: {
   page: number;
@@ -72,30 +75,151 @@ export async function listFiatDeposits(input: {
   const offset = (page - 1) * limit;
   const excludedUserIds = await getExcludedUserIdsStrict();
 
-  const baseWhere = `
-    (
-      i.paid_at IS NOT NULL
-      OR i.status IN ('failed', 'canceled')
-      OR COALESCE(i.provider_payment_status, '')
-        ~* '(failed|declined|denied|canceled|cancelled)'
+  const visibleDepositsCtes = `
+    WITH eligible_intents AS (
+      SELECT i.*, u.username, u.email AS account_email, u.country_code,
+        u.signup_ip
+      FROM fiat_deposit_intents i
+      JOIN "user" u ON u.id = i.user_id
+      WHERE COALESCE(u.role::text, '') <> 'creator'
+        AND 'creator' <> ALL(COALESCE(u.roles::text[], ARRAY[]::text[]))
+        AND i.user_id <> ALL($1::text[])
+    ), intent_resources AS (
+      SELECT id, provider_checkout_id AS resource_id
+      FROM eligible_intents
+      WHERE provider_checkout_id IS NOT NULL
+      UNION ALL
+      SELECT id, provider_payment_id AS resource_id
+      FROM eligible_intents
+      WHERE provider_payment_id IS NOT NULL
+    ), candidate_events AS (
+      SELECT
+        pwe.*,
+        NULLIF(
+          pwe.payload #>> '{data,metadata,deposit_intent_id}',
+          ''
+        ) AS metadata_intent_id,
+        COALESCE(
+          NULLIF(pwe.payload #>> '{data,id}', ''),
+          NULLIF(pwe.provider_resource_id, '')
+        ) AS payment_id
+      FROM payment_webhook_events pwe
+      WHERE pwe.provider = 'whop'
+        AND pwe.event_type IN (
+          'payment.created',
+          'payment.failed',
+          'payment.succeeded'
+        )
+        AND COALESCE(
+          NULLIF(pwe.payload #>> '{data,id}', ''),
+          NULLIF(pwe.provider_resource_id, '')
+        ) IS NOT NULL
+    ), attempt_events AS (
+      SELECT
+        i.*,
+        pwe.id AS event_id,
+        pwe.event_type,
+        pwe.received_at,
+        pwe.payload,
+        pwe.payment_id
+      FROM eligible_intents i
+      JOIN candidate_events pwe ON pwe.metadata_intent_id = i.id::text
+      UNION ALL
+      SELECT
+        i.*,
+        pwe.id AS event_id,
+        pwe.event_type,
+        pwe.received_at,
+        pwe.payload,
+        pwe.payment_id
+      FROM intent_resources resource
+      JOIN eligible_intents i ON i.id = resource.id
+      JOIN candidate_events pwe
+        ON pwe.provider_resource_id = resource.resource_id
+      WHERE pwe.metadata_intent_id IS DISTINCT FROM i.id::text
+    ), attempts AS (
+      SELECT DISTINCT ON (id, payment_id)
+        id,
+        user_id,
+        username,
+        account_email,
+        country_code,
+        signup_ip,
+        payment_id,
+        CASE event_type
+          WHEN 'payment.failed' THEN 'failed'
+          WHEN 'payment.succeeded' THEN 'completed'
+          ELSE COALESCE(NULLIF(payload #>> '{data,status}', ''), 'pending')
+        END AS status,
+        CASE event_type
+          WHEN 'payment.failed' THEN 'failed'
+          WHEN 'payment.succeeded' THEN 'paid'
+          ELSE NULLIF(payload #>> '{data,status}', '')
+        END AS provider_payment_status,
+        CASE WHEN event_type = 'payment.failed' THEN COALESCE(
+          NULLIF(payload #>> '{data,failure_message}', ''),
+          NULLIF(payload #>> '{data,failure_reason}', ''),
+          NULLIF(payload #>> '{data,error,message}', ''),
+          failure_reason
+        ) END AS failure_reason,
+        requested_amount_cents,
+        CASE WHEN event_type = 'payment.succeeded'
+          THEN actual_customer_total_cents
+        END AS actual_customer_total_cents,
+        CASE WHEN event_type = 'payment.succeeded'
+          THEN credited_amount_cents
+        END AS credited_amount_cents,
+        received_at AS occurred_at,
+        NULLIF(BTRIM(payload #>> '{data,user,email}'), '') AS checkout_email,
+        NULLIF(BTRIM(payload #>> '{data,billing_address,country}'), '')
+          AS checkout_country
+      FROM attempt_events
+      ORDER BY id, payment_id, received_at DESC, event_id DESC
+    ), visible_deposits AS (
+      SELECT
+        attempts.id::text || ':payment:' || attempts.payment_id AS row_id,
+        attempts.*
+      FROM attempts
+      UNION ALL
+      SELECT
+        i.id::text || ':intent' AS row_id,
+        i.id,
+        i.user_id,
+        i.username,
+        i.account_email,
+        i.country_code,
+        i.signup_ip,
+        i.provider_payment_id AS payment_id,
+        i.status,
+        i.provider_payment_status,
+        i.failure_reason,
+        i.requested_amount_cents,
+        CASE WHEN i.paid_at IS NOT NULL
+          THEN i.actual_customer_total_cents
+        END AS actual_customer_total_cents,
+        CASE WHEN i.paid_at IS NOT NULL
+          THEN i.credited_amount_cents
+        END AS credited_amount_cents,
+        COALESCE(i.paid_at, i.updated_at, i.created_at) AS occurred_at,
+        NULL::text AS checkout_email,
+        NULL::text AS checkout_country
+      FROM eligible_intents i
+      WHERE NOT EXISTS (
+        SELECT 1 FROM attempts WHERE attempts.id = i.id
+      )
     )
-    AND COALESCE(u.role::text, '') <> 'creator'
-    AND 'creator' <> ALL(COALESCE(u.roles::text[], ARRAY[]::text[]))
-    AND i.user_id <> ALL($1::text[])
   `;
 
   const [rows, counts] = await Promise.all([
     queryMainRows<RawDeposit[]>(
-      `WITH deposits AS (
-         SELECT i.*, u.username, u.email AS account_email, u.country_code,
-           u.signup_ip
-         FROM fiat_deposit_intents i
-         JOIN "user" u ON u.id = i.user_id
-         WHERE ${baseWhere}
-         ORDER BY COALESCE(i.paid_at, i.updated_at) DESC, i.id DESC
+      `${visibleDepositsCtes}, deposits AS (
+         SELECT *
+         FROM visible_deposits
+         ORDER BY occurred_at DESC, row_id DESC
          LIMIT $2 OFFSET $3
        )
        SELECT
+         deposits.row_id,
          deposits.id::text AS id,
          deposits.user_id::text AS user_id,
          deposits.username,
@@ -108,16 +232,17 @@ export async function listFiatDeposits(input: {
            auth.latest_auth_event,
            CASE WHEN NULLIF(deposits.signup_ip, '') IS NOT NULL THEN 'register' END
          ) AS latest_auth_event,
-         checkout.checkout_email,
-         checkout.checkout_country,
+         COALESCE(deposits.checkout_email, checkout.checkout_email)
+           AS checkout_email,
+         COALESCE(deposits.checkout_country, checkout.checkout_country)
+           AS checkout_country,
          deposits.status::text AS status,
          deposits.provider_payment_status,
          deposits.failure_reason,
          deposits.requested_amount_cents::text AS requested_amount_cents,
          deposits.actual_customer_total_cents::text AS customer_paid_cents,
          deposits.credited_amount_cents::text AS credited_amount_cents,
-         COALESCE(deposits.paid_at, deposits.updated_at)
-           AT TIME ZONE 'UTC' AS occurred_at
+         deposits.occurred_at AT TIME ZONE 'UTC' AS occurred_at
        FROM deposits
        LEFT JOIN LATERAL (
          SELECT
@@ -135,8 +260,7 @@ export async function listFiatDeposits(input: {
          FROM payment_webhook_events pwe
          WHERE pwe.provider = 'whop'
            AND pwe.provider_resource_id IN (
-             deposits.provider_checkout_id,
-             deposits.provider_payment_id
+             deposits.payment_id
            )
        ) checkout ON TRUE
        LEFT JOIN LATERAL (
@@ -154,17 +278,14 @@ export async function listFiatDeposits(input: {
          WHERE audit.user_id = deposits.user_id
            AND audit.event_type IN ('login', 'register')
        ) auth ON TRUE
-       ORDER BY COALESCE(deposits.paid_at, deposits.updated_at) DESC,
-         deposits.id DESC`,
+       ORDER BY deposits.occurred_at DESC, deposits.row_id DESC`,
       excludedUserIds,
       limit,
       offset,
     ),
     queryMainRows<{ total: string }[]>(
-      `SELECT COUNT(*)::text AS total
-       FROM fiat_deposit_intents i
-       JOIN "user" u ON u.id = i.user_id
-       WHERE ${baseWhere}`,
+      `${visibleDepositsCtes}
+       SELECT COUNT(*)::text AS total FROM visible_deposits`,
       excludedUserIds,
     ),
   ]);
@@ -172,6 +293,7 @@ export async function listFiatDeposits(input: {
   const total = Number(counts[0]?.total ?? 0);
   return {
     data: rows.map((row) => ({
+      rowId: row.row_id,
       id: row.id,
       userId: row.user_id,
       username: row.username,
