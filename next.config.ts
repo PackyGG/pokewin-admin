@@ -381,7 +381,10 @@ export default sentryEnabled
       org: process.env.SENTRY_ORG,
       project: process.env.SENTRY_PROJECT,
       authToken: process.env.SENTRY_AUTH_TOKEN,
-      silent: !process.env.CI,
+      // A DSN enables runtime reporting without granting release-upload access.
+      // Keep that intentional no-token mode quiet; upload diagnostics matter
+      // only when a token was explicitly configured.
+      silent: !process.env.CI || !process.env.SENTRY_AUTH_TOKEN,
       widenClientFileUpload: true,
       // Proxy browser events through this deployment so privacy/ad-blocking
       // extensions cannot silently discard client-side admin failures.
