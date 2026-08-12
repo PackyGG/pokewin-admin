@@ -63,7 +63,7 @@ test("dashboard wager, attribution, and GGR use every canonical game leg", () =>
   assert.match(trends, /'keno_bet'/);
   assert.match(trends, /FROM upgrader_games ug/);
   assert.match(trends, /FROM battle_double_down_offers o/);
-  assert.match(trends, /dashboard-trends-v5-all-games-attribution/);
+  assert.match(trends, /dashboard-trends-v6-consolidated/);
 });
 
 test("UTC dashboard windows bind identically outside a UTC process", () => {
