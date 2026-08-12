@@ -33,6 +33,27 @@ const updateSchema = commonSchema.extend({
   effect: z.enum(["block", "known_vpn"]),
 });
 
+/**
+ * A UI success here has to follow authoritative confirmation, never a bare
+ * HTTP 200. The monitor echoes the stored rule back, so before reporting
+ * success we check that the echo is the rule we asked about — the audit event
+ * and the revalidate below both key off `saved`, so an echo for a different
+ * row would log and refresh the wrong one, and the operator would be told a
+ * change landed that did not. UUIDs are compared case-insensitively so a
+ * non-canonical casing on the way in cannot fail a change that did apply.
+ */
+function assertMonitorEchoedRule(
+  saved: IdentifierBlocklistRule,
+  requested: { id: string; kind: IdentifierBlocklistRule["kind"] },
+): void {
+  if (
+    saved.id.toLowerCase() !== requested.id.toLowerCase()
+    || saved.kind !== requested.kind
+  ) {
+    throw new Error("The Antifraud monitor has not applied this change yet.");
+  }
+}
+
 function revalidate(kind: "ip" | "fingerprint") {
   revalidatePath(
     kind === "ip"
@@ -85,6 +106,7 @@ export async function setIdentifierBlocklistRuleEffect(input: unknown): Promise<
     actorId: session.userId,
     actorUsername: session.username ?? undefined,
   });
+  assertMonitorEchoedRule(saved, parsed.data);
   if (saved.effect !== parsed.data.effect) {
     throw new Error("The Antifraud monitor has not applied this policy yet.");
   }
@@ -121,7 +143,13 @@ export async function setIdentifierBlocklistRuleState(input: unknown): Promise<S
     actorUsername: session.username ?? undefined,
     effect: parsed.data.effect,
   });
-  if (saved.enabled !== parsed.data.enabled) {
+  assertMonitorEchoedRule(saved, parsed.data);
+  // The PUT carries `effect` as well, so the confirmation covers the whole
+  // requested state, not just the enabled flag.
+  if (
+    saved.enabled !== parsed.data.enabled
+    || saved.effect !== parsed.data.effect
+  ) {
     throw new Error("The Antifraud monitor has not applied this change yet.");
   }
   if (!saved.idempotent) {

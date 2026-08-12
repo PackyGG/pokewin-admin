@@ -9,6 +9,7 @@ import { createAdminAuditEventDurable } from "@/lib/admin-audit";
 import { actionErrorMessage } from "@/lib/antifraud/action-error-message";
 import { blockKnownUserIdentifiers } from "@/lib/antifraud/user-identifier-blocking";
 import { getPrimaryDrizzleDb } from "@/lib/db";
+import { logError } from "@/lib/errors/logger";
 import { requireAntifraudManager } from "@/lib/require-antifraud-access";
 import { require2FA } from "@/lib/require-2fa";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
@@ -351,7 +352,17 @@ export async function resolveDeclinedDepositAction(
       SET status = 'resolution_failed', last_error = ${message},
           updated_at = NOW(), version = version + 1
       WHERE id = ${parsed.data.caseId}::uuid AND status = 'resolving'
-    `).catch(() => undefined);
+    `).catch((recordError: unknown) => {
+      // Last-resort floor: if the durable failure write itself fails the case
+      // stays in 'resolving' forever and nothing points at it. Swallowing is
+      // still right — the caller already has an error to return — but it must
+      // be loud, otherwise the stuck case is invisible.
+      logError(
+        "antifraud.adminDeposits.failureState",
+        `could not persist failure state case=${parsed.data.caseId}`,
+        recordError,
+      );
+    });
     return {
       success: false,
       // `last_error` above keeps the full detail; the browser only gets

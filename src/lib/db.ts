@@ -114,15 +114,33 @@ function createPool(
 }
 
 /**
- * Hard ceiling on how long one checkout may hold its permit. `statement_timeout`
- * is 30s and `maxLifetimeSeconds` is 600, so a client that has not been released
- * after this long is a leak (a caller that forgot `release()`, or an isolate
- * frozen mid-request). Returning the permit anyway keeps a leak from
- * permanently shrinking — and with only two permits, deadlocking — every MAIN
- * read in the isolate. The client itself is left alone; the pool's own
- * lifetime/idle timers reclaim it.
+ * Hard ceiling on how long one checkout may hold its permit. A client still
+ * unreleased after this long is treated as a leak (a caller that forgot
+ * `release()`, or an isolate frozen mid-request). Returning the permit anyway
+ * keeps a leak from permanently shrinking — and with only two permits,
+ * deadlocking — every MAIN read in the isolate. The client itself is left
+ * alone; the pool's own lifetime/idle timers reclaim it.
+ *
+ * It MUST stay ABOVE the longest SANCTIONED hold. Firing on a healthy-but-slow
+ * reader is not a safe no-op: it returns a permit whose POOL SLOT is still
+ * occupied, so the limiter admits a third reader into a two-slot pool, that
+ * reader queues inside node-postgres, and `connectionTimeoutMillis` rejects it
+ * with `timeout exceeded when trying to connect` — precisely the tile failure
+ * admission control exists to prevent.
+ *
+ * Longest sanctioned hold today, and why 60s was too low: `queryRowsInTimeboxedTx`
+ * (`src/lib/drizzle-query.ts`) runs a whole multi-statement transaction on ONE
+ * checkout with `statement_timeout` raised per statement via `SET LOCAL`. Its
+ * widest user is the creator P&L transaction — 3 statements ×
+ * `CREATOR_PNL_STATEMENT_TIMEOUT_MS` (55s, `src/lib/queries/creators-pnl.ts`)
+ * = 165s of legitimate hold. 180s covers that plus the BEGIN / SET / COMMIT
+ * round trips. The number is written out rather than imported because
+ * `creators-pnl.ts` reaches this module through `drizzle-query.ts`; a guardrail
+ * (`scripts/__fixtures__/wave2-mirror-permit-budget.test.ts`) pins the
+ * relationship instead, so raising a per-statement budget or adding a statement
+ * to such a transaction fails the gate here rather than in production.
  */
-const READ_PERMIT_WATCHDOG_MS = 60_000;
+const READ_PERMIT_WATCHDOG_MS = 180_000;
 
 type ConnectCallback = (
   error: Error | undefined,

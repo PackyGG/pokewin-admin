@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, count, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import { getReadDrizzleDb } from "@/lib/db";
@@ -357,6 +357,28 @@ export type AntifraudAuditPage = {
 };
 
 const PER_PAGE = 25;
+/**
+ * Highest page the pager will render or serve. `?page=` is read straight from
+ * the URL, so this is also what keeps OFFSET from being caller-controlled.
+ */
+const MAX_PAGE = 10_000;
+/**
+ * Ceiling for the "matching actions" count.
+ *
+ * The count used to be an unbounded `COUNT(*)` over the whole scoped set, run
+ * on every page view. Wrapping it in `SELECT 1 … LIMIT` lets the planner stop
+ * once the ceiling is reached instead of walking every remaining match.
+ *
+ * The ceiling is deliberately the LAST ROW THE PAGER CAN REACH
+ * (`MAX_PAGE * PER_PAGE`), not a smaller round number: for any scoped set at
+ * or below it the count is still exact, so the "Matching actions" KPI and the
+ * prev/next links show precisely what they show today. Past it the number the
+ * UI could act on was already fiction — `pages` was computed from the true
+ * total while `page` clamped at `MAX_PAGE`, so "next" kept offering a page
+ * that silently re-rendered page 10,000. Capping here makes `pages` stop
+ * exactly where the pager stops.
+ */
+const COUNT_CEILING = MAX_PAGE * PER_PAGE;
 /** Bounded wall clock for the MAIN-DB display hydration of target usernames. */
 const MAIN_DB_TIMEOUT_MS = 6_000;
 
@@ -372,7 +394,7 @@ export type AntifraudAuditFilters = {
 export async function listAntifraudStaffAudit(
   filters: AntifraudAuditFilters,
 ): Promise<AntifraudAuditPage> {
-  const page = Math.max(1, Math.min(filters.page ?? 1, 10_000));
+  const page = Math.max(1, Math.min(filters.page ?? 1, MAX_PAGE));
   const actorVisible = auditActorVisibilityPredicate(
     filters.canViewProtectedActors === true,
   );
@@ -434,11 +456,21 @@ export async function listAntifraudStaffAudit(
   const [rows, targetUsernames, total, summary, actors] = await Promise.all([
     rowsPromise,
     targetUsernamesPromise,
+    // Capped count — see COUNT_CEILING. `where` only ever references
+    // `admin_audit_events` (the actor-visibility predicate is a correlated
+    // NOT EXISTS, not a join), so the row source needs no join here and the
+    // ceiling is the only difference from the previous COUNT(*).
     adminDrizzle
-      .select({ value: count() })
-      .from(admin_audit_events)
-      .where(where)
-      .then((result) => result[0]?.value ?? 0),
+      .execute<{ total: string }>(sql`
+        SELECT count(*)::text AS total
+        FROM (
+          SELECT 1
+          FROM ${admin_audit_events}
+          WHERE ${where}
+          LIMIT ${COUNT_CEILING}
+        ) capped
+      `)
+      .then((result) => Number(result.rows[0]?.total ?? 0)),
     adminDrizzle
       .execute<{ active_staff: string; last_24h: string }>(sql`
         SELECT

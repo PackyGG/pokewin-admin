@@ -46,6 +46,9 @@ type RawRow = {
   review_id: string | null;
 };
 
+/** Highest page this list will serve, and therefore the deepest OFFSET. */
+const MAX_PAGE = 10_000;
+
 function state(value: string | null): WhopAutoBanRow["status"] {
   return value === "applied" ||
     value === "failed" ||
@@ -89,7 +92,13 @@ export async function listWhopAutoBans(input: {
   pagination: { page: number; pages: number; total: number; limit: number };
   counts: Record<WhopAutoBanRow["status"], number>;
 }> {
-  const page = Math.max(1, Math.trunc(input.page ?? 1));
+  // `?page=` reaches this function straight from the URL (`Number(params.page)
+  // || 1` in auto-bans/page.tsx), so without a ceiling `?page=1e30` became
+  // `OFFSET 5e31` — an arbitrarily deep offset over a table this query already
+  // has to scan in full. MAX_PAGE bounds the offset at the last row the pager
+  // can reach; `pages` is capped to the same value so "next" can never offer a
+  // page the clamp would silently redirect back to page MAX_PAGE.
+  const page = Math.max(1, Math.min(Math.trunc(input.page ?? 1) || 1, MAX_PAGE));
   const limit = 50;
   const offset = (page - 1) * limit;
   const search = input.search?.trim().slice(0, 200) || null;
@@ -99,6 +108,17 @@ export async function listWhopAutoBans(input: {
     ? input.status!
     : null;
   const statusSql = sql`COALESCE(containment_outbox_status, 'pending')`;
+  // Substring ILIKE is kept deliberately; do NOT "optimize" it into the
+  // prefix form used by staff-audit.ts/reviews.ts. That form pays off there
+  // because MAIN ships matching `lower(col) text_pattern_ops` prefix indexes.
+  // Nothing equivalent exists here: `antifraud_signals` has no index on
+  // `kind`, none on the two `payload->>` expressions, and its only
+  // target_user_id index is plain `text_ops` — unusable for LIKE prefix
+  // matching. So every arm of this filter is a scan either way, and narrowing
+  // to prefixes would buy no plan change while costing operators the ability
+  // to find a signal by a fragment of a Whop paymentId or deposit intent id,
+  // which is how those two arms are actually used. The real fix is a partial
+  // index on `kind = 'whop_history_auto_ban'` (owner-applied migration).
   const searchFilter = search
     ? sql`AND (
         target_user_id ILIKE ${`%${search}%`}
@@ -185,7 +205,7 @@ export async function listWhopAutoBans(input: {
     data: rows.rows.map(mapRow),
     pagination: {
       page,
-      pages: Math.max(1, Math.ceil(total / limit)),
+      pages: Math.max(1, Math.min(Math.ceil(total / limit), MAX_PAGE)),
       total,
       limit,
     },

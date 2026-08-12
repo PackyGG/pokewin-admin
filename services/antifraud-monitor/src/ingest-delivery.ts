@@ -5,6 +5,7 @@ import type pg from "pg";
 
 import type { Config } from "./config.js";
 import { signedIngestTarget } from "./notification-routes.js";
+import { createPromiseCache } from "./promise-cache.js";
 import { severity } from "./scoring.js";
 
 const CURSOR = "admin-dashboard";
@@ -22,6 +23,19 @@ const DELIVERY_TIMEOUT_MS = 10_000;
 const DELIVERY_MAX_AGE_SQL = "1 hour";
 const MAX_BACKOFF_MS = 60_000;
 const MAX_EVIDENCE_PAYLOAD_BYTES = 3 * 1024;
+/**
+ * Row bound for the operations queue probe. The pending set is tiny in steady
+ * state — the one-hour write-off at the top of every flush stamps everything
+ * older — but a delivery outage keeps rows pending for as long as it lasts, so
+ * the probe reads at most this many and reports whether it hit the bound. An
+ * observability read must never be the query that hurts the pool.
+ */
+const QUEUE_PROBE_LIMIT = 1_000;
+/**
+ * Memo window for the queue probe, so a dashboard (or several replicas of it)
+ * polling the operations route cannot amplify into a per-request aggregate.
+ */
+const QUEUE_PROBE_TTL_MS = 5_000;
 
 export type RiskEventRow = {
   id: string;
@@ -80,6 +94,77 @@ const DASHBOARD_CONTAINMENT_EVENT_TYPES: ReadonlySet<string> = new Set([
   "fiat_eligibility_containment",
   "whop_history_auto_ban",
 ]);
+
+/**
+ * Every event type whose delivery carries an automatic containment command,
+ * including the blacklist type that the read above deliberately excludes.
+ * The expiry report and the operations queue probe both count "containment"
+ * from this one list so the two surfaces cannot drift apart.
+ */
+const CONTAINMENT_EVENT_TYPES: readonly string[] = [
+  ...DASHBOARD_CONTAINMENT_EVENT_TYPES,
+  "fiat_blacklisted_email_domain",
+];
+
+/** Bounded probe of the undelivered risk-event queue. */
+export type IngestDeliveryQueue = {
+  /** Undelivered events, counted up to `probeLimit`. */
+  pending: number;
+  /** True when the probe hit its bound, so `pending` is a floor, not a total. */
+  pendingCapped: boolean;
+  /**
+   * Of the probed rows, those still inside the delivery window. The remainder
+   * are already past the cutoff and will be written off, not delivered.
+   */
+  pendingDeliverable: number;
+  /** Of the probed rows, those carrying an automatic containment command. */
+  pendingContainment: number;
+  probeLimit: number;
+  /**
+   * Oldest probed row by delivery order (`recorded_at`) and by the clock the
+   * one-hour cutoff uses (`occurred_at`). Both are taken over the probed
+   * prefix, which is the whole queue whenever `pendingCapped` is false.
+   */
+  oldestPendingRecordedAt: string | null;
+  oldestPendingOccurredAt: string | null;
+  /** Queue age: how long the oldest probed event has been waiting. */
+  oldestPendingAgeMs: number | null;
+};
+
+/** Operational view of the delivery loop. Counts and timestamps only. */
+export type IngestDeliverySnapshot = {
+  running: boolean;
+  stopped: boolean;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  lastDeliveredCount: number;
+  consecutiveFailures: number;
+  /** Retry backlog: when the failure backoff lets the next attempt run. */
+  nextAttemptAt: string | null;
+  nextAttemptInMs: number | null;
+  /** Since-boot totals for the one-hour write-off. */
+  expiredTotal: number;
+  expiredContainmentTotal: number;
+  maxAge: string;
+  batchSize: number;
+  containmentBatchSize: number;
+  intervalMs: number;
+  /** null when the bounded queue probe could not run (or after stop()). */
+  queue: IngestDeliveryQueue | null;
+};
+
+type QueueProbeRow = {
+  pending: number;
+  pending_deliverable: number;
+  pending_containment: number;
+  oldest_recorded_at: Date | null;
+  oldest_occurred_at: Date | null;
+};
+
+/** pg returns timestamptz as Date; anything else is reported as unknown. */
+function isoOrNull(value: Date | null | undefined): string | null {
+  return value instanceof Date ? value.toISOString() : null;
+}
 
 function objectPayload(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -209,9 +294,9 @@ export class IngestDelivery {
   private running = false;
   private consecutiveFailures = 0;
   private nextAttemptAt = 0;
-  // Delivery telemetry. `snapshot()` and `IngestDeliverySnapshot` were removed
-  // because nothing repo-wide ever read them; the counters stay so wiring an
-  // operations route later needs an accessor and nothing else.
+  // Delivery telemetry, read by `snapshot()` and served on
+  // GET /v1/operations/delivery. Until that route existed these counters were
+  // written and never read: an outage was visible only in the logs.
   private lastAttemptAt: string | null = null;
   private lastSuccessAt: string | null = null;
   private lastDeliveredCount = 0;
@@ -220,6 +305,13 @@ export class IngestDelivery {
   // service has been shedding events all day.
   private expiredTotal = 0;
   private expiredContainmentTotal = 0;
+  // Single-key memo: the probe is identical for every caller, so a burst of
+  // operations requests collapses onto one aggregate. The arrow defers
+  // `loadQueue`, so capturing `this` in a field initializer is safe.
+  private readonly queueProbe = createPromiseCache<"queue", IngestDeliveryQueue>(
+    () => this.loadQueue(),
+    QUEUE_PROBE_TTL_MS,
+  );
 
   constructor(
     private readonly config: Config,
@@ -227,6 +319,101 @@ export class IngestDelivery {
     private readonly log: FastifyBaseLogger,
     private readonly send: typeof fetch = fetch,
   ) {}
+
+  /**
+   * Operational view of the delivery pipeline for GET /v1/operations/delivery.
+   * Everything but `queue` is already in memory; `queue` is one bounded,
+   * memoized aggregate over the partial pending index. No user ids, addresses,
+   * fingerprints or credentials are exposed — counts and timestamps only.
+   */
+  async snapshot(now = Date.now()): Promise<IngestDeliverySnapshot> {
+    return {
+      running: this.running,
+      stopped: this.stopped,
+      lastAttemptAt: this.lastAttemptAt,
+      lastSuccessAt: this.lastSuccessAt,
+      lastDeliveredCount: this.lastDeliveredCount,
+      consecutiveFailures: this.consecutiveFailures,
+      // 0 is the "no backoff pending" sentinel, not an epoch timestamp.
+      nextAttemptAt:
+        this.nextAttemptAt > 0
+          ? new Date(this.nextAttemptAt).toISOString()
+          : null,
+      nextAttemptInMs:
+        this.nextAttemptAt > now ? this.nextAttemptAt - now : null,
+      expiredTotal: this.expiredTotal,
+      expiredContainmentTotal: this.expiredContainmentTotal,
+      maxAge: DELIVERY_MAX_AGE_SQL,
+      batchSize: BATCH_SIZE,
+      containmentBatchSize: CONTAINMENT_BATCH_SIZE,
+      intervalMs: DELIVERY_INTERVAL_MS,
+      queue: await this.queueSnapshot(),
+    };
+  }
+
+  /**
+   * The queue half degrades to null instead of failing the whole route: the
+   * in-memory counters are exactly what an operator needs when the database is
+   * the thing that is broken.
+   */
+  private async queueSnapshot(): Promise<IngestDeliveryQueue | null> {
+    if (this.stopped) return null;
+    try {
+      return await this.queueProbe("queue");
+    } catch (error) {
+      this.log.warn(
+        { err: error },
+        "Antifraud delivery queue probe failed; serving counters only",
+      );
+      return null;
+    }
+  }
+
+  private async loadQueue(): Promise<IngestDeliveryQueue> {
+    // The inner ORDER BY/LIMIT drives risk_events_dashboard_pending_idx —
+    // `(recorded_at, id) WHERE dashboard_delivered_at IS NULL` from migration
+    // 028 — so the scan is an index prefix bounded to QUEUE_PROBE_LIMIT rows
+    // however deep the backlog is. Pool-level query: no client checkout, so it
+    // can never sit in front of the delivery loop's leader transaction.
+    const result = await this.pool.query<QueueProbeRow>(
+      `
+        SELECT
+          count(*)::int AS pending,
+          count(*) FILTER (WHERE deliverable)::int AS pending_deliverable,
+          count(*) FILTER (WHERE containment)::int AS pending_containment,
+          min(recorded_at) AS oldest_recorded_at,
+          min(occurred_at) AS oldest_occurred_at
+        FROM (
+          SELECT
+            recorded_at,
+            occurred_at,
+            occurred_at >= now() - $2::interval AS deliverable,
+            event_type = ANY($3::text[]) AS containment
+          FROM risk_events
+          WHERE dashboard_delivered_at IS NULL
+          ORDER BY recorded_at, id
+          LIMIT $1
+        ) probed
+      `,
+      [QUEUE_PROBE_LIMIT, DELIVERY_MAX_AGE_SQL, CONTAINMENT_EVENT_TYPES],
+    );
+    const row = result.rows[0];
+    const pending = Number(row?.pending ?? 0);
+    const oldestOccurredAt =
+      row?.oldest_occurred_at instanceof Date ? row.oldest_occurred_at : null;
+    return {
+      pending,
+      pendingCapped: pending >= QUEUE_PROBE_LIMIT,
+      pendingDeliverable: Number(row?.pending_deliverable ?? 0),
+      pendingContainment: Number(row?.pending_containment ?? 0),
+      probeLimit: QUEUE_PROBE_LIMIT,
+      oldestPendingRecordedAt: isoOrNull(row?.oldest_recorded_at),
+      oldestPendingOccurredAt: isoOrNull(oldestOccurredAt),
+      oldestPendingAgeMs: oldestOccurredAt
+        ? Math.max(0, Date.now() - oldestOccurredAt.getTime())
+        : null,
+    };
+  }
 
   // `stop()` is terminal — the process owns exactly one IngestDelivery and
   // never restarts it — so `stopped` is only ever set, never cleared here.
@@ -514,10 +701,7 @@ export class IngestDelivery {
       if (!Number.isFinite(count) || count <= 0) continue;
       byEventType[row.event_type] = count;
       total += count;
-      if (
-        DASHBOARD_CONTAINMENT_EVENT_TYPES.has(row.event_type)
-        || row.event_type === "fiat_blacklisted_email_domain"
-      ) {
+      if (CONTAINMENT_EVENT_TYPES.includes(row.event_type)) {
         containment += count;
       }
     }

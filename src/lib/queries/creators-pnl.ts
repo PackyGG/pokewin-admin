@@ -186,6 +186,26 @@ const LIFETIME_LOOKBACK_INTERVAL = `INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'`;
 // leaks to other pool users). The app-level safeQuery wrapper around the
 // panel uses a matching budget so it doesn't cut the populating scan off
 // early. Genuine failures still surface; the happy path now completes.
+//
+// ── PERMIT-HOLD COUPLING (mirror admission control) ───────────────────
+// `queryMainRowsInTimeboxedTx` runs the WHOLE transaction on ONE mirror
+// checkout, and every mirror checkout now holds one of exactly two
+// process-wide admission permits (`withReadAdmissionControl` in
+// `src/lib/db.ts`). So the worst-case permit hold of a timeboxed caller is
+// this budget × the number of statements in its transaction — `getCreatorPnl`
+// issues THREE, i.e. 165s. That has to stay under `READ_PERMIT_WATCHDOG_MS`
+// (180s): a watchdog firing on a healthy scan returns a permit whose pool
+// slot is still busy, over-admits a third reader into the two-slot pool and
+// brings back the "timeout exceeded when trying to connect" tile failures.
+// Raising this number, or adding a fourth statement here, means raising that
+// watchdog in the same change (a guardrail pins the pair).
+//
+// The 55s itself stays: the measured cold transaction is ~5s, and the raise
+// is not sized for the happy path — it exists so a DEGRADED cold run still
+// finishes and warms the 5-minute cache (`_pnl-cache.ts`) even after the
+// panel's own 60s safeQuery budget has abandoned that render. Lowering it
+// without a measurement would trade a bounded, cached slow path for the
+// "always times out" behaviour the raise was introduced to fix.
 export const CREATOR_PNL_STATEMENT_TIMEOUT_MS = 55_000;
 
 // "Withdrawn unit" derived table: emits one row per value-unit (card

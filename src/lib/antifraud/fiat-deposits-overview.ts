@@ -55,6 +55,7 @@ type RawDeposit = {
   customer_paid_cents: string | null;
   credited_amount_cents: string | null;
   occurred_at: Date | string;
+  total_count: string;
 };
 
 function optionalUsd(cents: string | null): number | null {
@@ -220,10 +221,15 @@ export async function listFiatDeposits(input: {
     )
   `;
 
-  const [rows, counts] = await Promise.all([
-    queryMainRows<RawDeposit[]>(
-      `${visibleDepositsCtes}, deposits AS (
-         SELECT *
+  // The CTE chain above is the expensive part of this page: it scans every
+  // eligible intent and every whop payment webhook, then de-duplicates. It used
+  // to run TWICE per view — once for the page of rows and once more, in full,
+  // just to produce COUNT(*). `COUNT(*) OVER ()` is evaluated after the scan but
+  // before LIMIT, so the same single scan yields both the page and the exact
+  // total that the old second query returned.
+  const rows = await queryMainRows<RawDeposit[]>(
+    `${visibleDepositsCtes}, deposits AS (
+         SELECT *, COUNT(*) OVER () AS total_count
          FROM visible_deposits
          ORDER BY occurred_at DESC, row_id DESC
          LIMIT $2 OFFSET $3
@@ -253,7 +259,8 @@ export async function listFiatDeposits(input: {
          deposits.requested_amount_cents::text AS requested_amount_cents,
          deposits.actual_customer_total_cents::text AS customer_paid_cents,
          deposits.credited_amount_cents::text AS credited_amount_cents,
-         deposits.occurred_at AT TIME ZONE 'UTC' AS occurred_at
+         deposits.occurred_at AT TIME ZONE 'UTC' AS occurred_at,
+         deposits.total_count::text AS total_count
        FROM deposits
        LEFT JOIN LATERAL (
          SELECT
@@ -300,18 +307,23 @@ export async function listFiatDeposits(input: {
          LIMIT 1
        ) latest_auth ON TRUE
        ORDER BY deposits.occurred_at DESC, deposits.row_id DESC`,
-      excludedUserIds,
-      limit,
-      offset,
-    ),
-    queryMainRows<{ total: string }[]>(
+    excludedUserIds,
+    limit,
+    offset,
+  );
+
+  // An empty page carries no window count. On page 1 that genuinely means zero
+  // rows; past the last page the old code still reported the real total, so the
+  // standalone COUNT stays as a fallback for that one out-of-range case only.
+  let total = rows.length > 0 ? Number(rows[0].total_count) : 0;
+  if (rows.length === 0 && page > 1) {
+    const counts = await queryMainRows<{ total: string }[]>(
       `${visibleDepositsCtes}
        SELECT COUNT(*)::text AS total FROM visible_deposits`,
       excludedUserIds,
-    ),
-  ]);
-
-  const total = Number(counts[0]?.total ?? 0);
+    );
+    total = Number(counts[0]?.total ?? 0);
+  }
   return {
     data: rows.map((row) => ({
       rowId: row.row_id,

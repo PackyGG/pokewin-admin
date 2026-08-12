@@ -705,6 +705,24 @@ app.get("/v1/operations/live", async () => ({
 }));
 
 /**
+ * Dashboard-delivery observability: queue age and pending counts, attempt and
+ * failure counters, last successful delivery, containment backlog, and the
+ * retry backoff. Until this route existed those counters were written and
+ * never read, so a delivery outage — including containment commands aging out
+ * unsent — was visible only to whoever was tailing the logs.
+ *
+ * Authentication is the same gate every other /v1/operations/* read uses: the
+ * global onRequest hook rejects anything without a valid bearer token, and
+ * this path is not in the probe carve-out. It stays off the admin-only list in
+ * auth.ts alongside /v1/operations/poller because, like the poller snapshot,
+ * the payload is counts and timestamps only — no user ids, addresses,
+ * fingerprints, connection strings or secrets.
+ */
+app.get("/v1/operations/delivery", async () => ({
+  data: await ingestDelivery.snapshot(),
+}));
+
+/**
  * Authoritative deployed configuration for admin status surfaces. This is
  * intentionally presence-only except for recipient ids compiled into this
  * service; URLs, tokens, provider keys and webhook secrets never leave Railway.
