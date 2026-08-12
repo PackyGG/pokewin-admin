@@ -331,9 +331,6 @@ async function NoActiveRound({
       <SectionHeading
         icon={ListOrdered}
         title="No XP leaderboard running"
-        action={
-          <RoundFormDialog mode="create" competitionType={competitionType} />
-        }
       />
 
       <div className="rounded-2xl border border-dashed p-6 text-center">

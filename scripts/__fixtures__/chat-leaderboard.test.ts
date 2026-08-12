@@ -40,6 +40,7 @@ test("chat leaderboard is persisted, finalized by rank, and exposed on the page"
   assert.match(page, /competitionType="leaderboard"/);
   assert.doesNotMatch(page, /CompetitionNavigation/);
   assert.doesNotMatch(page, /No round running/);
+  assert.equal(page.match(/mode="create" competitionType="leaderboard"/g)?.length, 1);
   assert.match(page, /FinalizeLeaderboardButton/);
   assert.match(standings, /max\(event\.occurred_at\) AS score_reached_at/);
 });
