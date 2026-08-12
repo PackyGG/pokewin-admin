@@ -5,7 +5,7 @@ type TransientReadRetryOptions = {
 };
 
 const TRANSIENT_POSTGRES_READ_ERROR =
-  /\b(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|57P01|57P02|57P03|57P05|08(?:000|001|003|004|006|007|P01)|53300)\b|connection (?:terminated|timeout|closed|reset)|terminating connection|server closed the connection|too many clients|database system is (?:starting up|shutting down)/i;
+  /\b(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|57P01|57P02|57P03|57P05|08(?:000|001|003|004|006|007|P01))\b|connection (?:terminated|timeout|closed|reset)|terminating connection|server closed the connection|database system is (?:starting up|shutting down)/i;
 
 function errorChainText(error: unknown): string {
   const parts: string[] = [];
@@ -50,8 +50,10 @@ export function isTransientPostgresReadError(error: unknown): boolean {
 
 /**
  * Retry a confirmed read-only PostgreSQL operation once when establishing or
- * retaining the connection failed. SQL/schema/permission errors are never
- * retried, and callers must not use this helper for mutations.
+ * retaining the connection failed. SQL/schema/permission errors and capacity
+ * failures (53300 / too many clients) are never retried: a second connection
+ * attempt during role exhaustion amplifies the outage instead of healing it.
+ * Callers must not use this helper for mutations.
  */
 export async function withTransientPostgresReadRetry<T>(
   operation: () => Promise<T>,

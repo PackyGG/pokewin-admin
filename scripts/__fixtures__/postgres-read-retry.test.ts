@@ -24,6 +24,21 @@ test("recognizes nested PostgreSQL connection and idle-session timeouts", () => 
   );
 });
 
+test("does not classify PostgreSQL capacity exhaustion as retryable", () => {
+  assert.equal(
+    isTransientPostgresReadError(
+      Object.assign(new Error('too many connections for role "fraud_app"'), {
+        code: "53300",
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    isTransientPostgresReadError(new Error("sorry, too many clients already")),
+    false,
+  );
+});
+
 test("retries PostgreSQL idle-session reclamation once", async () => {
   let attempts = 0;
   const idleTimeout = Object.assign(
@@ -76,6 +91,23 @@ test("does not retry SQL or permission failures", async () => {
       { context: "test.read", delayMs: 0 },
     ),
     /column does not exist/,
+  );
+  assert.equal(attempts, 1);
+});
+
+test("does not retry a capacity failure", async () => {
+  let attempts = 0;
+  await assert.rejects(
+    withTransientPostgresReadRetry(
+      async () => {
+        attempts += 1;
+        throw Object.assign(new Error("too many connections"), {
+          code: "53300",
+        });
+      },
+      { context: "test.capacity", delayMs: 0 },
+    ),
+    /too many connections/,
   );
   assert.equal(attempts, 1);
 });

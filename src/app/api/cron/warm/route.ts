@@ -61,18 +61,24 @@ export async function GET(request: Request): Promise<Response> {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
-  const result = { postgres: "skipped" as string };
-
   // Postgres keep-warm — read-only ping against the prod game DB.
+  // This is also the route's load-shedding gate: if the mirror cannot accept
+  // one cheap query, do not launch twelve aggregate warmers into the same
+  // constrained role. The next five-minute invocation retries naturally.
+  let postgres: string;
   try {
     const t = Date.now();
     const db = getProdReadDrizzleDb();
     await db.execute(sql`SELECT 1`);
-    result.postgres = `ok ${Date.now() - t}ms`;
+    postgres = `ok ${Date.now() - t}ms`;
   } catch (err) {
-    result.postgres = `error: ${
-      err instanceof Error ? err.message : String(err)
-    }`;
+    console.warn("[cron.warm] PostgreSQL unavailable; skipping cache warmers", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return NextResponse.json(
+      { ok: false, postgres: "unavailable", warmed: {} },
+      { status: 503 },
+    );
   }
 
   // Heavy-cache keep-warm — refresh the hottest shared `unstable_cache`
@@ -131,5 +137,5 @@ export async function GET(request: Request): Promise<Response> {
     warmed.error = err instanceof Error ? err.message : String(err);
   }
 
-  return NextResponse.json({ ok: true, ...result, warmed });
+  return NextResponse.json({ ok: true, postgres, warmed });
 }

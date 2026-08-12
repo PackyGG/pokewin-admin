@@ -87,6 +87,12 @@ test("serverless mirror pools preserve shared role connection headroom", () => {
   assert.match(source, /maxLifetimeSeconds:\s*600/);
   assert.match(warmRoute, /export const maxDuration = 60/);
   assert.match(warmRoute, /Array\.from\(\{ length: 2 \}/);
+  assert.match(warmRoute, /PostgreSQL unavailable; skipping cache warmers/);
+  assert.match(warmRoute, /\{ status: 503 \}/);
+  assert.match(
+    warmRoute,
+    /return NextResponse\.json\([\s\S]*?status: 503[\s\S]*?const warmed:/,
+  );
   assert.match(
     fs.readFileSync(path.join(repoRoot, "src/lib/drizzle-query.ts"), "utf8"),
     /withTransientPostgresReadRetry/,
