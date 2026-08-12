@@ -13,12 +13,19 @@ test("every App Router error boundary explicitly reports caught errors", () => {
     root: path.resolve(import.meta.dirname, "../.."),
     pathspecs: ["src/app/error.tsx", "src/app/**/error.tsx"],
   });
-  assert.ok(boundaries.length >= 39, "expected the complete boundary inventory");
+  assert.ok(
+    boundaries.length >= 39,
+    "expected the complete boundary inventory",
+  );
 
   for (const path of boundaries) {
     const source = read(path);
     if (/export \{ default \} from/.test(source)) continue;
-    assert.match(source, /reportWebappError\(/, `${path} must report its error`);
+    assert.match(
+      source,
+      /reportWebappError\(/,
+      `${path} must report its error`,
+    );
   }
 });
 
@@ -29,23 +36,48 @@ test("Sentry initializes all Next.js runtimes with privacy and tracing guards", 
   const instrumentation = read("src/instrumentation.ts");
   const nextConfig = read("next.config.ts");
   const middleware = read("src/middleware.ts");
+  const sentryCron = read("src/lib/sentry-cron.ts");
+  const cronRoutes = [
+    read("src/app/api/cron/warm/route.ts"),
+    read("src/app/api/cron/antifraud-containment-retry/route.ts"),
+    read("src/app/api/cron/reward-abuse-detection/route.ts"),
+  ].join("\n");
 
   assert.match(client, /Sentry\.init\(/);
   assert.doesNotMatch(client, /import\("@sentry\/nextjs"\)/);
   assert.match(client, /beforeSend: \(event\) => sanitizeSentryEvent\(event\)/);
   assert.match(client, /beforeSendTransaction:/);
   assert.match(client, /Sentry\.replayIntegration\(/);
+  assert.match(client, /Sentry\.browserProfilingIntegration\(\)/);
+  assert.match(client, /profileLifecycle: "trace"/);
+  assert.match(client, /enableLogs: true/);
   assert.match(client, /maskAllText: true/);
   assert.match(client, /replaysOnErrorSampleRate: sentryReplayErrorSampleRate/);
   assert.match(client, /replaysSessionSampleRate: 0/);
-  assert.match(client, /onRouterTransitionStart = Sentry\.captureRouterTransitionStart/);
+  assert.match(
+    client,
+    /onRouterTransitionStart = Sentry\.captureRouterTransitionStart/,
+  );
   assert.match(server, /beforeSendTransaction:/);
+  assert.match(server, /beforeSendLog:/);
+  assert.match(server, /nodeProfilingIntegration\(\)/);
+  assert.match(server, /genAI: \{ inputs: false, outputs: false \}/);
   assert.match(edge, /beforeSendTransaction:/);
   assert.match(instrumentation, /onRequestError = Sentry\.captureRequestError/);
   assert.match(nextConfig, /tunnelRoute: "\/monitoring"/);
-  assert.match(nextConfig, /vercelCronsMonitoring: true/);
+  assert.match(nextConfig, /value: "js-profiling"/);
+  assert.doesNotMatch(nextConfig, /vercelCronsMonitoring: true/);
   assert.match(nextConfig, /NEXT_PUBLIC_SENTRY_DSN/);
   assert.match(middleware, /monitoring\(\?:\/\|\$\)/);
+  assert.match(sentryCron, /Sentry\.captureCheckIn\(/);
+  assert.match(sentryCron, /const status = response\.ok \? "ok" : "error"/);
+  assert.match(sentryCron, /failureIssueThreshold: 2/);
+  assert.match(sentryCron, /Sentry\.metrics\.count\("cron\.runs"/);
+  assert.match(sentryCron, /Sentry\.logger\.error\(/);
+  assert.match(sentryCron, /function observe\(/);
+  assert.match(cronRoutes, /slug: "admin-cache-warm"/);
+  assert.match(cronRoutes, /slug: "admin-antifraud-containment-retry"/);
+  assert.match(cronRoutes, /slug: "admin-reward-abuse-detection"/);
 });
 
 test("Sentry sampling and request sanitization behavior stays bounded", () => {
@@ -64,7 +96,7 @@ test("Sentry sampling and request sanitization behavior stays bounded", () => {
         'exception: { values: [{ value: "failed for alice@example.com at https://example.com/a?token=secret", stacktrace: { frames: [{ vars: { secret: true } }] } }] },',
         'spans: [{ op: "db.query", description: "select * from users", data: { "db.query.text": "secret" } }],',
         '}, ["secret"]);',
-        'console.log(JSON.stringify({ rates: [m.sentryTraceSampleRate(undefined), m.sentryTraceSampleRate("0"), m.sentryTraceSampleRate("1"), m.sentryTraceSampleRate("NaN"), m.sentryTraceSampleRate("2")], replayRates: [m.sentryReplayErrorSampleRate(undefined), m.sentryReplayErrorSampleRate("0"), m.sentryReplayErrorSampleRate("NaN")], event }));',
+        'console.log(JSON.stringify({ rates: [m.sentryTraceSampleRate(undefined), m.sentryTraceSampleRate("0"), m.sentryTraceSampleRate("1"), m.sentryTraceSampleRate("NaN"), m.sentryTraceSampleRate("2")], replayRates: [m.sentryReplayErrorSampleRate(undefined), m.sentryReplayErrorSampleRate("0"), m.sentryReplayErrorSampleRate("NaN")], profileRates: [m.sentryProfileSessionSampleRate(undefined), m.sentryProfileSessionSampleRate("0"), m.sentryProfileSessionSampleRate("1"), m.sentryProfileSessionSampleRate("NaN")], event }));',
       ].join("\n"),
     ],
     { encoding: "utf8" },
@@ -73,6 +105,7 @@ test("Sentry sampling and request sanitization behavior stays bounded", () => {
 
   assert.deepEqual(result.rates, [0.1, 0, 1, 0.1, 0.1]);
   assert.deepEqual(result.replayRates, [1, 0, 1]);
+  assert.deepEqual(result.profileRates, [0.01, 0, 1, 0.01]);
   assert.deepEqual(result.event, {
     request: { url: "https://packydash.com/users", method: "GET" },
     exception: {

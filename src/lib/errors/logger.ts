@@ -112,30 +112,30 @@ function summarizeError(error: Error): string {
  */
 function emit(level: LogLevel, area: string, message: string, err?: unknown) {
   try {
-  const ts = new Date().toISOString();
-  const prefix = `[${level}:${area}]`;
-  let suffix = "";
-  if (err !== undefined && err !== null) {
-    if (err instanceof Error) {
-      suffix = ` — ${summarizeError(err)}`;
-    } else if (typeof err === "string") {
-      suffix = ` — ${boundedLogText(err)}`;
-    } else {
-      // Last-resort stringify. Never spread arbitrary objects directly
-      // into the log line; one Pg error can include the entire failed
-      // SQL text + params.
-      try {
-        suffix = ` — ${JSON.stringify(err).slice(0, 500)}`;
-      } catch {
-        suffix = " — [unserialisable error]";
+    const ts = new Date().toISOString();
+    const prefix = `[${level}:${area}]`;
+    let suffix = "";
+    if (err !== undefined && err !== null) {
+      if (err instanceof Error) {
+        suffix = ` — ${summarizeError(err)}`;
+      } else if (typeof err === "string") {
+        suffix = ` — ${boundedLogText(err)}`;
+      } else {
+        // Last-resort stringify. Never spread arbitrary objects directly
+        // into the log line; one Pg error can include the entire failed
+        // SQL text + params.
+        try {
+          suffix = ` — ${JSON.stringify(err).slice(0, 500)}`;
+        } catch {
+          suffix = " — [unserialisable error]";
+        }
       }
     }
-  }
-  const line = `${ts} ${prefix} ${message}${suffix}`;
-  // Route by level so Vercel's log UI shows the right severity icon.
-  if (level === "error") console.error(line);
-  else if (level === "warn") console.warn(line);
-  else console.log(line);
+    const line = `${ts} ${prefix} ${message}${suffix}`;
+    // Route by level so Vercel's log UI shows the right severity icon.
+    if (level === "error") console.error(line);
+    else if (level === "warn") console.warn(line);
+    else console.log(line);
   } catch {
     // Logging is observability, never control flow. A hostile Error getter or
     // failing console sink must not replace a contained application failure.
@@ -185,7 +185,11 @@ export function runTelemetrySafely(report: () => void): void {
  */
 export function logQueryFailure(
   area: string,
-  details: { engine: QueryEngine; durationMs: number; kind: "timeout" | "error" },
+  details: {
+    engine: QueryEngine;
+    durationMs: number;
+    kind: "timeout" | "error";
+  },
   err?: unknown,
 ) {
   emit(
@@ -205,13 +209,41 @@ export function logQueryFailure(
         scope.setTag("area", area.slice(0, 120));
         scope.setTag("db.engine", details.engine);
         scope.setTag("failure.kind", details.kind);
-        scope.setExtra("duration_ms", Math.max(0, Math.round(details.durationMs)));
+        scope.setExtra(
+          "duration_ms",
+          Math.max(0, Math.round(details.durationMs)),
+        );
         scope.setFingerprint([
           "postgres-query-failure",
           area.slice(0, 120),
           details.kind,
         ]);
         Sentry.captureMessage("PostgreSQL query failed", "error");
+        Sentry.logger.error("PostgreSQL query failed", {
+          area: area.slice(0, 120),
+          db_engine: details.engine,
+          failure_kind: details.kind,
+          duration_ms: Math.max(0, Math.round(details.durationMs)),
+        });
+        Sentry.metrics.count("database.query_failures", 1, {
+          attributes: {
+            area: area.slice(0, 120),
+            engine: details.engine,
+            kind: details.kind,
+          },
+        });
+        Sentry.metrics.distribution(
+          "database.failed_query_duration",
+          Math.max(0, details.durationMs),
+          {
+            unit: "millisecond",
+            attributes: {
+              area: area.slice(0, 120),
+              engine: details.engine,
+              kind: details.kind,
+            },
+          },
+        );
       });
     });
   }

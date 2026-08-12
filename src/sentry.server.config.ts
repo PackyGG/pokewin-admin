@@ -1,7 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
+import { nodeProfilingIntegration } from "@sentry/profiling-node";
 
 import {
   sanitizeSentryEvent,
+  sanitizeSentryLog,
+  sentryProfileSessionSampleRate,
   sentrySecretValues,
   sentryTraceSampleRate,
 } from "@/lib/sentry-config";
@@ -23,13 +26,25 @@ Sentry.init({
   environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
   release: process.env.VERCEL_GIT_COMMIT_SHA,
   // Performance tracing — sample modestly in prod; override via env.
-  tracesSampleRate: sentryTraceSampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE),
+  tracesSampleRate: sentryTraceSampleRate(
+    process.env.SENTRY_TRACES_SAMPLE_RATE,
+  ),
+  integrations: [nodeProfilingIntegration()],
+  profileSessionSampleRate: sentryProfileSessionSampleRate(
+    process.env.SENTRY_PROFILE_SESSION_SAMPLE_RATE,
+  ),
+  profileLifecycle: "trace",
+  enableLogs: true,
+  // Agent Monitoring is ready for a future supported AI SDK, but prompts and
+  // outputs are never collected from this sensitive admin application.
+  dataCollection: { genAI: { inputs: false, outputs: false } },
   // Never attach cookies / headers / user PII automatically.
   sendDefaultPii: false,
   initialScope: {
     tags: { "app.component": "admin-dashboard", "app.runtime": "server" },
   },
   beforeSend: (event) => sanitizeSentryEvent(event, secrets),
+  beforeSendLog: (log) => sanitizeSentryLog(log, secrets),
   beforeSendTransaction: (event) => sanitizeSentryEvent(event, secrets),
   // SECURITY (SECURITY_AUDIT.md LOW): drop console breadcrumbs. Server logs
   // (e.g. backend-api error payloads) can carry user data; keep them out of

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { runRainAbuseDetection } from "@/lib/antifraud/reward-abuse";
+import { runSentryCronMonitor } from "@/lib/sentry-cron";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +15,14 @@ export async function GET(request: Request): Promise<Response> {
   if (!secret && process.env.NODE_ENV === "production") {
     return new NextResponse("Unauthorized", { status: 401 });
   }
-  const result = await runRainAbuseDetection();
-  return NextResponse.json({ ok: true, ...result });
+  return runSentryCronMonitor(
+    {
+      slug: "admin-reward-abuse-detection",
+      schedule: "17 * * * *",
+    },
+    async () => {
+      const result = await runRainAbuseDetection();
+      return NextResponse.json({ ok: true, ...result });
+    },
+  );
 }

@@ -114,6 +114,14 @@ import {
 // TimeZone too; this pins the Node process.
 process.env.TZ ??= "UTC";
 
+function observe(report: () => void): void {
+  try {
+    report();
+  } catch {
+    // Request handling must remain independent of the telemetry transport.
+  }
+}
+
 const bootstrapAccessConfig = bootstrapProviderAccessConfig(process.env);
 const missingAccessIssues = missingProviderCredentials(process.env);
 if (bootstrapAccessConfig && missingAccessIssues.length > 0) {
@@ -2334,6 +2342,16 @@ app.setErrorHandler((error, request, reply) => {
     });
   }
   app.log.error({ err: error }, "Unhandled request error");
+  const route = request.routeOptions.url ?? "unknown";
+  observe(() => {
+    Sentry.logger.error("Unhandled antifraud request error", {
+      http_method: request.method,
+      http_route: route,
+    });
+    Sentry.metrics.count("http.server_errors", 1, {
+      attributes: { method: request.method, route },
+    });
+  });
   Sentry.withScope((scope) => {
     scope.setTag("service", "antifraud-monitor");
     scope.setTag("http.method", request.method);
@@ -2341,6 +2359,25 @@ app.setErrorHandler((error, request, reply) => {
     Sentry.captureException(error);
   });
   return reply.code(500).send({ error: "internal_error" });
+});
+
+app.addHook("onResponse", (request, reply, done) => {
+  const route = request.routeOptions.url ?? "unknown";
+  if (route === "/health" || route === "/ready") {
+    done();
+    return;
+  }
+  const statusClass = `${Math.floor(reply.statusCode / 100)}xx`;
+  observe(() => {
+    Sentry.metrics.count("http.requests", 1, {
+      attributes: { method: request.method, route, status_class: statusClass },
+    });
+    Sentry.metrics.distribution("http.response_time", reply.elapsedTime, {
+      unit: "millisecond",
+      attributes: { method: request.method, route, status_class: statusClass },
+    });
+  });
+  done();
 });
 
 app.addHook("onClose", async () => {

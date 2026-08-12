@@ -3,6 +3,8 @@ import * as Sentry from "@sentry/nextjs";
 import { registerWebappErrorListeners } from "@/lib/errors/report-webapp-error";
 import {
   sanitizeSentryEvent,
+  sanitizeSentryLog,
+  sentryProfileSessionSampleRate,
   sentryReplayErrorSampleRate,
   sentryTraceSampleRate,
 } from "@/lib/sentry-config";
@@ -34,7 +36,13 @@ Sentry.init({
       maskAllInputs: true,
       blockAllMedia: true,
     }),
+    Sentry.browserProfilingIntegration(),
   ],
+  profileSessionSampleRate: sentryProfileSessionSampleRate(
+    process.env.NEXT_PUBLIC_SENTRY_PROFILE_SESSION_SAMPLE_RATE,
+  ),
+  profileLifecycle: "trace",
+  enableLogs: true,
   replaysOnErrorSampleRate: sentryReplayErrorSampleRate(
     process.env.NEXT_PUBLIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE,
   ),
@@ -44,6 +52,7 @@ Sentry.init({
     tags: { "app.component": "admin-dashboard", "app.runtime": "browser" },
   },
   beforeSend: (event) => sanitizeSentryEvent(event),
+  beforeSendLog: (log) => sanitizeSentryLog(log),
   beforeSendTransaction: (event) => sanitizeSentryEvent(event),
   beforeBreadcrumb(breadcrumb) {
     return breadcrumb.category === "console" ? null : breadcrumb;

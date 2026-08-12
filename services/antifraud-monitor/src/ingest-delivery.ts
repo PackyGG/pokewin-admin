@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 
 import type { FastifyBaseLogger } from "fastify";
 import type pg from "pg";
+import * as Sentry from "@sentry/node";
 
 import type { Config } from "./config.js";
 import { signedIngestTarget } from "./notification-routes.js";
@@ -36,6 +37,14 @@ const QUEUE_PROBE_LIMIT = 1_000;
  * polling the operations route cannot amplify into a per-request aggregate.
  */
 const QUEUE_PROBE_TTL_MS = 5_000;
+
+function observe(report: () => void): void {
+  try {
+    report();
+  } catch {
+    // Delivery state and retries are authoritative; telemetry is best-effort.
+  }
+}
 
 export type RiskEventRow = {
   id: string;
@@ -233,9 +242,7 @@ export function signIngest(
 ): string {
   return (
     "sha256=" +
-    createHmac("sha256", secret)
-      .update(`${timestamp}.${rawBody}`)
-      .digest("hex")
+    createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("hex")
   );
 }
 
@@ -308,10 +315,10 @@ export class IngestDelivery {
   // Single-key memo: the probe is identical for every caller, so a burst of
   // operations requests collapses onto one aggregate. The arrow defers
   // `loadQueue`, so capturing `this` in a field initializer is safe.
-  private readonly queueProbe = createPromiseCache<"queue", IngestDeliveryQueue>(
-    () => this.loadQueue(),
-    QUEUE_PROBE_TTL_MS,
-  );
+  private readonly queueProbe = createPromiseCache<
+    "queue",
+    IngestDeliveryQueue
+  >(() => this.loadQueue(), QUEUE_PROBE_TTL_MS);
 
   constructor(
     private readonly config: Config,
@@ -599,8 +606,8 @@ export class IngestDelivery {
         ),
         ...blacklistContainment.rows.filter(
           (event) =>
-            event.event_type === "fiat_blacklisted_email_domain"
-            && objectPayload(event.payload).reviewOnly !== true,
+            event.event_type === "fiat_blacklisted_email_domain" &&
+            objectPayload(event.payload).reviewOnly !== true,
         ),
       ]
         .sort(byContainmentDeliveryOrder)
@@ -671,12 +678,14 @@ export class IngestDelivery {
       return events.rows.length;
     } catch (error) {
       if (transactionOpen) {
-        await client.query("ROLLBACK").catch((rollbackError) =>
-          this.log.warn(
-            { err: rollbackError },
-            "Antifraud ingest delivery rollback failed",
-          ),
-        );
+        await client
+          .query("ROLLBACK")
+          .catch((rollbackError) =>
+            this.log.warn(
+              { err: rollbackError },
+              "Antifraud ingest delivery rollback failed",
+            ),
+          );
       }
       throw error;
     } finally {
@@ -721,9 +730,7 @@ export class IngestDelivery {
     );
   }
 
-  private async deliverEvents(
-    events: RiskEventRow[],
-  ): Promise<{
+  private async deliverEvents(events: RiskEventRow[]): Promise<{
     locksSkipped: number;
     stale: number;
     skipped: number;
@@ -834,8 +841,8 @@ export class IngestDelivery {
     const eventIds = events
       .filter(
         (event) =>
-          event.event_type === "fiat_blacklisted_email_domain"
-          && objectPayload(event.payload).reviewOnly !== true,
+          event.event_type === "fiat_blacklisted_email_domain" &&
+          objectPayload(event.payload).reviewOnly !== true,
       )
       .map((event) => event.id);
     if (eventIds.length === 0) return;
@@ -908,12 +915,27 @@ export class IngestDelivery {
     if (this.stopped || this.running || Date.now() < this.nextAttemptAt) return;
     this.running = true;
     this.lastAttemptAt = new Date().toISOString();
+    const startedAt = Date.now();
     try {
       const delivered = await this.flushOnce();
       this.lastDeliveredCount = delivered;
       this.lastSuccessAt = new Date().toISOString();
       this.consecutiveFailures = 0;
       this.nextAttemptAt = 0;
+      observe(() => {
+        Sentry.metrics.gauge("ingest.consecutive_failures", 0);
+        if (delivered > 0) {
+          Sentry.metrics.count("ingest.delivery_runs", 1, {
+            attributes: { status: "ok" },
+          });
+          Sentry.metrics.count("ingest.events_delivered", delivered);
+          Sentry.metrics.distribution(
+            "ingest.delivery_duration",
+            Date.now() - startedAt,
+            { unit: "millisecond", attributes: { status: "ok" } },
+          );
+        }
+      });
       if (delivered > 0 && !this.stopped) {
         setImmediate(() => void this.tick());
       }
@@ -931,6 +953,23 @@ export class IngestDelivery {
         },
         "Antifraud dashboard ingest delivery failed",
       );
+      observe(() => {
+        Sentry.metrics.count("ingest.delivery_runs", 1, {
+          attributes: { status: "error" },
+        });
+        Sentry.metrics.gauge(
+          "ingest.consecutive_failures",
+          this.consecutiveFailures,
+        );
+        Sentry.metrics.distribution(
+          "ingest.delivery_duration",
+          Date.now() - startedAt,
+          { unit: "millisecond", attributes: { status: "error" } },
+        );
+        Sentry.logger.warn("Antifraud dashboard ingest delivery failed", {
+          consecutive_failures: this.consecutiveFailures,
+        });
+      });
     } finally {
       this.running = false;
     }

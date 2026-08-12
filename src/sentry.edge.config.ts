@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import {
   sanitizeSentryEvent,
+  sanitizeSentryLog,
   sentrySecretValues,
   sentryTraceSampleRate,
 } from "@/lib/sentry-config";
@@ -20,12 +21,16 @@ Sentry.init({
   enabled: Boolean(dsn),
   environment: process.env.VERCEL_ENV ?? process.env.NODE_ENV,
   release: process.env.VERCEL_GIT_COMMIT_SHA,
-  tracesSampleRate: sentryTraceSampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE),
+  tracesSampleRate: sentryTraceSampleRate(
+    process.env.SENTRY_TRACES_SAMPLE_RATE,
+  ),
+  enableLogs: true,
   sendDefaultPii: false,
   initialScope: {
     tags: { "app.component": "admin-dashboard", "app.runtime": "edge" },
   },
   beforeSend: (event) => sanitizeSentryEvent(event, secrets),
+  beforeSendLog: (log) => sanitizeSentryLog(log, secrets),
   beforeSendTransaction: (event) => sanitizeSentryEvent(event, secrets),
   beforeBreadcrumb(breadcrumb) {
     return breadcrumb.category === "console" ? null : breadcrumb;

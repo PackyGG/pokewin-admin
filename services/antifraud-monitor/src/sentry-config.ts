@@ -1,13 +1,32 @@
 import type { Event } from "@sentry/node";
 
+type SanitizableLog = {
+  message: unknown;
+  attributes?: Record<string, unknown>;
+};
+
 const DEFAULT_TRACE_SAMPLE_RATE = 0.1;
+const DEFAULT_PROFILE_SESSION_SAMPLE_RATE = 0.01;
 
 export function sentryTraceSampleRate(value: string | undefined): number {
-  if (value === undefined || value.trim() === "") return DEFAULT_TRACE_SAMPLE_RATE;
+  if (value === undefined || value.trim() === "")
+    return DEFAULT_TRACE_SAMPLE_RATE;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1
     ? parsed
     : DEFAULT_TRACE_SAMPLE_RATE;
+}
+
+export function sentryProfileSessionSampleRate(
+  value: string | undefined,
+): number {
+  if (value === undefined || value.trim() === "") {
+    return DEFAULT_PROFILE_SESSION_SAMPLE_RATE;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1
+    ? parsed
+    : DEFAULT_PROFILE_SESSION_SAMPLE_RATE;
 }
 
 export function stripUrlDetails(value: string | undefined): string | undefined {
@@ -22,16 +41,24 @@ export function stripUrlDetails(value: string | undefined): string | undefined {
   }
 }
 
-function scrubText(value: string | undefined, secrets: readonly string[]): string | undefined {
+function scrubText(
+  value: string | undefined,
+  secrets: readonly string[],
+): string | undefined {
   if (!value) return value;
   const scrubbed = secrets.reduce(
-    (scrubbed, secret) => secret ? scrubbed.replaceAll(secret, "[Filtered]") : scrubbed,
+    (scrubbed, secret) =>
+      secret ? scrubbed.replaceAll(secret, "[Filtered]") : scrubbed,
     value,
   );
-  return scrubbed.replace(/https?:\/\/[^\s"'<>]+/gu, (url) => stripUrlDetails(url) ?? url);
+  return scrubbed.replace(
+    /https?:\/\/[^\s"'<>]+/gu,
+    (url) => stripUrlDetails(url) ?? url,
+  );
 }
 
-const SENSITIVE_KEY = /(?:authorization|cookie|password|passwd|secret|token|api[_-]?key|dsn|query(?:_string)?|statement|email|ip[_-]?address|user[_-]?id)/iu;
+const SENSITIVE_KEY =
+  /(?:authorization|cookie|password|passwd|secret|token|api[_-]?key|dsn|query(?:_string)?|statement|email|ip[_-]?address|user[_-]?id)/iu;
 
 function scrubUnknown(
   value: unknown,
@@ -49,7 +76,8 @@ function scrubUnknown(
     return value;
   }
   const record = value as Record<string, unknown>;
-  const operation = typeof record.op === "string" ? record.op.toLowerCase() : "";
+  const operation =
+    typeof record.op === "string" ? record.op.toLowerCase() : "";
   if (operation.startsWith("db")) {
     delete record.description;
     delete record.data;
@@ -92,4 +120,13 @@ export function sanitizeSentryEvent<T extends Event>(
   scrubUnknown(event.tags, secrets, new WeakSet());
   scrubUnknown(event.spans, secrets, new WeakSet());
   return event;
+}
+
+export function sanitizeSentryLog<T extends SanitizableLog>(
+  log: T,
+  secrets: readonly string[] = [],
+): T {
+  log.message = scrubUnknown(log.message, secrets, new WeakSet());
+  if (log.attributes) scrubUnknown(log.attributes, secrets, new WeakSet());
+  return log;
 }

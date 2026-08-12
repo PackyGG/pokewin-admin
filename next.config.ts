@@ -63,9 +63,13 @@ const nextConfig: NextConfig = {
           { key: "Referrer-Policy", value: "no-referrer" },
           {
             key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+            value:
+              "camera=(), microphone=(), geolocation=(), browsing-topics=()",
           },
           { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+          // Required by Sentry's browser CPU profiler. This enables the
+          // profiler API; the SDK still samples only the configured sessions.
+          { key: "Document-Policy", value: "js-profiling" },
         ],
       },
     ];
@@ -379,14 +383,10 @@ export default sentryEnabled
       authToken: process.env.SENTRY_AUTH_TOKEN,
       silent: !process.env.CI,
       widenClientFileUpload: true,
-      disableLogger: true,
       // Proxy browser events through this deployment so privacy/ad-blocking
       // extensions cannot silently discard client-side admin failures.
       tunnelRoute: "/monitoring",
       // Skip source-map upload unless an auth token is present.
       sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
-      // Create Cron monitors from the schedules in vercel.json. The span-based
-      // path supports App Router route handlers and reports missed/failed runs.
-      _experimental: { vercelCronsMonitoring: true },
     })
   : nextConfig;

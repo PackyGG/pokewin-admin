@@ -12,6 +12,7 @@ import { getDailyPnl } from "@/lib/queries/pnl";
 import { getCountryRestrictions } from "@/lib/queries/geo-blocking";
 import { getFiatConfig } from "@/lib/queries/fiat";
 import { buildKpiWindowPayload } from "@/app/(admin)/dashboard/kpi-window-data";
+import { runSentryCronMonitor } from "@/lib/sentry-cron";
 
 /**
  * PostgreSQL/cache keep-warm cron. A bare `SELECT 1` leaves the
@@ -197,43 +198,51 @@ export async function GET(request: Request): Promise<Response> {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
-  // Postgres keep-warm — read-only ping against the prod game DB.
-  // This is also the route's load-shedding gate: if the mirror cannot accept
-  // one cheap query, do not launch the aggregate warmers into the same
-  // constrained role. The next five-minute invocation retries naturally.
-  let postgres: string;
-  const startedAt = Date.now();
-  try {
-    const db = getProdReadDrizzleDb();
-    await db.execute(sql`SELECT 1`);
-    postgres = `ok ${Date.now() - startedAt}ms`;
-  } catch (err) {
-    console.warn("[cron.warm] PostgreSQL unavailable; skipping cache warmers", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return NextResponse.json(
-      { ok: false, postgres: "unavailable", warmed: {} },
-      { status: 503 },
-    );
-  }
+  return runSentryCronMonitor(
+    { slug: "admin-cache-warm", schedule: "*/5 * * * *" },
+    async () => {
+      // Postgres keep-warm — read-only ping against the prod game DB.
+      // This is also the route's load-shedding gate: if the mirror cannot accept
+      // one cheap query, do not launch the aggregate warmers into the same
+      // constrained role. The next five-minute invocation retries naturally.
+      let postgres: string;
+      const startedAt = Date.now();
+      try {
+        const db = getProdReadDrizzleDb();
+        await db.execute(sql`SELECT 1`);
+        postgres = `ok ${Date.now() - startedAt}ms`;
+      } catch (err) {
+        console.warn(
+          "[cron.warm] PostgreSQL unavailable; skipping cache warmers",
+          {
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+        return NextResponse.json(
+          { ok: false, postgres: "unavailable", warmed: {} },
+          { status: 503 },
+        );
+      }
 
-  // Heavy-cache keep-warm — refresh the hottest shared aggregates so a burst
-  // of concurrent admin loads after a cache expiry reads warm cache instead of
-  // re-stampeding the mirror pool. All read-only; the two lanes bound how much
-  // of the shared read-admission budget this cron can hold at once (see the
-  // module doc), and one slow/failing refresh never fails the cron.
-  const warmed: Record<string, string> = {};
-  const deadline = startedAt + WARM_START_DEADLINE_MS;
-  try {
-    await Promise.all([
-      runWarmLane(HEAVY_WARMERS, warmed, deadline),
-      runWarmLane(LIGHT_WARMERS, warmed, deadline),
-    ]);
-  } catch (err) {
-    // Defensive: `runWarmLane` swallows its own failures, but never let
-    // warming fail the cron.
-    warmed.error = err instanceof Error ? err.message : String(err);
-  }
+      // Heavy-cache keep-warm — refresh the hottest shared aggregates so a burst
+      // of concurrent admin loads after a cache expiry reads warm cache instead of
+      // re-stampeding the mirror pool. All read-only; the two lanes bound how much
+      // of the shared read-admission budget this cron can hold at once (see the
+      // module doc), and one slow/failing refresh never fails the cron.
+      const warmed: Record<string, string> = {};
+      const deadline = startedAt + WARM_START_DEADLINE_MS;
+      try {
+        await Promise.all([
+          runWarmLane(HEAVY_WARMERS, warmed, deadline),
+          runWarmLane(LIGHT_WARMERS, warmed, deadline),
+        ]);
+      } catch (err) {
+        // Defensive: `runWarmLane` swallows its own failures, but never let
+        // warming fail the cron.
+        warmed.error = err instanceof Error ? err.message : String(err);
+      }
 
-  return NextResponse.json({ ok: true, postgres, warmed });
+      return NextResponse.json({ ok: true, postgres, warmed });
+    },
+  );
 }

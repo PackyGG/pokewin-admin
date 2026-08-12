@@ -1,5 +1,6 @@
 const DEFAULT_TRACE_SAMPLE_RATE = 0.1;
 const DEFAULT_REPLAY_ERROR_SAMPLE_RATE = 1;
+const DEFAULT_PROFILE_SESSION_SAMPLE_RATE = 0.01;
 
 type SanitizableSentryEvent = {
   user?: unknown;
@@ -25,6 +26,11 @@ type SanitizableSentryEvent = {
   spans?: unknown;
 };
 
+type SanitizableSentryLog = {
+  message: unknown;
+  attributes?: Record<string, unknown>;
+};
+
 /** Keep malformed deployment variables from disabling or oversampling traces. */
 export function sentryTraceSampleRate(value: string | undefined): number {
   if (value === undefined || value.trim() === "") {
@@ -37,9 +43,7 @@ export function sentryTraceSampleRate(value: string | undefined): number {
 }
 
 /** Capture the buffered replay for every error by default, never normal sessions. */
-export function sentryReplayErrorSampleRate(
-  value: string | undefined,
-): number {
+export function sentryReplayErrorSampleRate(value: string | undefined): number {
   if (value === undefined || value.trim() === "") {
     return DEFAULT_REPLAY_ERROR_SAMPLE_RATE;
   }
@@ -47,6 +51,19 @@ export function sentryReplayErrorSampleRate(
   return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1
     ? parsed
     : DEFAULT_REPLAY_ERROR_SAMPLE_RATE;
+}
+
+/** Profile a small, configurable slice of sessions to bound CPU and quota. */
+export function sentryProfileSessionSampleRate(
+  value: string | undefined,
+): number {
+  if (value === undefined || value.trim() === "") {
+    return DEFAULT_PROFILE_SESSION_SAMPLE_RATE;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1
+    ? parsed
+    : DEFAULT_PROFILE_SESSION_SAMPLE_RATE;
 }
 
 export function stripSentryUrlDetails(
@@ -124,7 +141,8 @@ function scrubSentryValue(
   }
 
   const record = value as Record<string, unknown>;
-  const operation = typeof record.op === "string" ? record.op.toLowerCase() : "";
+  const operation =
+    typeof record.op === "string" ? record.op.toLowerCase() : "";
   if (operation.startsWith("db")) {
     // Timing and status identify a slow span; query text can contain user data.
     delete record.description;
@@ -178,4 +196,16 @@ export function sanitizeSentryEvent<T extends SanitizableSentryEvent>(
   scrubSentryValue(event.tags, secrets, new WeakSet());
   scrubSentryValue(event.spans, secrets, new WeakSet());
   return event;
+}
+
+/** Apply the same privacy boundary to Sentry's separate structured-log path. */
+export function sanitizeSentryLog<T extends SanitizableSentryLog>(
+  log: T,
+  secrets: readonly string[] = [],
+): T {
+  log.message = scrubSentryValue(log.message, secrets, new WeakSet());
+  if (log.attributes) {
+    scrubSentryValue(log.attributes, secrets, new WeakSet());
+  }
+  return log;
 }

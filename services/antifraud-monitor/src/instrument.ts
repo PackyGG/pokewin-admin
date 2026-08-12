@@ -1,6 +1,12 @@
 import * as Sentry from "@sentry/node";
+import { nodeProfilingIntegration } from "@sentry/profiling-node";
 
-import { sanitizeSentryEvent, sentryTraceSampleRate } from "./sentry-config.js";
+import {
+  sanitizeSentryEvent,
+  sanitizeSentryLog,
+  sentryProfileSessionSampleRate,
+  sentryTraceSampleRate,
+} from "./sentry-config.js";
 
 const dsn = process.env.SENTRY_DSN;
 const secrets = [
@@ -43,11 +49,17 @@ Sentry.init({
     process.env.RAILWAY_DEPLOYMENT_ID ??
     process.env.SENTRY_RELEASE,
   sendDefaultPii: false,
-  enableLogs: false,
+  enableLogs: true,
+  profileSessionSampleRate: sentryProfileSessionSampleRate(
+    process.env.SENTRY_PROFILE_SESSION_SAMPLE_RATE,
+  ),
+  profileLifecycle: "trace",
+  dataCollection: { genAI: { inputs: false, outputs: false } },
   initialScope: {
     tags: { "app.component": "antifraud-monitor", "app.runtime": "railway" },
   },
   integrations: [
+    nodeProfilingIntegration(),
     Sentry.fastifyIntegration({
       // Fastify v5 request failures are captured explicitly in the service's
       // central error handler, after expected 4xx errors have been excluded.
@@ -61,7 +73,9 @@ Sentry.init({
       sentryTraceSampleRate(process.env.SENTRY_TRACES_SAMPLE_RATE),
     );
   },
-  beforeBreadcrumb: (breadcrumb) => breadcrumb.category === "console" ? null : breadcrumb,
+  beforeBreadcrumb: (breadcrumb) =>
+    breadcrumb.category === "console" ? null : breadcrumb,
   beforeSend: (event) => sanitizeSentryEvent(event, secrets),
+  beforeSendLog: (log) => sanitizeSentryLog(log, secrets),
   beforeSendTransaction: (event) => sanitizeSentryEvent(event, secrets),
 });
