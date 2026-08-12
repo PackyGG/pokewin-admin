@@ -31,6 +31,10 @@ CREATE INDEX IF NOT EXISTS fiat_dashboard_rollups_status_user_idx
 -- permanently absent from the projection. Normal writers resume on commit.
 LOCK TABLE fiat_deposit_assessments IN SHARE ROW EXCLUSIVE MODE;
 
+-- Rebuilding is deliberate even if this SQL is manually replayed: dimensions
+-- that disappeared from the canonical table must not survive as orphan totals.
+TRUNCATE TABLE fiat_deposit_dashboard_rollups;
+
 INSERT INTO fiat_deposit_dashboard_rollups (
   bucket_date,
   user_id,
@@ -107,45 +111,45 @@ BEGIN
         assessment.deposit_intent_id;
     END IF;
   ELSE
-  INSERT INTO fiat_deposit_dashboard_rollups (
-    bucket_date,
-    user_id,
-    status,
-    verdict,
-    review_status,
-    three_ds_state,
-    kyc_required,
-    deposit_count,
-    credited_amount_usd
-  ) VALUES (
-    (assessment.occurred_at AT TIME ZONE 'UTC')::date,
-    assessment.user_id,
-    assessment.status,
-    assessment.verdict,
-    assessment.review_status,
-    CASE
-      WHEN assessment.three_ds_verified IS NULL THEN -1
-      WHEN assessment.three_ds_verified THEN 1
-      ELSE 0
-    END,
-    COALESCE((assessment.account_evidence->>'kycRequired')::boolean, false),
-    count_delta,
-    amount_delta
-  )
-  ON CONFLICT (
-    bucket_date,
-    user_id,
-    status,
-    verdict,
-    review_status,
-    three_ds_state,
-    kyc_required
-  ) DO UPDATE SET
-    deposit_count = fiat_deposit_dashboard_rollups.deposit_count
-      + EXCLUDED.deposit_count,
-    credited_amount_usd = fiat_deposit_dashboard_rollups.credited_amount_usd
-      + EXCLUDED.credited_amount_usd
-  RETURNING deposit_count INTO row_count;
+    INSERT INTO fiat_deposit_dashboard_rollups (
+      bucket_date,
+      user_id,
+      status,
+      verdict,
+      review_status,
+      three_ds_state,
+      kyc_required,
+      deposit_count,
+      credited_amount_usd
+    ) VALUES (
+      (assessment.occurred_at AT TIME ZONE 'UTC')::date,
+      assessment.user_id,
+      assessment.status,
+      assessment.verdict,
+      assessment.review_status,
+      CASE
+        WHEN assessment.three_ds_verified IS NULL THEN -1
+        WHEN assessment.three_ds_verified THEN 1
+        ELSE 0
+      END,
+      COALESCE((assessment.account_evidence->>'kycRequired')::boolean, false),
+      count_delta,
+      amount_delta
+    )
+    ON CONFLICT (
+      bucket_date,
+      user_id,
+      status,
+      verdict,
+      review_status,
+      three_ds_state,
+      kyc_required
+    ) DO UPDATE SET
+      deposit_count = fiat_deposit_dashboard_rollups.deposit_count
+        + EXCLUDED.deposit_count,
+      credited_amount_usd = fiat_deposit_dashboard_rollups.credited_amount_usd
+        + EXCLUDED.credited_amount_usd
+    RETURNING deposit_count INTO row_count;
   END IF;
 
   IF row_count = 0 THEN

@@ -56,3 +56,31 @@ test("overview endpoint exposes bounded real review, blacklist, and session data
   );
   assert.match(rollupMigration, /AFTER INSERT OR DELETE OR UPDATE OF/);
 });
+
+test("rollup decrements cannot violate the non-negative insert constraint", async () => {
+  const migration = await readFile(rollupMigrationUrl, "utf8");
+  const decrementBranch = /IF count_delta < 0 THEN([\s\S]*?)\n  ELSE/.exec(
+    migration,
+  )?.[1];
+
+  assert.ok(decrementBranch, "expected a dedicated negative-delta branch");
+  assert.match(decrementBranch, /UPDATE fiat_deposit_dashboard_rollups/);
+  assert.doesNotMatch(decrementBranch, /INSERT INTO/);
+  assert.match(decrementBranch, /IF NOT FOUND THEN/);
+  assert.match(migration, /IF row_count = 0 THEN\s+DELETE FROM/);
+});
+
+test("rollup backfill is race-free and removes orphan dimensions on replay", async () => {
+  const migration = await readFile(rollupMigrationUrl, "utf8");
+  const lockAt = migration.indexOf("LOCK TABLE fiat_deposit_assessments");
+  const truncateAt = migration.indexOf(
+    "TRUNCATE TABLE fiat_deposit_dashboard_rollups",
+  );
+  const backfillAt = migration.indexOf(
+    "INSERT INTO fiat_deposit_dashboard_rollups",
+  );
+
+  assert.ok(lockAt >= 0);
+  assert.ok(truncateAt > lockAt);
+  assert.ok(backfillAt > truncateAt);
+});
