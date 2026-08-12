@@ -65,3 +65,15 @@ test("staff-triggered Fraud mutations return typed results", () => {
     .join("\n");
   assert.match(clients, /if \(!result\.success\)/);
 });
+
+test("unexpected Fraud mutation failures enter the Discord error queue", () => {
+  const source = readFileSync(
+    path.resolve("src/lib/antifraud/action-error-message.ts"),
+    "utf8",
+  );
+  assert.match(source, /isExpectedAntifraudActionError/);
+  assert.match(source, /enqueueDiscordEvent\(\{/);
+  assert.match(source, /eventKey: "antifraud\.error\.webapp"/);
+  assert.match(source, /dedupeKey: `server-action:/);
+  assert.match(source, /Raw messages, inputs, and stack traces were excluded/);
+});

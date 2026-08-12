@@ -1,3 +1,16 @@
+import "server-only";
+
+import { createHash } from "node:crypto";
+
+import { enqueueDiscordEvent } from "@/lib/discord-notifications/router";
+import { logError } from "@/lib/errors/logger";
+import {
+  fail,
+  ok,
+  type ServerActionResult,
+} from "@/lib/errors/server-action-result";
+import { postgresErrorCode } from "@/lib/postgres-errors";
+
 /**
  * Shared error-message narrowing for antifraud server actions.
  *
@@ -48,6 +61,11 @@ const OPERATOR_MESSAGES: RegExp[] = [
   // Authorization / gate messages.
   /you do not have permission to/i,
   /only owners and admins can/i,
+  /someone else changed/i,
+  /already (?:closed|banned|unbanned)/i,
+  /only a (?:live|new) review/i,
+  /retry key was already used/i,
+  /reload and (?:review|try) again/i,
 ];
 
 export const DEFAULT_ACTION_ERROR =
@@ -80,12 +98,74 @@ export async function antifraudActionResult<T>(
     return ok(await run());
   } catch (error) {
     logError(area, "antifraud action failed", error);
+    if (!isExpectedAntifraudActionError(error)) {
+      await reportAntifraudActionError(area, error);
+    }
     return fail(actionErrorMessage(error, fallback));
   }
 }
-import { logError } from "@/lib/errors/logger";
-import {
-  fail,
-  ok,
-  type ServerActionResult,
-} from "@/lib/errors/server-action-result";
+
+function isExpectedAntifraudActionError(error: unknown): boolean {
+  if (!(error instanceof Error) || !error.message) return false;
+  if (INFRASTRUCTURE_NOISE.test(error.message)) return false;
+  return OPERATOR_MESSAGES.some((pattern) => pattern.test(error.message));
+}
+
+async function reportAntifraudActionError(
+  area: string,
+  error: unknown,
+): Promise<void> {
+  const guildId = process.env.ADMIN_GUILD_ID;
+  if (!guildId) return;
+
+  const details = error instanceof Error
+    ? (error as Error & { digest?: unknown })
+    : null;
+  const errorName = details?.name?.slice(0, 80) || "UnknownError";
+  const digest = typeof details?.digest === "string"
+    ? details.digest.slice(0, 128)
+    : null;
+  const sqlState = postgresErrorCode(error);
+  const hourBucket = new Date().toISOString().slice(0, 13);
+  const fingerprint = createHash("sha256")
+    .update([area, errorName, digest ?? "", sqlState ?? "", hourBucket].join("|"))
+    .digest("hex")
+    .slice(0, 32);
+
+  try {
+    await enqueueDiscordEvent({
+      guildId,
+      eventKey: "antifraud.error.webapp",
+      dedupeKey: `server-action:${fingerprint}`,
+      embed: {
+        title: "🚨 Fraud Server Action failed",
+        description:
+          "A staff-triggered Fraud mutation failed unexpectedly. Raw messages, inputs, and stack traces were excluded.",
+        color: 0xed4245,
+        fields: [
+          { name: "Webapp", value: "fraud", inline: true },
+          { name: "Source", value: "server-action", inline: true },
+          { name: "Area", value: `\`${area.slice(0, 120)}\``, inline: false },
+          {
+            name: "Error",
+            value: [
+              errorName,
+              sqlState ? `SQLSTATE ${sqlState}` : null,
+              digest ? `digest ${digest}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+            inline: false,
+          },
+        ],
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch (reportingError) {
+    logError(
+      "antifraud.serverActionReporting",
+      "Discord error enqueue failed",
+      reportingError,
+    );
+  }
+}
