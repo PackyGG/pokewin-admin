@@ -53,10 +53,12 @@ import { logQueryFailure } from "./logger";
  * wait: once it elapses the wrapper resolves to the same fallback shape a
  * throw would (with a `[timeout]`-prefixed error string), and the tile
  * degrades instead of hanging the segment. A MAIN read still queued at the
- * admission limiter is cancelled before it starts; an underlying DB statement
- * that already began is not cancelled and remains bounded by PostgreSQL's
- * `statement_timeout`. Use {@link withTimeout} directly when you want the race
- * without the surrounding `safeQuery` catch.
+ * admission limiter is cancelled before it starts; an active MAIN mirror
+ * checkout is destroyed so abandoned read-only SQL releases capacity promptly.
+ * Active Admin/primary work is not severed because those pools also carry
+ * writes, and remains bounded by PostgreSQL's `statement_timeout`. Use
+ * {@link withTimeout} directly when you want the race without the surrounding
+ * `safeQuery` catch.
  */
 /**
  * Discriminates WHY a wrapped query degraded:
@@ -120,8 +122,9 @@ function getSafeErrorMessage(err: unknown): string {
  * The timer is always cleared (success OR failure) so a fast query never
  * leaves a dangling `setTimeout` holding the event loop. The signal propagated
  * through async context cancels a MAIN read that is still waiting for an
- * admission slot. It does not abort a PostgreSQL statement that already began;
- * the server-side `statement_timeout` remains that statement's backstop.
+ * admission slot. The MAIN mirror wrapper also destroys an active read-only
+ * checkout on abort; write-capable pools retain the server-side
+ * `statement_timeout` as their backstop.
  */
 export async function withTimeout<T>(
   fn: () => Promise<T>,

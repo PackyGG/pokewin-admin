@@ -131,6 +131,7 @@ test("a timed-out queued reader is removed and never runs later", async () => {
     /Query exceeded 10ms/,
   );
   assert.equal(mainReadLimiterSnapshot()[key].queued, 0);
+  assert.equal(mainReadLimiterSnapshot()[key].cancelled, 1);
 
   releaseHolder();
   await holder;
@@ -143,6 +144,40 @@ test("a timed-out queued reader is removed and never runs later", async () => {
 
   // Cancellation must not consume or leak the next permit.
   assert.equal(await withMainReadSlot(key, 1, async () => "ok"), "ok");
+});
+
+test("an outer page deadline cancels work behind a longer nested deadline", async () => {
+  const key = "test:nested-deadline";
+  let releaseHolder!: () => void;
+  let nestedStarted = false;
+  const holder = withMainReadSlot(
+    key,
+    1,
+    () =>
+      new Promise<void>((resolve) => {
+        releaseHolder = resolve;
+      }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await assert.rejects(
+    withTimeout(
+      () =>
+        withTimeout(
+          () =>
+            withMainReadSlot(key, 1, async () => {
+              nestedStarted = true;
+            }),
+          1_000,
+        ),
+      10,
+    ),
+    /Query exceeded 10ms/,
+  );
+  assert.equal(mainReadLimiterSnapshot()[key].queued, 0);
+  releaseHolder();
+  await holder;
+  assert.equal(nestedStarted, false);
 });
 
 test("the mirror pool is admission-controlled at the checkout, not per statement", () => {
@@ -284,6 +319,61 @@ test("the checkout watchdog destroys a leaked pool client", async () => {
   );
 });
 
+test("a page deadline destroys an active mirror checkout immediately", async () => {
+  const { withReadAdmissionControl } = await import("../../src/lib/db");
+  const releaseArguments: unknown[][] = [];
+  const fakePool = {
+    async connect() {
+      return {
+        release(...args: unknown[]) {
+          releaseArguments.push(args);
+        },
+      };
+    },
+  };
+  const pool = withReadAdmissionControl(
+    fakePool as unknown as Parameters<typeof withReadAdmissionControl>[0],
+    "prod",
+    5_000,
+  );
+
+  await assert.rejects(
+    withTimeout(async () => {
+      await pool.connect();
+      await new Promise<never>(() => undefined);
+    }, 10),
+    /Query exceeded 10ms/,
+  );
+  assert.deepEqual(
+    releaseArguments,
+    [[true]],
+    "abandoned SQL must not retain a mirror connection until statement_timeout",
+  );
+});
+
+test("a queued pool checkout rejects cleanly when its page deadline expires", async () => {
+  const { withReadAdmissionControl } = await import("../../src/lib/db");
+  const fake = makeFakePool(8);
+  const pool = withReadAdmissionControl(
+    fake as unknown as Parameters<typeof withReadAdmissionControl>[0],
+    "dev",
+  );
+  const holders = await Promise.all(
+    Array.from({ length: 8 }, () => pool.connect()),
+  );
+
+  await assert.rejects(
+    withTimeout(() => pool.connect(), 10),
+    /Query exceeded 10ms/,
+  );
+  assert.equal(mainReadLimiterSnapshot()["main:dev:read"].queued, 0);
+  assert.ok(mainReadLimiterSnapshot()["main:dev:read"].cancelled >= 1);
+
+  for (const client of holders) client.release();
+  const next = await pool.connect();
+  next.release();
+});
+
 test("the limiter is shared across module instances via globalThis", () => {
   const source = read("src/lib/main-read-limiter.ts");
   assert.match(source, /globalForLimiter\.mainReadLimiters = limiters;/);
@@ -293,6 +383,6 @@ test("the limiter is shared across module instances via globalThis", () => {
     /NODE_ENV !== "production"[\s\S]{0,120}mainReadLimiters/,
     "admission control must be shared in production too",
   );
-  // The permit must be returned in a finally block.
-  assert.match(source, /\} finally \{[\s\S]{0,240}this\.release\(\);/);
+  // The idempotent lease must be returned in a finally block.
+  assert.match(source, /\} finally \{[\s\S]{0,240}release\(\);/);
 });

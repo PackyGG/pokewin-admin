@@ -26,7 +26,13 @@ export function withQueryAbortSignal<T>(
   signal: AbortSignal,
   operation: () => Promise<T>,
 ): Promise<T> {
-  return queryDeadlineStorage.run(signal, operation);
+  const parent = queryDeadlineStorage.getStore();
+  // Safe-query wrappers can be nested (a page budget around a helper that owns
+  // a narrower leg budget). Replacing the outer signal lets the inner timeout
+  // accidentally outlive its caller. Compose them so whichever deadline fires
+  // first removes queued database work and tears down active read-only work.
+  const effectiveSignal = parent ? AbortSignal.any([parent, signal]) : signal;
+  return queryDeadlineStorage.run(effectiveSignal, operation);
 }
 
 registerQueryAbortRunner(withQueryAbortSignal);

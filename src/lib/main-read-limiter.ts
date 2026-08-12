@@ -44,6 +44,7 @@ import { currentQueryAbortSignal } from "./query-deadline";
 type Waiter = {
   resolve: () => void;
   reject: (reason: unknown) => void;
+  enqueuedAtMs: number;
   signal?: AbortSignal;
   onAbort?: () => void;
 };
@@ -51,6 +52,10 @@ type Waiter = {
 class Semaphore {
   private active = 0;
   private readonly waiters: Waiter[] = [];
+  private acquired = 0;
+  private cancelled = 0;
+  private waitedMs = 0;
+  private peakQueue = 0;
 
   constructor(private readonly permits: number) {}
 
@@ -64,23 +69,50 @@ class Semaphore {
     return this.active;
   }
 
+  get capacity(): number {
+    return this.permits;
+  }
+
+  get telemetry(): {
+    acquired: number;
+    cancelled: number;
+    waitedMs: number;
+    peakQueue: number;
+  } {
+    return {
+      acquired: this.acquired,
+      cancelled: this.cancelled,
+      waitedMs: this.waitedMs,
+      peakQueue: this.peakQueue,
+    };
+  }
+
   private async acquire(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) throw signal.reason;
     if (this.active < this.permits) {
       this.active += 1;
+      this.acquired += 1;
       return;
     }
     await new Promise<void>((resolve, reject) => {
-      const waiter: Waiter = { resolve, reject, signal };
+      const waiter: Waiter = {
+        resolve,
+        reject,
+        signal,
+        enqueuedAtMs: Date.now(),
+      };
       if (signal) {
         waiter.onAbort = () => {
           const index = this.waiters.indexOf(waiter);
           if (index !== -1) this.waiters.splice(index, 1);
+          this.cancelled += 1;
+          this.waitedMs += Date.now() - waiter.enqueuedAtMs;
           reject(signal.reason);
         };
         signal.addEventListener("abort", waiter.onAbort, { once: true });
       }
       this.waiters.push(waiter);
+      this.peakQueue = Math.max(this.peakQueue, this.waiters.length);
     });
   }
 
@@ -99,24 +131,40 @@ class Semaphore {
     }
     queueMicrotask(() => {
       if (next.signal?.aborted) {
+        this.cancelled += 1;
+        this.waitedMs += Date.now() - next.enqueuedAtMs;
         next.reject(next.signal.reason);
         // The handoff target expired during the microtask gap. Pass the same
         // permit onward (or decrement `active`) instead of stranding capacity.
         this.release();
-      } else next.resolve();
+      } else {
+        this.acquired += 1;
+        this.waitedMs += Date.now() - next.enqueuedAtMs;
+        next.resolve();
+      }
     });
   }
 
   async run<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    await this.acquire(signal);
+    const release = await this.lease(signal);
     try {
       return await operation();
     } finally {
       // MUST be in `finally`: a rejected read that never released its permit
       // would permanently shrink the limiter and eventually deadlock every
       // MAIN read in the isolate.
-      this.release();
+      release();
     }
+  }
+
+  async lease(signal?: AbortSignal): Promise<() => void> {
+    await this.acquire(signal);
+    let returned = false;
+    return () => {
+      if (returned) return;
+      returned = true;
+      this.release();
+    };
   }
 }
 
@@ -135,11 +183,37 @@ globalForLimiter.mainReadLimiters = limiters;
 
 function limiterFor(key: string, permits: number): Semaphore {
   const existing = limiters.get(key);
-  if (existing) return existing;
+  if (existing) {
+    if (existing.capacity !== permits) {
+      throw new Error(
+        `MAIN read limiter ${key} already has capacity ${existing.capacity}, not ${permits}`,
+      );
+    }
+    return existing;
+  }
   const created = new Semaphore(permits);
   limiters.set(key, created);
   return created;
 }
+
+/**
+ * Acquire a checkout-sized lease from the MAIN mirror admission limiter.
+ *
+ * Pool wrappers need the permit to outlive acquisition and remain held until
+ * `client.release()`. Returning an idempotent release function avoids the old
+ * "promise that deliberately never settles" handshake and, critically, lets
+ * a deadline rejection propagate to `pool.connect()` instead of becoming an
+ * unhandled rejection behind an unresolved admission promise.
+ */
+export function acquireDatabaseSlot(
+  key: string,
+  permits: number,
+  signal: AbortSignal | undefined = currentQueryAbortSignal(),
+): Promise<() => void> {
+  return limiterFor(key, permits).lease(signal);
+}
+
+export const acquireMainReadSlot = acquireDatabaseSlot;
 
 /**
  * Run a MAIN mirror read under process-wide admission control.
@@ -157,14 +231,31 @@ export async function withMainReadSlot<T>(
   return limiterFor(key, permits).run(operation, currentQueryAbortSignal());
 }
 
+type DatabaseLimiterMetrics = {
+  inFlight: number;
+  queued: number;
+  capacity: number;
+  acquired: number;
+  cancelled: number;
+  waitedMs: number;
+  peakQueue: number;
+};
+
 /** Safe, non-sensitive snapshot for health/telemetry surfaces. */
-export function mainReadLimiterSnapshot(): Record<
+export function databaseLimiterSnapshot(): Record<
   string,
-  { inFlight: number; queued: number }
+  DatabaseLimiterMetrics
 > {
-  const snapshot: Record<string, { inFlight: number; queued: number }> = {};
+  const snapshot: Record<string, DatabaseLimiterMetrics> = {};
   for (const [key, semaphore] of limiters) {
-    snapshot[key] = { inFlight: semaphore.inFlight, queued: semaphore.queued };
+    snapshot[key] = {
+      inFlight: semaphore.inFlight,
+      queued: semaphore.queued,
+      capacity: semaphore.capacity,
+      ...semaphore.telemetry,
+    };
   }
   return snapshot;
 }
+
+export const mainReadLimiterSnapshot = databaseLimiterSnapshot;

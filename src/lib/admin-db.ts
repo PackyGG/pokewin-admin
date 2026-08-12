@@ -1,6 +1,8 @@
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import * as adminSchema from "@/lib/db-schema/admin/schema";
+import { acquireDatabaseSlot } from "@/lib/main-read-limiter";
+import { currentQueryAbortSignal } from "@/lib/query-deadline";
 
 export type AdminDrizzleDb = NodePgDatabase<typeof adminSchema>;
 
@@ -33,6 +35,7 @@ function usingTransactionPooler(): boolean {
 
 function createPool(): Pool {
   const pooled = usingTransactionPooler();
+  const max = process.env.VERCEL ? (pooled ? 4 : 1) : 5;
   const pool = new Pool({
     // Prefer the managed runtime pooler. Keep ADMIN_DATABASE_URL pointed at
     // the direct endpoint for schema tooling.
@@ -54,7 +57,7 @@ function createPool(): Pool {
     // Sizing: 4 per instance against max_client_conn=500 tolerates ~125 warm
     // isolates, while the backend never exceeds the pooler's 20 server
     // connections out of the database's 97 usable.
-    max: process.env.VERCEL ? (pooled ? 4 : 1) : 5,
+    max,
     idleTimeoutMillis: 10_000,
     // The acquire budget MUST outlast the worst statement we permit. pg-pool
     // arms `connectionTimeoutMillis` on the QUEUE WAIT as well as on the TCP
@@ -74,6 +77,73 @@ function createPool(): Pool {
   pool.on("error", (error) => {
     console.error("[admin-db] Pool error:", error.message);
   });
+  return withAdminAdmissionControl(pool, max);
+}
+
+type ConnectCallback = (
+  error: Error | undefined,
+  client: PoolClient | undefined,
+  done: PoolClient["release"],
+) => void;
+
+/**
+ * Keep abandoned Admin reads out of pg-pool's opaque queue.
+ *
+ * PgBouncer protects PostgreSQL from client fan-out, but it does not fix the
+ * local `pg.Pool` queue: a page that times out after 15s used to leave its
+ * checkout waiting for up to 35s, after which stale work could still execute.
+ * This process-wide, deadline-aware gate keeps that queue empty. We do not
+ * destroy an active Admin checkout on abort because the same pool also carries
+ * writes; PostgreSQL's 30s statement/transaction limits remain their backstop.
+ */
+export function withAdminAdmissionControl(pool: Pool, permits: number): Pool {
+  const nativeConnect = pool.connect.bind(pool) as () => Promise<PoolClient>;
+
+  const admittedCheckout = async (): Promise<PoolClient> => {
+    const releasePermit = await acquireDatabaseSlot(
+      "admin:connection",
+      permits,
+      currentQueryAbortSignal(),
+    );
+    try {
+      const client = await nativeConnect();
+      const nativeRelease = client.release.bind(client) as (
+        ...args: unknown[]
+      ) => unknown;
+      let released = false;
+      client.release = ((...args: unknown[]) => {
+        if (released) return undefined;
+        released = true;
+        try {
+          return nativeRelease(...args);
+        } finally {
+          releasePermit();
+        }
+      }) as PoolClient["release"];
+      return client;
+    } catch (error) {
+      releasePermit();
+      throw error;
+    }
+  };
+
+  Reflect.set(pool, "connect", (...args: unknown[]) => {
+    const callback =
+      typeof args[0] === "function" ? (args[0] as ConnectCallback) : undefined;
+    const checkout = admittedCheckout();
+    if (!callback) return checkout;
+    void checkout.then(
+      (client) => callback(undefined, client, client.release),
+      (error: unknown) =>
+        callback(
+          error instanceof Error ? error : new Error(String(error)),
+          undefined,
+          () => {},
+        ),
+    );
+    return undefined;
+  });
+
   return pool;
 }
 

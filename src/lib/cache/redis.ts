@@ -1,6 +1,8 @@
 import "server-only";
 
 import { Redis } from "@upstash/redis";
+import { singleFlight } from "./single-flight";
+import { staleWhileRevalidate } from "./stale-while-revalidate";
 
 /**
  * Upstash-backed shared cache primitive — DORMANT BY DEFAULT.
@@ -48,20 +50,127 @@ let resolvedClient: Redis | null | undefined;
 /** Redis is an accelerator; it must never consume a page's database budget. */
 const REDIS_OPERATION_TIMEOUT_MS = 1_000;
 
-async function withRedisDeadline<T>(operation: Promise<T>): Promise<T> {
+const REDIS_BREAKER_FAILURE_THRESHOLD = 2;
+const REDIS_BREAKER_BASE_COOLDOWN_MS = 5_000;
+const REDIS_BREAKER_MAX_COOLDOWN_MS = 60_000;
+
+type RedisCircuitState = {
+  consecutiveFailures: number;
+  openUntilMs: number;
+  probeInFlight: boolean;
+  calls: number;
+  failures: number;
+  shortCircuits: number;
+  timeouts: number;
+};
+
+const globalForRedisCircuit = globalThis as unknown as {
+  adminRedisCircuit?: RedisCircuitState;
+};
+const redisCircuit: RedisCircuitState =
+  globalForRedisCircuit.adminRedisCircuit ??
+  (globalForRedisCircuit.adminRedisCircuit = {
+    consecutiveFailures: 0,
+    openUntilMs: 0,
+    probeInFlight: false,
+    calls: 0,
+    failures: 0,
+    shortCircuits: 0,
+    timeouts: 0,
+  });
+
+class RedisCircuitOpenError extends Error {
+  constructor() {
+    super("Redis cache circuit is open");
+    this.name = "RedisCircuitOpenError";
+  }
+}
+
+class RedisOperationTimeoutError extends Error {
+  constructor(operation: string) {
+    super(`Redis cache ${operation} timed out`);
+    this.name = "RedisOperationTimeoutError";
+  }
+}
+
+async function withRedisDeadline<T>(
+  operationName: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const now = Date.now();
+  if (redisCircuit.openUntilMs > now || redisCircuit.probeInFlight) {
+    redisCircuit.shortCircuits += 1;
+    throw new RedisCircuitOpenError();
+  }
+
+  const isProbe =
+    redisCircuit.consecutiveFailures >= REDIS_BREAKER_FAILURE_THRESHOLD;
+  if (isProbe) redisCircuit.probeInFlight = true;
+  redisCircuit.calls += 1;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(
-      () => reject(new Error("Redis cache operation timed out")),
+      () => reject(new RedisOperationTimeoutError(operationName)),
       REDIS_OPERATION_TIMEOUT_MS,
     );
     timer.unref?.();
   });
   try {
-    return await Promise.race([operation, timeout]);
+    const result = await Promise.race([operation(), timeout]);
+    redisCircuit.consecutiveFailures = 0;
+    redisCircuit.openUntilMs = 0;
+    return result;
+  } catch (error) {
+    redisCircuit.failures += 1;
+    redisCircuit.consecutiveFailures += 1;
+    if (error instanceof RedisOperationTimeoutError) redisCircuit.timeouts += 1;
+    if (redisCircuit.consecutiveFailures >= REDIS_BREAKER_FAILURE_THRESHOLD) {
+      const exponent = Math.min(
+        4,
+        redisCircuit.consecutiveFailures - REDIS_BREAKER_FAILURE_THRESHOLD,
+      );
+      redisCircuit.openUntilMs =
+        Date.now() +
+        Math.min(
+          REDIS_BREAKER_MAX_COOLDOWN_MS,
+          REDIS_BREAKER_BASE_COOLDOWN_MS * 2 ** exponent,
+        );
+    }
+    throw error;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (isProbe) redisCircuit.probeInFlight = false;
   }
+}
+
+/** Non-sensitive process-local cache health for diagnostics. */
+export function redisCacheSnapshot(): {
+  state: "closed" | "open" | "half-open";
+  consecutiveFailures: number;
+  cooldownRemainingMs: number;
+  calls: number;
+  failures: number;
+  shortCircuits: number;
+  timeouts: number;
+} {
+  const cooldownRemainingMs = Math.max(
+    0,
+    redisCircuit.openUntilMs - Date.now(),
+  );
+  return {
+    state:
+      cooldownRemainingMs > 0
+        ? "open"
+        : redisCircuit.probeInFlight
+          ? "half-open"
+          : "closed",
+    consecutiveFailures: redisCircuit.consecutiveFailures,
+    cooldownRemainingMs,
+    calls: redisCircuit.calls,
+    failures: redisCircuit.failures,
+    shortCircuits: redisCircuit.shortCircuits,
+    timeouts: redisCircuit.timeouts,
+  };
 }
 
 /**
@@ -116,7 +225,7 @@ export function hashString(s: string): string {
   let hash = 5381;
   for (let i = 0; i < s.length; i++) {
     // hash * 33 + charCode, kept in 32-bit unsigned range via `>>> 0`.
-    hash = (((hash << 5) + hash) + s.charCodeAt(i)) >>> 0;
+    hash = ((hash << 5) + hash + s.charCodeAt(i)) >>> 0;
   }
   return hash.toString(36);
 }
@@ -151,12 +260,9 @@ export function buildCacheKey(
  * `BackendApiError`) and is intentionally propagated so existing
  * degrade-on-backend-error logic at the call site keeps working unchanged.
  *
- * SINGLE-FLIGHT NOTE: this is a plain get-or-set with no in-flight
- * de-duplication, so a burst of concurrent misses for the same key can each
- * compute `fn()` once (a brief thundering-herd) before the value is cached.
- * That is acceptable for v1 — the wrapped work already tolerates concurrency
- * (its own bounded fan-out + 429 retry), and TTLs are short. A future version
- * could add a promise map or a short SET-NX lock if herd pressure shows up.
+ * Concurrent misses for one key are single-flighted per warm instance. This
+ * collapses both duplicate Upstash GETs and duplicate upstream/database fills
+ * without pinning a fulfilled or rejected result in process memory.
  */
 export async function cacheGetOrSet<T>(
   key: string,
@@ -169,63 +275,41 @@ export async function cacheGetOrSet<T>(
     return fn();
   }
 
-  // Best-effort read. Any Redis error here is swallowed so we degrade to
-  // computing fresh — a cache GET failure must never surface to the caller.
-  try {
-    const hit = await withRedisDeadline(r.get<T>(key));
-    if (hit !== null && hit !== undefined) return hit;
-  } catch {
-    // Fall through to compute fresh below.
-  }
+  return singleFlight(`redis:get-or-set:${key}`, async () => {
+    // Best-effort read. Any Redis error here is swallowed so we degrade to
+    // computing fresh — a cache GET failure must never surface to the caller.
+    try {
+      const hit = await withRedisDeadline("GET", () => r.get<T>(key));
+      if (hit !== null && hit !== undefined) return hit;
+    } catch {
+      // Fall through to compute fresh below.
+    }
 
-  // Compute fresh. NOTE: `fn()` errors are NOT caught here — they belong to
-  // the caller and must propagate so existing call-site degrade logic runs.
-  const fresh = await fn();
+    // Compute fresh. NOTE: `fn()` errors are NOT caught here — they belong to
+    // the caller and must propagate so existing call-site degrade logic runs.
+    const fresh = await fn();
 
-  // Best-effort write. A failed SET must not affect the returned value.
-  try {
-    await withRedisDeadline(r.set(key, fresh, { ex: ttlSeconds }));
-  } catch {
-    // Ignore — the fresh value is already computed and returned below.
-  }
+    // Best-effort write. A failed SET must not affect the returned value.
+    try {
+      await withRedisDeadline("SET", () =>
+        r.set(key, fresh, { ex: ttlSeconds }),
+      );
+    } catch {
+      // Ignore — the fresh value is already computed and returned below.
+    }
 
-  return fresh;
+    return fresh;
+  });
 }
-
-type StaleCacheEntry<T> = {
-  value: T;
-  refreshedAtMs: number;
-};
-
-const staleRefreshes = new Map<string, Promise<unknown>>();
-
-/**
- * How long a caller will wait on a refresh it triggered when a retained value
- * is already in hand. Past this, the retained value is served and the refresh
- * keeps running so the NEXT reader gets the new one.
- *
- * Waiting out a full refresh is only correct when there is nothing to show. The
- * dashboard's KPI aggregate takes ~8s when its inner caches are cold, and the
- * entry is soft-expired for most of the interval between warm crons — so
- * awaiting it made every reader pay the slow path, and any wrapper timing out
- * below that cost blanked the tiles even though a perfectly good snapshot was
- * sitting in Redis.
- *
- * Deliberately NOT fire-and-forget: the refresh promise is memoised in
- * `staleRefreshes`, so if this isolate is frozen before it finishes, the next
- * request simply starts a new one. Nothing depends on background work
- * surviving the response.
- */
-const STALE_REFRESH_GRACE_MS = 1_500;
 
 /**
  * Read-through cache with a last-known-good fallback.
  *
  * Values remain fresh for `freshSeconds` and are retained for
- * `staleSeconds`. Once soft-expired, one caller refreshes the value — serving
- * the retained value if that refresh outruns {@link STALE_REFRESH_GRACE_MS}. If
- * the upstream read fails, the retained value is returned instead of turning a
- * brief backend/database incident into an empty page.
+ * `staleSeconds`. Once soft-expired, one caller refreshes the value in the
+ * background and every reader immediately receives the retained snapshot. If
+ * the upstream read fails, the retained value is preserved instead of turning
+ * a brief backend/database incident into an empty page.
  */
 export async function cacheGetOrSetStale<T>(
   key: string,
@@ -240,89 +324,21 @@ export async function cacheGetOrSetStale<T>(
   const r = getRedis();
   if (!r) return fn();
 
-  let retained: StaleCacheEntry<T> | null = null;
-  try {
-    const cached = await withRedisDeadline(r.get<StaleCacheEntry<T>>(key));
-    if (
-      cached &&
-      typeof cached === "object" &&
-      typeof cached.refreshedAtMs === "number" &&
-      "value" in cached
-    ) {
-      retained = cached;
-      if (Date.now() - cached.refreshedAtMs < freshSeconds * 1000) {
-        return cached.value;
-      }
-    }
-  } catch {
-    return fn();
-  }
-
-  const existing = staleRefreshes.get(key) as Promise<T> | undefined;
-  if (existing) return serveWithGrace(existing, retained);
-
-  const refresh = (async () => {
-    try {
-      const value = await fn();
-      const entry: StaleCacheEntry<T> = {
-        value,
-        refreshedAtMs: Date.now(),
-      };
-      try {
-        await withRedisDeadline(r.set(key, entry, { ex: staleSeconds }));
-      } catch {
-        // The fresh upstream result is still valid.
-      }
-      return value;
-    } catch (error) {
-      if (retained) {
-        console.warn(
-          `[cache] serving retained value after refresh failure key=${key}`,
-          error,
-        );
-        return retained.value;
-      }
-      throw error;
-    }
-  })();
-
-  staleRefreshes.set(key, refresh);
-  // The memo entry is cleared by the refresh itself, not by whoever happens to
-  // be awaiting it — a caller that gives up early must still leave the in-flight
-  // refresh discoverable for the readers behind it.
-  void refresh
-    .catch(() => undefined)
-    .finally(() => {
-      if (staleRefreshes.get(key) === refresh) staleRefreshes.delete(key);
-    });
-
-  return serveWithGrace(refresh, retained);
-}
-
-/**
- * Wait on an in-flight refresh only as long as {@link STALE_REFRESH_GRACE_MS},
- * and only when there is nothing to serve in the meantime. With a retained
- * value in hand, a slow refresh must never hold up the reader.
- */
-async function serveWithGrace<T>(
-  refresh: Promise<T>,
-  retained: StaleCacheEntry<T> | null,
-): Promise<T> {
-  if (!retained) return refresh;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const grace = new Promise<StaleCacheEntry<T>>((resolve) => {
-    timer = setTimeout(() => resolve(retained), STALE_REFRESH_GRACE_MS);
-    timer.unref?.();
-  });
-  try {
-    const winner = await Promise.race([
-      refresh.then((value) => ({ value, refreshedAtMs: Date.now() })),
-      grace,
-    ]);
-    return winner.value;
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
+  return staleWhileRevalidate(
+    `redis:stale-read:${key}`,
+    freshSeconds,
+    {
+      read: () =>
+        withRedisDeadline("GET", () =>
+          r.get<{ value: T; refreshedAtMs: number }>(key),
+        ),
+      write: (entry) =>
+        withRedisDeadline("SET", () =>
+          r.set(key, entry, { ex: staleSeconds }).then(() => undefined),
+        ),
+    },
+    fn,
+  );
 }
 
 export type RateLimitResult = {
@@ -339,7 +355,7 @@ export type RateLimitResult = {
 };
 
 /**
- * Fixed-window rate limiter (Upstash INCR + EXPIRE).
+ * Atomic fixed-window rate limiter (one Upstash Lua round trip).
  *
  * GRACEFUL DEGRADE (same contract as the rest of this module): when Redis is
  * dormant OR any Redis call throws, this FAILS OPEN — it returns `allowed:true`
@@ -371,14 +387,16 @@ export async function rateLimit(
   }
 
   try {
-    const count = await withRedisDeadline(r.incr(key));
-    // First hit in this window: start the TTL. (If EXPIRE races/fails the key
-    // simply persists; a stuck counter would only over-restrict, but the
-    // catch below fails open on any throw.)
-    if (count === 1) {
-      await withRedisDeadline(r.expire(key, windowSeconds));
-    }
-    const ttl = await withRedisDeadline(r.ttl(key));
+    // One atomic server-side operation replaces INCR + conditional EXPIRE +
+    // TTL (two or three REST round trips). Atomicity also closes the crash gap
+    // where INCR succeeded but EXPIRE never ran, leaving a permanent counter.
+    const [count, ttl] = await withRedisDeadline("RATE_LIMIT", () =>
+      r.eval<[string], [number, number]>(
+        "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]) end; return {n,redis.call('TTL',KEYS[1])}",
+        [key],
+        [String(windowSeconds)],
+      ),
+    );
     return {
       allowed: count <= limit,
       limit,
@@ -407,7 +425,7 @@ export async function cacheInvalidate(key: string): Promise<void> {
   const r = getRedis();
   if (!r) return;
   try {
-    await withRedisDeadline(r.del(key));
+    await withRedisDeadline("DEL", () => r.del(key));
   } catch {
     // Ignore — invalidation is best-effort.
   }

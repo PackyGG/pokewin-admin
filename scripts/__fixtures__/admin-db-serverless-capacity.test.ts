@@ -24,7 +24,7 @@ test("serverless Admin pool concurrency is conditional on the transaction pooler
   // Direct path: still exactly one session per warm instance.
   assert.match(
     source,
-    /max: process\.env\.VERCEL \? \(pooled \? 4 : 1\) : 5/,
+    /const max = process\.env\.VERCEL \? \(pooled \? 4 : 1\) : 5/,
     "the direct serverless path must remain capped at a single session",
   );
 
@@ -40,6 +40,15 @@ test("serverless Admin pool concurrency is conditional on the transaction pooler
     /const pooled = usingTransactionPooler\(\);/,
     "the pool size must be derived from the detected pooler, not hardcoded",
   );
+});
+
+test("Admin pg-pool queue is deadline-aware in front of PgBouncer", () => {
+  const source = readFileSync("src/lib/admin-db.ts", "utf8");
+  assert.match(source, /return withAdminAdmissionControl\(pool, max\)/);
+  assert.match(source, /acquireDatabaseSlot\(/);
+  assert.match(source, /currentQueryAbortSignal\(\)/);
+  assert.match(source, /Reflect\.set\(pool, "connect"/);
+  assert.doesNotMatch(source, /Reflect\.set\(pool, "query"/);
 });
 
 test("the Admin pool and Drizzle client are process-global in production", () => {

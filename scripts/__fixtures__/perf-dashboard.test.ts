@@ -25,7 +25,10 @@ test("the today/24h KPI path does not run the discarded snapshot aggregates", ()
   // "Live wager data is retrying automatically" and the GGR section vanished.
   assert.match(dashboard, /includeSnapshotMetrics\?: boolean;/);
   assert.match(dashboard, /includeSnapshotMetrics: false,/);
-  assert.match(dashboard, /const includeSnapshots = config\.includeSnapshotMetrics \?\? true;/);
+  assert.match(
+    dashboard,
+    /const includeSnapshots = config\.includeSnapshotMetrics \?\? true;/,
+  );
 
   for (const leg of [
     "cachedUserCounts",
@@ -55,18 +58,36 @@ test("the narrowed KPI return cannot expose a field the skipped legs fed", () =>
   const body = dashboard.slice(start, dashboard.indexOf("\n);", start));
   // Only the five consumed fields (plus the two compute-metadata primitives)
   // may leave this path; anything else would be a zeroed snapshot field.
-  for (const field of ["users:", "financials:", "activity:", "realizedPnlPeriod,"]) {
+  for (const field of [
+    "users:",
+    "financials:",
+    "activity:",
+    "realizedPnlPeriod,",
+  ]) {
     assert.ok(
       !body.includes(field),
       `getDashboardKpiStats must not return ${field} on the lean path`,
     );
   }
-  for (const field of ["ggr:", "wagers:", "wagersBreakdown:", "wagersOrganic:"]) {
-    assert.ok(body.includes(field), `getDashboardKpiStats must still return ${field}`);
+  for (const field of [
+    "ggr:",
+    "wagers:",
+    "wagersBreakdown:",
+    "wagersOrganic:",
+  ]) {
+    assert.ok(
+      body.includes(field),
+      `getDashboardKpiStats must still return ${field}`,
+    );
   }
   // The chip-enum path keeps the FULL payload — the lean flag is opt-in.
-  const chipStart = dashboard.indexOf("export const getDashboardStats = cache(");
-  const chipBody = dashboard.slice(chipStart, dashboard.indexOf("\n});", chipStart));
+  const chipStart = dashboard.indexOf(
+    "export const getDashboardStats = cache(",
+  );
+  const chipBody = dashboard.slice(
+    chipStart,
+    dashboard.indexOf("\n});", chipStart),
+  );
   assert.ok(!chipBody.includes("includeSnapshotMetrics"));
 });
 
@@ -75,7 +96,9 @@ test("the KPI GGR breakdown reuses a cache instead of re-running the gaming legs
   // headline beside it reaches the same legs through `cachedKpiWindowMetrics`.
   // Uncached, both legs of one payload build ran that fan-out concurrently.
   assert.match(dashboard, /const cachedKpiGgrBreakdown = unstable_cache\(/);
-  const start = dashboard.indexOf("export async function getGgrBreakdownForKpiWindow");
+  const start = dashboard.indexOf(
+    "export async function getGgrBreakdownForKpiWindow",
+  );
   const body = dashboard.slice(start, dashboard.indexOf("\n}", start));
   assert.match(body, /cachedKpiGgrBreakdown\(/);
   assert.match(
@@ -97,16 +120,25 @@ test("the KPI GGR breakdown reuses a cache instead of re-running the gaming legs
 test("dashboard metric caches preserve DB environment isolation", () => {
   // Cookie lookup inside unstable_cache can fall back to prod because the
   // callback is detached from the request. Dev-toggled reads must bypass it.
-  assert.match(dashboard, /if \(env !== "prod"\) \{[\s\S]{0,140}windowMetricsForPeriodInner/);
+  assert.match(
+    dashboard,
+    /if \(env !== "prod"\) \{[\s\S]{0,140}windowMetricsForPeriodInner/,
+  );
   assert.match(dashboard, /env === "prod"[\s\S]{0,120}cachedKpiWindowMetrics/);
-  assert.match(dashboard, /await readDbEnv\(\)[\s\S]{0,100}!== "prod"[\s\S]{0,100}ggrBreakdownForWindow/);
+  assert.match(
+    dashboard,
+    /await readDbEnv\(\)[\s\S]{0,100}!== "prod"[\s\S]{0,100}ggrBreakdownForWindow/,
+  );
 });
 
 test("rolling KPI caches use a reusable minute-bucket cutoff", () => {
   const period = read("src/lib/queries/dashboard-period.ts");
   assert.match(period, /export function kpiWindowToCacheCutoff\(/);
   assert.match(period, /Math\.floor\(now\.getTime\(\) \/ 60_000\) \* 60_000/);
-  assert.match(dashboard, /const cutoff = kpiWindowToCacheCutoff\(window, now\);/);
+  assert.match(
+    dashboard,
+    /const cutoff = kpiWindowToCacheCutoff\(window, now\);/,
+  );
   for (const file of [
     "src/lib/queries/dashboard-cashflow-pg.ts",
     "src/lib/queries/dashboard-fiat.ts",
@@ -118,14 +150,32 @@ test("rolling KPI caches use a reusable minute-bucket cutoff", () => {
 
 test("every dashboard Redis operation has a fail-open deadline", () => {
   assert.match(redis, /const REDIS_OPERATION_TIMEOUT_MS = /);
-  for (const operation of ["get", "set", "incr", "expire", "ttl", "del"]) {
+  for (const operation of ["get", "set", "eval", "del"]) {
     assert.match(
       redis,
-      new RegExp(`withRedisDeadline\\(r\\.${operation}(?:<[^>]+>)?\\(`),
+      new RegExp(
+        `withRedisDeadline\\(["'][A-Z_]+["'],\\s*\\(\\) =>\\s*r\\.${operation}(?:<[^>]+>)?\\(`,
+      ),
       `Redis ${operation.toUpperCase()} must be deadline bounded`,
     );
   }
-  assert.doesNotMatch(redis, /await r\.(?:get|set|incr|expire|ttl|del)\(/);
+  assert.doesNotMatch(redis, /await r\.(?:get|set|eval|del)\(/);
+});
+
+test("Redis misses are coalesced and outages are circuit-broken", () => {
+  assert.match(redis, /singleFlight\(`redis:get-or-set:\$\{key\}`/);
+  assert.match(redis, /staleWhileRevalidate\(/);
+  assert.match(redis, /const REDIS_BREAKER_FAILURE_THRESHOLD = 2/);
+  assert.match(redis, /redisCircuit\.openUntilMs > now/);
+  assert.match(redis, /export function redisCacheSnapshot/);
+});
+
+test("Redis rate limiting is atomic and takes one REST round trip", () => {
+  assert.match(redis, /r\.eval<\[string\], \[number, number\]>/);
+  assert.match(redis, /redis\.call\('INCR'/);
+  assert.match(redis, /redis\.call\('EXPIRE'/);
+  assert.match(redis, /redis\.call\('TTL'/);
+  assert.doesNotMatch(redis, /r\.incr\(|r\.expire\(|r\.ttl\(/);
 });
 
 test("the fiat metrics memo keys on a resolved cutoff, never on a Date argument", () => {

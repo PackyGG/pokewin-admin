@@ -3,7 +3,8 @@ import { Pool, type PoolClient } from "pg";
 
 import * as mainSchema from "./db-schema/main/schema";
 import { readDbEnv, type DbEnv } from "./db-env";
-import { withMainReadSlot } from "./main-read-limiter";
+import { acquireMainReadSlot } from "./main-read-limiter";
+import { currentQueryAbortSignal } from "./query-deadline";
 
 /**
  * Mirror pool size. Kept as a named constant because the read admission
@@ -204,31 +205,26 @@ export function withReadAdmissionControl(
   // rather than on acquisition — otherwise a caller would hold a pool slot
   // without holding a permit and the pool would start queueing again.
   const admittedCheckout = async (): Promise<PoolClient> => {
-    let releasePermit: (() => void) | undefined;
+    const signal = currentQueryAbortSignal();
+    const releasePermit = await acquireMainReadSlot(key, permits, signal);
     let permitReturned = false;
     const returnPermit = () => {
       if (permitReturned) return;
       permitReturned = true;
-      releasePermit?.();
+      releasePermit();
     };
-    await new Promise<void>((admitted) => {
-      void withMainReadSlot(key, permits, () => {
-        admitted();
-        return new Promise<void>((done) => {
-          releasePermit = done;
-        });
-      });
-    });
     try {
       const client = await nativeConnect();
       const nativeRelease = client.release.bind(client) as (
         ...a: unknown[]
       ) => unknown;
       let released = false;
+      const onAbort = () => releaseClient(true);
       const releaseClient = (...releaseArgs: unknown[]) => {
         if (released) return undefined;
         released = true;
         clearTimeout(watchdog);
+        signal?.removeEventListener("abort", onAbort);
         try {
           return nativeRelease(...releaseArgs);
         } finally {
@@ -242,6 +238,16 @@ export function withReadAdmissionControl(
       const watchdog = setTimeout(() => releaseClient(true), watchdogMs);
       watchdog.unref?.();
       client.release = releaseClient as PoolClient["release"];
+      // Once a page-level deadline fires, sever an already-running mirror
+      // checkout instead of letting abandoned SQL occupy one of the scarce
+      // role sessions until PostgreSQL's broader statement timeout. Closing a
+      // read-only client asks Postgres to cancel its active statement and keeps
+      // pool capacity aligned with the admission permit.
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) {
+        releaseClient(true);
+        throw signal.reason;
+      }
       return client;
     } catch (error) {
       // Never leak the permit when the checkout itself fails.
