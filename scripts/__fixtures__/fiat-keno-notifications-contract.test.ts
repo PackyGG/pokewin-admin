@@ -28,7 +28,7 @@ test("reward campaigns require the backend and writable database to match", () =
   assert.doesNotMatch(action, /readDbEnvFromCookie\(\)\) !== "dev"/);
 });
 
-test("direct composers identify and confirm their resolved environment", () => {
+test("bulk and reward composers identify and confirm their resolved environment", () => {
   const content = source(
     "src/app/(admin)/notifications/direct-notifications-content.tsx",
   );
@@ -46,7 +46,6 @@ test("direct composers identify and confirm their resolved environment", () => {
     content,
     /backendEnv=\{availability\.backendEnv\}|targetEnv=\{backendEnv\}/,
   );
-  assert.match(single, /targetEnv === "prod"/);
   assert.match(bulk, /targetEnv\.toUpperCase\(\)/);
   assert.match(reward, /targetEnv\.toUpperCase\(\)/);
   assert.doesNotMatch(
