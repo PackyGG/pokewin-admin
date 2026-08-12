@@ -227,7 +227,10 @@ export async function persistAbstractCatchallContainment(
     );
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK");
+    // Swallow only the ROLLBACK's own failure: on a broken connection it
+    // throws, and an unguarded rollback would replace the error that actually
+    // aborted the transaction. No logger is in scope in this free function.
+    await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
     client.release();
@@ -399,7 +402,7 @@ export async function persistRuleMatch(
     await client.query("COMMIT");
     return nextScore;
   } catch (error) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
     client.release();
@@ -1094,7 +1097,15 @@ export class MonitorEngine {
       );
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      // The usual reason a transaction aborts is a dead connection, and on a
+      // dead connection the ROLLBACK throws too. Unguarded, that rejection
+      // replaces the original error, so the real cause never reaches the log.
+      await client.query("ROLLBACK").catch((rollbackError: unknown) =>
+        this.log.warn(
+          { err: this.safeError(rollbackError) },
+          "Antifraud monitor transaction rollback failed",
+        ),
+      );
       throw error;
     } finally {
       client.release();
@@ -1424,7 +1435,12 @@ export class MonitorEngine {
       );
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch((rollbackError: unknown) =>
+        this.log.warn(
+          { err: this.safeError(rollbackError) },
+          "Antifraud monitor transaction rollback failed",
+        ),
+      );
       throw error;
     } finally {
       client.release();
@@ -1738,7 +1754,12 @@ export class MonitorEngine {
       await this.advanceSignupCursor(client, signup);
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch((rollbackError: unknown) =>
+        this.log.warn(
+          { err: this.safeError(rollbackError) },
+          "Antifraud monitor transaction rollback failed",
+        ),
+      );
       throw error;
     } finally {
       client.release();
@@ -1833,7 +1854,14 @@ export class MonitorEngine {
       `,
     );
 
+    // Concurrent for the same reason as the rule alerts below: every enqueue
+    // carries a five-second timeout, and a serial drain of a cold batch during
+    // an ingest outage burns that timeout row by row until the circuit latches
+    // — enough, across all phases of one tick, to spend the poller's liveness
+    // budget and have the health check cycle the container. `user_id` is the
+    // outbox primary key, so no two rows in the batch touch the same record.
     await drainOutbox<PendingAlert>({
+      concurrent: true,
       fetchPending: async () => pending.rows,
       attemptCount: (alert) => alert.attempt_count,
       attempt: async (alert) => {
@@ -2105,7 +2133,12 @@ export class MonitorEngine {
       );
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch((rollbackError: unknown) =>
+        this.log.warn(
+          { err: this.safeError(rollbackError) },
+          "Antifraud monitor transaction rollback failed",
+        ),
+      );
       throw error;
     } finally {
       client.release();
@@ -2134,7 +2167,12 @@ export class MonitorEngine {
       `,
     );
 
+    // Concurrent: `source_ref` is the outbox primary key, so the fetched rows
+    // are distinct records, and a serial drain would spend one five-second
+    // enqueue timeout per row of a cold batch out of the poller's liveness
+    // budget during an ingest outage.
     await drainOutbox<PendingAlert>({
+      concurrent: true,
       fetchPending: async () => pending.rows,
       attemptCount: (alert) => alert.attempt_count,
       attempt: async (alert) => ({
@@ -2357,7 +2395,12 @@ export class MonitorEngine {
         return;
       }
     } catch (deadLetterError) {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch((rollbackError: unknown) =>
+        this.log.warn(
+          { err: this.safeError(rollbackError) },
+          "Antifraud monitor transaction rollback failed",
+        ),
+      );
       throw deadLetterError;
     } finally {
       client.release();
@@ -2942,7 +2985,12 @@ export class MonitorEngine {
       }
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch((rollbackError: unknown) =>
+        this.log.warn(
+          { err: this.safeError(rollbackError) },
+          "Antifraud monitor transaction rollback failed",
+        ),
+      );
       throw error;
     } finally {
       client.release();
@@ -3165,7 +3213,12 @@ export class MonitorEngine {
       }
       await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch((rollbackError: unknown) =>
+        this.log.warn(
+          { err: this.safeError(rollbackError) },
+          "Antifraud monitor transaction rollback failed",
+        ),
+      );
       throw error;
     } finally {
       client.release();

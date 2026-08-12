@@ -40,6 +40,19 @@ export async function queryDecodedRows<T>(
   return decodePostgresRows(result.rows, decoder);
 }
 
+/**
+ * Backoff before the single connection retry these helpers allow.
+ *
+ * These reads run inside wide `Promise.all` fan-outs (a dashboard leg set is
+ * 13 queries). The old `delayMs: 0` made every leg reconnect in the same tick
+ * a mirror blip knocked them all out, so N legs became 2N connection attempts
+ * against a tiny pool at exactly the moment it was least able to serve them.
+ * A jittered pause spreads the second attempts out instead.
+ */
+function mainReadRetryDelayMs(): number {
+  return 100 + Math.floor(Math.random() * 200);
+}
+
 /** Request-scoped MAIN read for modules that keep SQL in `$n` form. */
 export async function queryMainRows<T extends Record<string, unknown>[]>(
   query: string,
@@ -47,7 +60,7 @@ export async function queryMainRows<T extends Record<string, unknown>[]>(
 ): Promise<T> {
   return withTransientPostgresReadRetry(
     async () => queryRows<T>(await getReadDrizzleDb(), query, ...values),
-    { context: "main.read", delayMs: 0 },
+    { context: "main.read", delayMs: mainReadRetryDelayMs() },
   );
 }
 
@@ -59,7 +72,7 @@ export async function queryMainDecodedRows<T>(
   return withTransientPostgresReadRetry(
     async () =>
       queryDecodedRows(await getReadDrizzleDb(), query, values, decoder),
-    { context: "main.read.decoded", delayMs: 0 },
+    { context: "main.read.decoded", delayMs: mainReadRetryDelayMs() },
   );
 }
 

@@ -256,12 +256,12 @@ async function computeAntifraudOverviewBase(
         .selectDistinct({ userId: antifraud_reviews.target_user_id })
         .from(antifraud_reviews)
         .where(eq(antifraud_reviews.status, "flagged")),
+      // Only the user id is consumed (it becomes the `unresolvedScope` array
+      // parameter below). Selecting `id` and the `signals` text[] alongside it
+      // dragged an unbounded array column across the wire for every live
+      // review and was never read.
       adminDrizzle
-        .select({
-          id: antifraud_reviews.id,
-          userId: antifraud_reviews.target_user_id,
-          signals: antifraud_reviews.signals,
-        })
+        .select({ userId: antifraud_reviews.target_user_id })
         .from(antifraud_reviews)
         .where(inArray(antifraud_reviews.status, [...LIVE_REVIEW_STATUSES])),
       adminDrizzle.execute<{ bucket: string; caught: string }>(sql`
@@ -514,40 +514,57 @@ async function computeAntifraudOverviewBase(
       ORDER BY days.bucket
     `),
     db.execute<MainFeedRow>(sql`
-      WITH succeeded_events AS (
+      -- DEDUPLICATE FIRST, THEN RESOLVE. DISTINCT ON is applied AFTER the
+      -- joins, so keeping the intent LATERAL in the same SELECT ran its
+      -- three-way OR probe once per raw webhook event — and Whop emits several
+      -- events per payment (retries, status transitions). Splitting the winner
+      -- selection into its own CTE runs the probe once per DISTINCT payment
+      -- instead. Same winner row, same columns, same ordering: neither join
+      -- can multiply rows (the LATERAL is LIMIT 1, the user join is on its PK),
+      -- so DISTINCT ON picks exactly what it picked before.
+      WITH provider_paid AS (
         SELECT DISTINCT ON (pwe.payload #>> '{data,id}')
-          'fiat:' || (pwe.payload #>> '{data,id}') AS id,
-          'fiat_deposit'::text AS kind,
-          intent.user_id,
-          u.username,
+          pwe.payload #>> '{data,id}' AS payment_id,
+          pwe.provider_resource_id,
+          pwe.payload #>> '{data,metadata,deposit_intent_id}'
+            AS metadata_intent_id,
           (pwe.payload #>> '{data,paid_at}')::timestamptz AS occurred_at,
           CASE
             WHEN pwe.payload #>> '{data,usd_total}'
               ~ '^[0-9]+([.][0-9]+)?$'
             THEN ROUND((pwe.payload #>> '{data,usd_total}')::numeric * 100)
             ELSE NULL
-          END::text AS amount_cents,
-          'Completed Whop payment'::text AS detail
+          END::text AS amount_cents
         FROM payment_webhook_events pwe
-        LEFT JOIN LATERAL (
-          SELECT i.user_id
-          FROM fiat_deposit_intents i
-          WHERE i.provider = 'whop'
-            AND (
-              i.provider_payment_id = pwe.payload #>> '{data,id}'
-              OR i.provider_payment_id = pwe.provider_resource_id
-              OR i.id::text =
-                pwe.payload #>> '{data,metadata,deposit_intent_id}'
-            )
-          ORDER BY i.updated_at DESC
-          LIMIT 1
-        ) intent ON TRUE
-        LEFT JOIN "user" u ON u.id = intent.user_id
         WHERE pwe.provider = 'whop'
           AND pwe.event_type = 'payment.succeeded'
           AND pwe.payload #>> '{data,status}' = 'paid'
           AND pwe.received_at >= now() - interval '30 days'
         ORDER BY pwe.payload #>> '{data,id}', pwe.received_at DESC, pwe.id DESC
+      ),
+      succeeded_events AS (
+        SELECT
+          'fiat:' || paid.payment_id AS id,
+          'fiat_deposit'::text AS kind,
+          intent.user_id,
+          u.username,
+          paid.occurred_at,
+          paid.amount_cents,
+          'Completed Whop payment'::text AS detail
+        FROM provider_paid paid
+        LEFT JOIN LATERAL (
+          SELECT i.user_id
+          FROM fiat_deposit_intents i
+          WHERE i.provider = 'whop'
+            AND (
+              i.provider_payment_id = paid.payment_id
+              OR i.provider_payment_id = paid.provider_resource_id
+              OR i.id::text = paid.metadata_intent_id
+            )
+          ORDER BY i.updated_at DESC
+          LIMIT 1
+        ) intent ON TRUE
+        LEFT JOIN "user" u ON u.id = intent.user_id
       ),
       operations AS (
         SELECT

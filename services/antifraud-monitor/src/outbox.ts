@@ -67,7 +67,18 @@ export async function drainOutbox<Row>(
     let result: OutboxAttemptResult;
     try {
       result = await config.attempt(row);
-    } catch {
+    } catch (error) {
+      // The throw must not escape — record() has to run — but dropping the
+      // diagnostic with it made a permanent failure (a payload-builder
+      // TypeError, a provider 400 on an over-length embed) look exactly like
+      // a transient blip: same `{ delivered: false }`, same backoff, retried
+      // forever with nothing in the logs to say why.
+      console.error("[outbox] delivery attempt threw", {
+        error:
+          error instanceof Error
+            ? (error.stack ?? `${error.name}: ${error.message}`)
+            : String(error),
+      });
       result = { delivered: false };
     }
     const attempted = result.attempted !== false;

@@ -14,11 +14,22 @@ export async function runWithConcurrency<
   const limit = Math.max(1, Math.floor(concurrency));
   const results: unknown[] = new Array(tasks.length);
   let nextIndex = 0;
+  // `Promise.all` rejects on the first failure, but the sibling workers used to
+  // keep pulling tasks afterwards. Those queries then ran to completion — or to
+  // the 30s statement_timeout — holding scarce pool slots for a result the
+  // caller had already thrown away, which is exactly when the pool is most
+  // contended. Stop handing out work once the batch is doomed.
+  let failed = false;
 
   async function worker() {
-    while (nextIndex < tasks.length) {
+    while (!failed && nextIndex < tasks.length) {
       const index = nextIndex++;
-      results[index] = await tasks[index]();
+      try {
+        results[index] = await tasks[index]();
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   }
 

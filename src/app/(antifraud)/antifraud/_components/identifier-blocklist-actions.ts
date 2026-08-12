@@ -121,6 +121,9 @@ export async function setIdentifierBlocklistRuleState(input: unknown): Promise<S
     actorUsername: session.username ?? undefined,
     effect: parsed.data.effect,
   });
+  if (saved.enabled !== parsed.data.enabled) {
+    throw new Error("The Antifraud monitor has not applied this change yet.");
+  }
   if (!saved.idempotent) {
     await createAdminAuditEvent({
       adminUserId: session.userId,

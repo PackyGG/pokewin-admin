@@ -59,6 +59,9 @@ type IngestResponse = {
   accepted?: unknown;
   duplicates?: unknown;
   stale?: unknown;
+  // Events the dashboard could not parse. Returned on its "nothing actionable"
+  // branch; a permanent rejection, not a transient one.
+  skipped?: unknown;
   // The dashboard answers HTTP 200 with locksSkipped > 0 when containment
   // validation rejected the command or runDeferredContainment did not return
   // "locked" (including "failed"). Delivery succeeded; the LOCK did not. This
@@ -212,6 +215,11 @@ export class IngestDelivery {
   private lastAttemptAt: string | null = null;
   private lastSuccessAt: string | null = null;
   private lastDeliveredCount = 0;
+  // Since-boot totals for the one-hour write-off below. They are reported in
+  // the log line itself, because a single expiry line cannot show whether the
+  // service has been shedding events all day.
+  private expiredTotal = 0;
+  private expiredContainmentTotal = 0;
 
   constructor(
     private readonly config: Config,
@@ -267,15 +275,33 @@ export class IngestDelivery {
       // archive. If delivery was unavailable for longer than one hour, close
       // the old dashboard receipts without replaying stale cases or automatic
       // containment. Discord has its own durable receipt and is unaffected.
-      await client.query(
+      //
+      // The write-off is deliberate; its SILENCE was not. The result used to be
+      // discarded, so an outage longer than the window expired an unknown
+      // number of signals — automatic containment commands among them, which
+      // means an account lock that never issued — and the very next tick still
+      // recorded a clean success. Group the expired rows by type so the log
+      // says exactly what was given up on, and keep a since-boot total so a
+      // repeated outage is distinguishable from a one-off.
+      const expired = await client.query<{
+        event_type: string;
+        expired: number;
+      }>(
         `
-          UPDATE risk_events
-          SET dashboard_delivered_at = COALESCE(dashboard_delivered_at, now())
-          WHERE dashboard_delivered_at IS NULL
-            AND occurred_at < now() - $1::interval
+          WITH aged_out AS (
+            UPDATE risk_events
+            SET dashboard_delivered_at = COALESCE(dashboard_delivered_at, now())
+            WHERE dashboard_delivered_at IS NULL
+              AND occurred_at < now() - $1::interval
+            RETURNING event_type
+          )
+          SELECT event_type, count(*)::int AS expired
+          FROM aged_out
+          GROUP BY event_type
         `,
         [DELIVERY_MAX_AGE_SQL],
       );
+      this.reportExpiredEvents(expired.rows);
 
       // Split deliberately into two indexable reads instead of one six-branch
       // disjunction over a post-join column. The old shape referenced
@@ -293,7 +319,12 @@ export class IngestDelivery {
             re.score_after, re.title, re.detail, re.payload,
             re.occurred_at, re.recorded_at
           FROM risk_events re
-          JOIN subjects s ON s.user_id = re.user_id
+          -- LEFT, in all three delivery reads: the subject row is joined only
+          -- to decorate the signal with a username, which is nullable the whole
+          -- way to the dashboard. An inner join turns a missing subject into an
+          -- invisible event that no read ever returns and the one-hour cutoff
+          -- silently acks, so the signal never reaches Account Review at all.
+          LEFT JOIN subjects s ON s.user_id = re.user_id
           WHERE re.dashboard_delivered_at IS NULL
             AND re.occurred_at >= now() - $2::interval
             AND (
@@ -332,7 +363,7 @@ export class IngestDelivery {
             re.score_after, re.title, re.detail, re.payload,
             re.occurred_at, re.recorded_at
           FROM risk_events re
-          JOIN subjects s ON s.user_id = re.user_id
+          LEFT JOIN subjects s ON s.user_id = re.user_id
           LEFT JOIN fiat_email_domain_matches match ON
             match.source_event_id = substring(
               re.source_ref FROM position(':' IN re.source_ref) + 1
@@ -408,7 +439,7 @@ export class IngestDelivery {
             re.score_after, re.title, re.detail, re.payload,
             re.occurred_at, re.recorded_at
           FROM risk_events re
-          JOIN subjects s ON s.user_id = re.user_id
+          LEFT JOIN subjects s ON s.user_id = re.user_id
           -- A tuple cursor alone can skip a transaction that started earlier
           -- but committed after the cursor advanced. This receipt is written
           -- only after the dashboard confirms the complete signed batch.
@@ -429,7 +460,16 @@ export class IngestDelivery {
       await this.confirmDashboardEvents(client, events.rows);
 
       const last = events.rows.at(-1);
-      if (!last) return 0;
+      // Unreachable while the empty check above returns first, but it must not
+      // be the one path that leaves the transaction open: `finally` releases
+      // the client either way, handing the pool a connection still inside BEGIN
+      // and still holding the leader lease. COMMIT, not ROLLBACK — the batch
+      // was already delivered and its receipts written just above.
+      if (!last) {
+        await client.query("COMMIT");
+        transactionOpen = false;
+        return 0;
+      }
       await client.query(
         `
           UPDATE ingest_delivery_cursors
@@ -455,6 +495,46 @@ export class IngestDelivery {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Log the events the one-hour cutoff just wrote off. Containment types are
+   * counted separately: an expired ordinary signal only costs a queue entry,
+   * an expired containment command costs the account lock it was carrying.
+   */
+  private reportExpiredEvents(
+    rows: readonly { event_type: string; expired: number }[],
+  ): void {
+    if (rows.length === 0) return;
+    const byEventType: Record<string, number> = {};
+    let total = 0;
+    let containment = 0;
+    for (const row of rows) {
+      const count = Number(row.expired);
+      if (!Number.isFinite(count) || count <= 0) continue;
+      byEventType[row.event_type] = count;
+      total += count;
+      if (
+        DASHBOARD_CONTAINMENT_EVENT_TYPES.has(row.event_type)
+        || row.event_type === "fiat_blacklisted_email_domain"
+      ) {
+        containment += count;
+      }
+    }
+    if (total === 0) return;
+    this.expiredTotal += total;
+    this.expiredContainmentTotal += containment;
+    this.log.error(
+      {
+        expired: total,
+        expiredContainment: containment,
+        byEventType,
+        expiredSinceBoot: this.expiredTotal,
+        expiredContainmentSinceBoot: this.expiredContainmentTotal,
+        maxAge: DELIVERY_MAX_AGE_SQL,
+      },
+      "Antifraud dashboard delivery expired undelivered risk events",
+    );
   }
 
   private async deliverEvents(
@@ -511,13 +591,34 @@ export class IngestDelivery {
     } finally {
       if (timeout) clearTimeout(timeout);
     }
+    // `skipped` is the dashboard's count for events it could not parse at all.
+    // That verdict is permanent — the same bytes get the same answer on every
+    // retry — so excluding it from the arithmetic meant such a batch could
+    // never confirm: the transaction rolls back, the identical oldest rows are
+    // re-selected on the next poll, and every event behind them waits for the
+    // one-hour cutoff. Count it as a dead letter (acked, and reported below)
+    // rather than a head-of-line block. NaN is left to fail confirmation, the
+    // same as a malformed `accepted`.
+    const stale = Number(result.stale ?? 0);
+    const skipped = Number(result.skipped ?? 0);
     const confirmed =
       Number(result.accepted ?? 0) +
       Number(result.duplicates ?? 0) +
-      Number(result.stale ?? 0);
+      stale +
+      skipped;
     if (result.ok !== true || confirmed !== events.length) {
       throw new Error(
         `Dashboard ingest confirmed ${confirmed}/${events.length} events`,
+      );
+    }
+    if (stale > 0 || skipped > 0) {
+      // Acknowledged but never processed. The worker's age window and the
+      // dashboard's are evaluated on different hosts against different clocks,
+      // so an event selected just inside the window can be dropped as stale on
+      // arrival — including a containment command. Silent until now.
+      this.log.warn(
+        { stale, skipped, batchSize: events.length },
+        "dashboard discarded events from an accepted delivery batch",
       );
     }
     const locksSkipped = Number(result.locksSkipped ?? 0);

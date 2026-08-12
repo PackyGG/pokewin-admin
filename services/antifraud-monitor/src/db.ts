@@ -65,6 +65,29 @@ export function sourceConnectionString(
   return url.toString();
 }
 
+// The pools are built before Fastify exists, so the console.error sites below
+// never reach the `err` serializer in server.ts that scrubs secret VALUES out
+// of a message. A driver error can quote the DSN it failed to dial (and that
+// DSN carries the password), so keep a module-local copy of every connection
+// string this file hands to pg and redact it here instead.
+const connectionSecrets = new Set<string>();
+
+function rememberConnectionSecret(value: string | undefined): void {
+  // Mirrors the length floor in server.ts's SECRET_VALUES: a very short value
+  // would blank out unrelated substrings of the message.
+  if (typeof value === "string" && value.length >= 8) {
+    connectionSecrets.add(value);
+  }
+}
+
+function redactConnectionSecrets(message: string): string {
+  let text = message;
+  for (const secret of connectionSecrets) {
+    text = text.replaceAll(secret, "[redacted]");
+  }
+  return text;
+}
+
 export type Databases = {
   source: pg.Pool;
   fiatDevSource: pg.Pool | null;
@@ -78,27 +101,43 @@ function createSourcePool(input: {
   ca?: string;
   applicationName: string;
 }): pg.Pool {
+  const connectionString = sourceConnectionString(
+    input.connectionString,
+    input.mode,
+    input.ca,
+  );
+  rememberConnectionSecret(input.connectionString);
+  rememberConnectionSecret(connectionString);
   const source = new Pool({
-    connectionString: sourceConnectionString(
-      input.connectionString,
-      input.mode,
-      input.ca,
-    ),
+    connectionString,
     ssl: sourceSslFor(
       input.mode,
       input.ca,
     ),
+    // Session budget on the production mirror role: it is capped at 30 sessions
+    // and shared with the dashboard, whose mirror pool takes up to 2 per warm
+    // Vercel instance (src/lib/db.ts). 8 here + instances x 2 must stay under
+    // 30, so this number cannot be raised without shrinking the app-tier side.
     max: 8,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 8_000,
     options:
       "-c default_transaction_read_only=on -c statement_timeout=10000 -c TimeZone=UTC",
+    // A mirror session killed silently in the middle (idle NAT drop between
+    // Railway and the mirror host) is otherwise only discovered when the next
+    // query is issued on it, which surfaces as a failed poller phase. Keepalive
+    // detects the dead peer, and retiring a connection after ten minutes hands
+    // its slot back to the shared 30-session role instead of pinning it for the
+    // process lifetime.
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 5_000,
+    maxLifetimeSeconds: 600,
     application_name: input.applicationName,
   });
   source.on("error", (error) => {
     console.error("[source-db] idle pool client error", {
       name: error.name,
-      message: error.message,
+      message: redactConnectionSecrets(error.message),
       code: (error as { code?: string }).code,
     });
   });
@@ -128,6 +167,7 @@ export function createDatabases(config: Config): Databases {
       })
     : null;
 
+  rememberConnectionSecret(config.ANTIFRAUD_DATABASE_URL);
   const antifraud = new Pool({
     connectionString: config.ANTIFRAUD_DATABASE_URL,
     ssl: sslFor(
@@ -140,13 +180,22 @@ export function createDatabases(config: Config): Databases {
     max: 24,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 8_000,
+    // Deliberately NO idle_in_transaction_session_timeout here. The poller's
+    // leader lease is a transaction that issues one advisory-lock query and
+    // then sits idle for the whole tick while every phase runs on other clients
+    // (monitor.ts). A server-side reaper would terminate that session mid-tick
+    // on any slow tick, release the advisory lock early and let a second
+    // replica start a concurrent tick — duplicate containment, not a cleanup.
     options: "-c statement_timeout=15000 -c TimeZone=UTC",
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 5_000,
+    maxLifetimeSeconds: 600,
     application_name: "packy-antifraud",
   });
   antifraud.on("error", (error) => {
     console.error("[antifraud-db] idle pool client error", {
       name: error.name,
-      message: error.message,
+      message: redactConnectionSecrets(error.message),
       code: (error as { code?: string }).code,
     });
   });
@@ -179,7 +228,9 @@ export async function assertDatabaseConnections(db: Databases): Promise<void> {
     const error = failure.reason;
     console.error("[db] connection probe failed", {
       pool: failure.pool,
-      message: error instanceof Error ? error.message : String(error),
+      message: redactConnectionSecrets(
+        error instanceof Error ? error.message : String(error),
+      ),
       code:
         error && typeof error === "object"
           ? (error as { code?: string }).code

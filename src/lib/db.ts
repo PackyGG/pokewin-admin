@@ -241,12 +241,18 @@ const primaryPools: Map<DbEnv, Pool> =
 const primaryClients: Map<DbEnv, MainDrizzleDb> =
   globalForMainDb.mainPrimaryDrizzleClients ?? new Map<DbEnv, MainDrizzleDb>();
 
-if (process.env.NODE_ENV !== "production") {
-  globalForMainDb.mainReadDbPools = readPools;
-  globalForMainDb.mainReadDrizzleClients = readClients;
-  globalForMainDb.mainPrimaryDbPools = primaryPools;
-  globalForMainDb.mainPrimaryDrizzleClients = primaryClients;
-}
+// Pinned in EVERY environment, not just dev-HMR. Pool identity would otherwise
+// depend on this module being evaluated exactly once per isolate, and Next's
+// route chunking can hand a second copy of a shared module its own module
+// scope. Each copy would then build its own `max: 2` mirror pool, so one
+// isolate quietly consumes four of the mirror role's 30 shared sessions instead
+// of two. `main-read-limiter.ts` is pinned unconditionally for the same reason;
+// a limiter shared across copies in front of unshared pools is worse than
+// either alone. No-op when the module really is evaluated once.
+globalForMainDb.mainReadDbPools = readPools;
+globalForMainDb.mainReadDrizzleClients = readClients;
+globalForMainDb.mainPrimaryDbPools = primaryPools;
+globalForMainDb.mainPrimaryDrizzleClients = primaryClients;
 
 function readMirrorUrl(env: DbEnv): string {
   const url =

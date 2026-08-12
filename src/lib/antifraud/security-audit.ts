@@ -17,8 +17,11 @@ export type AntifraudAuditOutcome =
 
 const SECRET_KEY_PATTERN =
   /(?:secret|token|password|credential|authorization|cookie|api[-_]?key|private[-_]?key|totp|session)/i;
+// The identifier families are spelled out rather than covered by short tokens
+// (`card`, `bin`, `tax`) that would also swallow ordinary diagnostic keys like
+// `discardedCount` or `syntaxError` and hash them into uselessness.
 const PII_KEY_PATTERN =
-  /(?:email|ip(?:address)?|user[-_]?agent|phone|address|document|birth|name|reason|note|query|search)/i;
+  /(?:email|ip(?:address)?|user[-_]?agent|phone|address|document|birth|name|reason|note|query|search|visitor|fingerprint|device|passport|iban|ssn|last[-_]?4|card[-_]?(?:bin|number|no|id|hash|last))/i;
 const MAX_METADATA_DEPTH = 4;
 const MAX_ARRAY_ITEMS = 25;
 const MAX_STRING_LENGTH = 300;
@@ -53,6 +56,22 @@ function hashSensitive(value: string): string {
   return createHmac("sha256", auditKey()).update(value).digest("hex");
 }
 
+/**
+ * Objects and arrays under a PII key used to go through `String()`, so every
+ * one of them hashed to the HMAC of `"[object Object]"` — a single constant
+ * standing in for every distinct value, which makes the hash useless for
+ * correlating two audit rows. Serialize structurally instead, and never let a
+ * circular or BigInt payload turn an audit write into a thrown action.
+ */
+function sensitiveText(value: unknown): string {
+  if (typeof value !== "object") return String(value);
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return "[unserializable]";
+  }
+}
+
 function sanitizeValue(
   value: unknown,
   depth = 0,
@@ -81,7 +100,7 @@ function sanitizeValue(
       output[key] = "[redacted]";
     } else if (PII_KEY_PATTERN.test(key)) {
       output[`${key}Hash`] =
-        nested == null ? null : hashSensitive(String(nested));
+        nested == null ? null : hashSensitive(sensitiveText(nested));
     } else {
       output[key] = sanitizeValue(nested, depth + 1);
     }

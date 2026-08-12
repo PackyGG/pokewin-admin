@@ -6,6 +6,7 @@ import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   buildCacheKey,
+  cacheGetOrSet,
   cacheGetOrSetStale,
   hashString,
 } from "@/lib/cache/redis";
@@ -431,13 +432,22 @@ async function fetchTrendSeriesPg(
     () => safeQuery(
       () => queryRows<AttributionBucketRow[]>(db, `
       WITH customers AS (
-        SELECT u.id,
-               EXISTS (
-                 SELECT 1 FROM "user" ref
-                 WHERE ref.id = u.referred_by AND ref.role = 'creator'
-               ) AS under_creator
-          FROM "user" u
-         WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
+        -- under_creator used to be a correlated EXISTS in this CTE's target
+        -- list. PostgreSQL inlines the single-reference CTE, which pulls that
+        -- SubPlan up into the join, where it is re-evaluated per WAGER EVENT
+        -- instead of once per customer -- millions of index probes for a fact
+        -- that has exactly one value per user. A join computes it once per
+        -- customer; ref.id is the primary key, so it can never duplicate a
+        -- row. The inner subquery keeps "user" alone in scope because the
+        -- blacklist fragment interpolated below refers to a bare id.
+        SELECT u.id, (ref.id IS NOT NULL) AS under_creator
+          FROM (
+            SELECT id, referred_by
+              FROM "user"
+             WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
+          ) u
+          LEFT JOIN "user" ref
+            ON ref.id = u.referred_by AND ref.role = 'creator'
       ), wager_events AS (
         SELECT lt.user_id, ABS(lt.amount::numeric) AS amount, lt.created_at
           FROM ledger_transactions lt
@@ -530,6 +540,20 @@ export function emptyDashboardTrendSeries(
   };
 }
 
+/**
+ * Fresh window for the snapshot that a request actually served, degraded or
+ * not.
+ *
+ * A snapshot with any unavailable leg is deliberately refused a main-cache
+ * entry (see below), so while one leg stays slow NOTHING is ever cached and
+ * every single request re-pays the whole six-leg fan-out — which is precisely
+ * what keeps the mirror pool saturated and that leg slow. This short window
+ * breaks the feedback loop without weakening the invariant it protects: a
+ * partial snapshot lives under its own key and can never replace the
+ * last-known-good complete value the main key retains.
+ */
+const TREND_SERVED_SNAPSHOT_TTL_SECONDS = 15;
+
 export async function getDashboardTrendSeries(
   period: DashboardPeriod,
   blacklistIdNotIn: string,
@@ -539,17 +563,32 @@ export async function getDashboardTrendSeries(
     return fetchDashboardTrendSeriesInner(period, blacklistIdNotIn, env);
   }
 
+  const key = buildCacheKey("dashboard-trends-v5-all-games-attribution", [
+    env,
+    period,
+    hashString(blacklistIdNotIn),
+  ]);
+  const snapshot = await cacheGetOrSet(
+    `${key}:served`,
+    TREND_SERVED_SNAPSHOT_TTL_SECONDS,
+    () => loadDashboardTrendSnapshot(period, blacklistIdNotIn, env, key),
+  );
+  // `servedAtIso` is stamped after the cache so it always reports THIS render.
+  return { ...snapshot, servedAtIso: new Date().toISOString() };
+}
+
+async function loadDashboardTrendSnapshot(
+  period: DashboardPeriod,
+  blacklistIdNotIn: string,
+  env: DbEnv,
+  key: string,
+): Promise<DashboardTrendSeries> {
   // Legs publish into `slots` as they settle, so this stays populated even when
   // the outer race below gives up — that is what keeps a single slow leg from
   // blanking all six charts.
   const slots = emptyTrendLegSlots();
   try {
-    const key = buildCacheKey("dashboard-trends-v5-all-games-attribution", [
-      env,
-      period,
-      hashString(blacklistIdNotIn),
-    ]);
-    const snapshot = await cacheGetOrSetStale(
+    return await cacheGetOrSetStale(
       key,
       60,
       24 * 60 * 60,
@@ -574,7 +613,6 @@ export async function getDashboardTrendSeries(
         return result;
       },
     );
-    return { ...snapshot, servedAtIso: new Date().toISOString() };
   } catch {
     // Serve whatever legs finished. Previously this returned the all-false
     // empty snapshot whenever the outer timeout fired (the assignment never

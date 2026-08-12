@@ -38,6 +38,15 @@ const PERIOD_DAYS: Record<AcquisitionWindow, number> = {
  * Existing depositors are distinct accounts depositing in the bucket whose
  * first-ever completed deposit predates it. The two depositor series are
  * therefore mutually exclusive for every day.
+ *
+ * Both deposit filters use the NATIVE enum form `type =
+ * 'deposit'::ledger_transaction_type`, not the house `type::text` convention:
+ * casting the column is non-sargable, so no index on `type` can match and the
+ * scan degrades to the whole table (measured 70x on prod — see the note on
+ * `firstDeposits` in `src/lib/creator-vip/ftd-lossback.ts`). `deposit` is a
+ * core member of that enum and has always existed, so there is no drift to
+ * defend against here. Served by `idx_ledger_user_deposit_created`
+ * (user_id, created_at) WHERE type='deposit' AND status='completed'.
  */
 const cachedAcquisitionTrend = unstable_cache(
   async (
@@ -65,8 +74,22 @@ const cachedAcquisitionTrend = unstable_cache(
           lt.created_at AS first_deposit_at
         FROM ledger_transactions lt
         JOIN customers c ON c.id = lt.user_id
-        WHERE lt.type::text = 'deposit'
+        WHERE lt.type = 'deposit'::ledger_transaction_type
           AND lt.status = 'completed'
+          -- Only accounts that deposit INSIDE the window can reach
+          -- period_depositors below, so a lifetime DISTINCT ON over every
+          -- completed deposit ever made is pure waste — and it is what pushed
+          -- this read past its 15s budget and rendered the section's
+          -- "Live data is temporarily unavailable". Restricting the users (not
+          -- the rows) keeps every first_deposit_at exact.
+          AND lt.user_id IN (
+            SELECT w.user_id
+            FROM ledger_transactions w
+            CROSS JOIN bounds b
+            WHERE w.type = 'deposit'::ledger_transaction_type
+              AND w.status = 'completed'
+              AND w.created_at >= b.start_day AT TIME ZONE 'UTC'
+          )
         ORDER BY lt.user_id, lt.created_at ASC, lt.id ASC
       ),
       period_depositors AS (
@@ -81,7 +104,7 @@ const cachedAcquisitionTrend = unstable_cache(
         JOIN customers c ON c.id = lt.user_id
         JOIN first_deposits fd ON fd.user_id = lt.user_id
         CROSS JOIN bounds b
-        WHERE lt.type::text = 'deposit'
+        WHERE lt.type = 'deposit'::ledger_transaction_type
           AND lt.status = 'completed'
           AND lt.created_at >= b.start_day AT TIME ZONE 'UTC'
         GROUP BY 1, lt.user_id, fd.first_deposit_at

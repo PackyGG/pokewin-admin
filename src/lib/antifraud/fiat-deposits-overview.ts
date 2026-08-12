@@ -235,12 +235,12 @@ export async function listFiatDeposits(input: {
          deposits.username,
          deposits.account_image,
          deposits.account_email,
-         COALESCE(auth.signup_email, deposits.account_email) AS signup_email,
+         COALESCE(signup.signup_email, deposits.account_email) AS signup_email,
          deposits.country_code AS account_country,
-         COALESCE(auth.latest_auth_ip, NULLIF(deposits.signup_ip, ''))
+         COALESCE(latest_auth.latest_auth_ip, NULLIF(deposits.signup_ip, ''))
            AS latest_auth_ip,
          COALESCE(
-           auth.latest_auth_event,
+           latest_auth.latest_auth_event,
            CASE WHEN NULLIF(deposits.signup_ip, '') IS NOT NULL THEN 'register' END
          ) AS latest_auth_event,
          COALESCE(deposits.checkout_email, checkout.checkout_email)
@@ -274,21 +274,31 @@ export async function listFiatDeposits(input: {
              deposits.payment_id
            )
        ) checkout ON TRUE
+       -- These two used to be one aggregate over the user's ENTIRE login
+       -- history: array_agg(... ORDER BY ...) was built per deposit row only
+       -- to read element [1]. A heavy account has thousands of auth events, so
+       -- the page paid a full read + sort of all of them for every row.
+       -- ORDER BY + LIMIT 1 returns the same value and lets the planner stop
+       -- at the first matching row.
        LEFT JOIN LATERAL (
-         SELECT
-           (array_agg(audit.metadata->>'email' ORDER BY audit.created_at)
-             FILTER (
-               WHERE audit.event_type = 'register'
-                 AND NULLIF(audit.metadata->>'email', '') IS NOT NULL
-             ))[1] AS signup_email,
-           (array_agg(host(audit.ip) ORDER BY audit.created_at DESC)
-             FILTER (WHERE audit.ip IS NOT NULL))[1] AS latest_auth_ip,
-           (array_agg(audit.event_type::text ORDER BY audit.created_at DESC)
-             FILTER (WHERE audit.ip IS NOT NULL))[1] AS latest_auth_event
+         SELECT audit.metadata->>'email' AS signup_email
+         FROM audit_events audit
+         WHERE audit.user_id = deposits.user_id
+           AND audit.event_type = 'register'
+           AND NULLIF(audit.metadata->>'email', '') IS NOT NULL
+         ORDER BY audit.created_at
+         LIMIT 1
+       ) signup ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT host(audit.ip) AS latest_auth_ip,
+                audit.event_type::text AS latest_auth_event
          FROM audit_events audit
          WHERE audit.user_id = deposits.user_id
            AND audit.event_type IN ('login', 'register')
-       ) auth ON TRUE
+           AND audit.ip IS NOT NULL
+         ORDER BY audit.created_at DESC
+         LIMIT 1
+       ) latest_auth ON TRUE
        ORDER BY deposits.occurred_at DESC, deposits.row_id DESC`,
       excludedUserIds,
       limit,

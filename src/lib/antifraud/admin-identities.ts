@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { inArray } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { admin_users } from "@/lib/db-schema/admin/schema";
@@ -31,6 +32,24 @@ export type AdminIdentity = {
 const EMPTY: ReadonlyMap<string, AdminIdentity> = new Map();
 
 /**
+ * Per-request memo of ids that have already been resolved.
+ *
+ * "ONE batched read per page" above was aspirational, not actual: the reviews
+ * route resolves the queue's assignees and openers, and then — for the case the
+ * analyst has open — that case's assignee/opener/resolver plus up to 100 note
+ * authors, and the open case is normally also in the queue. React `cache()`
+ * gives one Map per server request, so the second call reads only the ids the
+ * first one did not already fetch. A `null` entry is a real "no such admin row"
+ * answer and is remembered too, so a deleted admin is not re-queried per call.
+ *
+ * Outside a request scope (a script, a non-React caller) React runs the factory
+ * per call, which simply degrades to the previous one-read-per-call behaviour.
+ */
+const requestIdentityMemo = cache(
+  (): Map<string, AdminIdentity | null> => new Map(),
+);
+
+/**
  * Batch-resolve admin identities by id. Unknown/deleted ids are simply absent
  * from the map — every call site renders a fallback for a missing entry rather
  * than failing, because an admin row can be deleted while their resolved
@@ -45,19 +64,24 @@ export async function loadAdminIdentities(
   const unique = [...new Set(ids.filter((id): id is string => Boolean(id)))];
   if (unique.length === 0) return EMPTY;
 
-  try {
-    const rows = await adminDrizzle.select({
-      id: admin_users.id, username: admin_users.username,
-      display_username: admin_users.display_username, email: admin_users.email,
-      role: admin_users.role, roles: admin_users.roles,
-      is_active: admin_users.is_active,
-      profile_image_mime: admin_users.profile_image_mime,
-    }).from(admin_users).where(inArray(admin_users.id, unique));
+  const memo = requestIdentityMemo();
+  const missing = unique.filter((id) => !memo.has(id));
 
-    return new Map(
-      rows.map((row) => [
-        row.id,
-        {
+  if (missing.length > 0) {
+    try {
+      const rows = await adminDrizzle.select({
+        id: admin_users.id, username: admin_users.username,
+        display_username: admin_users.display_username, email: admin_users.email,
+        role: admin_users.role, roles: admin_users.roles,
+        is_active: admin_users.is_active,
+        profile_image_mime: admin_users.profile_image_mime,
+      }).from(admin_users).where(inArray(admin_users.id, missing));
+
+      // Record the misses first so an id with no row is not re-queried; the
+      // hits below overwrite their own entries.
+      for (const id of missing) memo.set(id, null);
+      for (const row of rows) {
+        memo.set(row.id, {
           id: row.id,
           username: row.username,
           label: row.display_username ?? row.username,
@@ -67,13 +91,20 @@ export async function loadAdminIdentities(
           roles: row.roles.length > 0 ? [...row.roles] : [row.role],
           isActive: row.is_active,
           hasAvatar: Boolean(row.profile_image_mime),
-        } satisfies AdminIdentity,
-      ]),
-    );
-  } catch (err) {
-    console.error("[antifraud] loadAdminIdentities failed:", err);
-    return EMPTY;
+        } satisfies AdminIdentity);
+      }
+    } catch (err) {
+      console.error("[antifraud] loadAdminIdentities failed:", err);
+      return EMPTY;
+    }
   }
+
+  const resolved = new Map<string, AdminIdentity>();
+  for (const id of unique) {
+    const identity = memo.get(id);
+    if (identity) resolved.set(id, identity);
+  }
+  return resolved;
 }
 
 /**

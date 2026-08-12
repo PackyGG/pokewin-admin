@@ -118,7 +118,18 @@ export function requiresContainmentOutbox(
   }
 }
 
-export type ContainmentOutboxResult = "locked" | "skipped" | "failed";
+/**
+ * `"deferred"` is NOT a failure: the durable lease is held by another worker
+ * that will apply and record this row. It exists because returning `"failed"`
+ * for a lost race made the ingest route log a containment failure that never
+ * happened and was never recorded — the row is simply still `pending` and
+ * owned elsewhere.
+ */
+export type ContainmentOutboxResult =
+  | "locked"
+  | "skipped"
+  | "failed"
+  | "deferred";
 
 /**
  * Mark a just-inserted signal row as owing a containment attempt. Called
@@ -149,7 +160,8 @@ export async function markContainmentPending(
  *
  * Outcome mapping: apply results `"banned"` and `"locked"` both count as
  * applied (`"locked"` for the outbox result). `"skipped"` stays skipped.
- * Throws → `"failed"`.
+ * Throws → `"failed"`. Losing the claim race → `"deferred"`, which is not a
+ * failure and must not be reported as one.
  */
 export async function runDeferredContainment(
   signal: DeferredContainmentSignal & { signalRowId: string },
@@ -177,7 +189,10 @@ export async function runDeferredContainment(
       `);
       // A retry worker already owns the durable lease. It will record the
       // outcome; the inline path must not race the same external actions.
-      if (claimed.rows.length === 0) return "failed";
+      // `"deferred"`, never `"failed"`: nothing failed and nothing was
+      // recorded here, so reporting a failure would both misstate the outcome
+      // and claim a durable write this branch never made.
+      if (claimed.rows.length === 0) return "deferred";
     }
     const outcome = await applyContainmentForKind(signal);
     if (signal.kind === "critical_risk_signup" && outcome !== "locked") {

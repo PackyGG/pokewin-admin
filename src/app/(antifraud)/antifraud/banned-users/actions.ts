@@ -15,7 +15,10 @@ import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { requireCapability } from "@/lib/require-capability";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
-import { blockKnownUserIdentifiers } from "@/lib/antifraud/user-identifier-blocking";
+import {
+  blockKnownUserIdentifiers,
+  type UserIdentifierBlockResult,
+} from "@/lib/antifraud/user-identifier-blocking";
 import { antifraudActionResult } from "@/lib/antifraud/action-error-message";
 import { fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 
@@ -53,10 +56,14 @@ export async function mutateBannedUser(input: unknown): Promise<ServerActionResu
     metadata: { reasonCode: "operator_blocklist_workspace" },
     limitPerMinute: 20,
   });
+  // Declared out here so the failure path can report the obligation too: it is
+  // committed before the guarded ban UPDATE and is deliberately never rolled
+  // back with it (see user-identifier-blocking.ts).
+  let identifiers: UserIdentifierBlockResult | null = null;
   try {
     const db = await getPrimaryDrizzleDb();
     const issuerMainUserId = await resolveAdminMainUserId(session.userId);
-    const identifiers =
+    identifiers =
       parsed.data.action === "ban"
         ? await blockKnownUserIdentifiers({
             db,
@@ -93,9 +100,17 @@ export async function mutateBannedUser(input: unknown): Promise<ServerActionResu
             `)
           ).rows.length;
     if (updated === 0) {
+      // The identifier obligation above is already durable and the retry
+      // worker will apply it whatever this UPDATE did, so reporting only
+      // "already banned" left the operator believing nothing happened while
+      // shared IPs/fingerprints were on their way to a permanent block.
+      const queuedIdentifiers =
+        (identifiers?.ipCount ?? 0) + (identifiers?.fingerprintCount ?? 0);
       throw new Error(
         parsed.data.action === "ban"
-          ? "The account is already banned or no longer exists."
+          ? queuedIdentifiers > 0
+            ? "The account is already banned or no longer exists. Its known IP/fingerprint identifiers were already queued for blocking and will still be applied."
+            : "The account is already banned or no longer exists."
           : "The account is already unbanned or no longer exists.",
       );
     }
@@ -148,6 +163,21 @@ export async function mutateBannedUser(input: unknown): Promise<ServerActionResu
       targetType: "user",
       targetId: parsed.data.userId,
       idempotencyKey: parsed.data.idempotencyKey,
+      // Without this the security-audit row for a failed ban says nothing
+      // about the identifier blocks that are already queued and will be
+      // applied anyway — the one piece of state the failure left behind.
+      // Key names avoid "ip"/"fingerprint": appendAntifraudSecurityAudit
+      // hashes any key matching its PII pattern, which would turn the counts
+      // into unreadable digests.
+      metadata: {
+        reasonCode: "operator_blocklist_workspace",
+        identifier_blocklist_queued: identifiers !== null,
+        queued_identifier_count:
+          (identifiers?.ipCount ?? 0) + (identifiers?.fingerprintCount ?? 0),
+        ...(identifiers
+          ? { identifier_operation_id: identifiers.operationId }
+          : {}),
+      },
       error,
     });
     throw error;

@@ -507,8 +507,16 @@ export class LiveBus {
               "Redis returned an invalid antifraud live stream id",
             );
           }
-        } catch {
-          // Redis is still unavailable: keep the row and retry next tick.
+        } catch (error) {
+          // Two very different causes land here — Redis being down, and this
+          // one row being unpublishable (bad stream id above, oversized
+          // payload). `break` retries the same head row every 5s forever, so
+          // without this line a poison row stalls the whole outbox silently:
+          // the outer catch never fires and depth just stops falling.
+          this.log.warn(
+            { err: error, outboxRowId: row.id },
+            "Antifraud live outbox republish failed",
+          );
           break;
         }
         await this.outboxPool.query(

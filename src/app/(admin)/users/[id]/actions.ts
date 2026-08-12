@@ -1034,59 +1034,67 @@ export async function adjustBalance(data: {
     }
   }
 
-  // Fire balance_fill webhooks (non-blocking)
+  // Fire balance_fill webhooks. The HTTP dispatch stays non-blocking, but the
+  // lookup that feeds it is awaited: un-awaited, it kept a connection checked
+  // out of the max:1 admin pool after the action returned, and on a serverless
+  // isolate that freezes at response time the checkout can outlive the query.
+  // It is a single indexed point read on the admin DB.
   if (!isUltraLossback) {
-    adminDrizzle
-      .execute<{ url: string; secret: string }>(sql`
+    try {
+      const { rows: webhooks } = await adminDrizzle.execute<{
+        url: string;
+        secret: string;
+      }>(sql`
       SELECT url, secret FROM creator_webhooks
       WHERE target_user_id = ${parsed.userId}
         AND type = 'balance_fill' AND enabled = TRUE
-      `)
-      .then(({ rows: webhooks }) => {
-        for (const webhook of webhooks) {
-          if (!isSafeWebhookUrl(webhook.url)) continue;
-          const isDiscord = webhook.url.includes("discord.com/api/webhooks/");
-          const sign = parsed.amount >= 0 ? "+" : "";
+      `);
+      for (const webhook of webhooks) {
+        if (!isSafeWebhookUrl(webhook.url)) continue;
+        const isDiscord = webhook.url.includes("discord.com/api/webhooks/");
+        const sign = parsed.amount >= 0 ? "+" : "";
 
-          const body = isDiscord
-            ? JSON.stringify({
-                content: `💰 Balance adjusted on Pack.ygg — ${sign}$${parsed.amount.toFixed(2)} (new balance: $${newBalance.toFixed(2)}) — Reason: ${parsed.reason}`,
-              })
-            : JSON.stringify({
-                event: "balance_fill",
-                amount: parsed.amount,
-                new_balance: newBalance,
-                reason: parsed.reason,
-                timestamp: new Date().toISOString(),
-              });
+        const body = isDiscord
+          ? JSON.stringify({
+              content: `💰 Balance adjusted on Pack.ygg — ${sign}$${parsed.amount.toFixed(2)} (new balance: $${newBalance.toFixed(2)}) — Reason: ${parsed.reason}`,
+            })
+          : JSON.stringify({
+              event: "balance_fill",
+              amount: parsed.amount,
+              new_balance: newBalance,
+              reason: parsed.reason,
+              timestamp: new Date().toISOString(),
+            });
 
-          const signature = crypto
-            .createHmac("sha256", webhook.secret)
-            .update(body)
-            .digest("hex");
+        const signature = crypto
+          .createHmac("sha256", webhook.secret)
+          .update(body)
+          .digest("hex");
 
-          fetch(webhook.url, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Webhook-Signature": signature,
-            },
-            body,
-            signal: AbortSignal.timeout(10000),
-          }).catch((err) => {
-            console.error(
-              `[balance_fill_webhook] dispatch failed for ${webhook.url}:`,
-              err instanceof Error ? err.message : err
-            );
-          });
-        }
-      })
-      .catch((err) => {
-        console.error(
-          "[balance_fill_webhook] webhook query failed:",
-          err instanceof Error ? err.message : err
-        );
-      });
+        fetch(webhook.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Webhook-Signature": signature,
+          },
+          body,
+          signal: AbortSignal.timeout(10000),
+        }).catch((err) => {
+          console.error(
+            `[balance_fill_webhook] dispatch failed for ${webhook.url}:`,
+            err instanceof Error ? err.message : err
+          );
+        });
+      }
+    } catch (err) {
+      // Best-effort, same as the metadata rows above: the ledger is committed
+      // and the user has their balance, so a webhook lookup must not fail the
+      // adjustment.
+      console.error(
+        "[balance_fill_webhook] webhook query failed:",
+        err instanceof Error ? err.message : err
+      );
+    }
   }
 
   invalidateUserCaches(parsed.userId);

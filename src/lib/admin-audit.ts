@@ -64,6 +64,45 @@ export async function createAdminAuditEvent(params: AdminAuditEventParams) {
 
 const AUDIT_RETRY_DELAYS_MS = [200, 1000, 4000];
 
+/**
+ * pg-pool reports exhaustion as a local queue timeout, PostgreSQL reports it as
+ * 53300. Neither heals inside a 5 s backoff window, and each further attempt
+ * parks another `connectionTimeoutMillis` (10 s) before returning: the four
+ * attempts burn ~45 s, which on a serverless invocation usually means the
+ * durable fallback row and the Discord alert never get their turn at all.
+ * Failing over immediately is what actually preserves the trace.
+ */
+const AUDIT_CAPACITY_FAILURE =
+  /timeout exceeded when trying to connect|too many clients|\b53300\b/i;
+
+function isAuditCapacityFailure(error: unknown): boolean {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  // Drizzle wraps driver errors, so the pg message/code can sit one or two
+  // `cause` hops down. Bounded and guarded: a hostile getter must not turn
+  // failure handling into a second failure.
+  for (let depth = 0; depth < 5 && current != null; depth += 1) {
+    if (seen.has(current)) break;
+    seen.add(current);
+    if (typeof current === "string") {
+      parts.push(current);
+      break;
+    }
+    if (typeof current !== "object") break;
+    try {
+      const message = Reflect.get(current, "message");
+      if (typeof message === "string") parts.push(message);
+      const code = Reflect.get(current, "code");
+      if (typeof code === "string") parts.push(code);
+      current = Reflect.get(current, "cause");
+    } catch {
+      break;
+    }
+  }
+  return AUDIT_CAPACITY_FAILURE.test(parts.join(" "));
+}
+
 export type DurableAuditOutcome =
   | { status: "recorded" }
   | { status: "fallback"; fallbackId: string }
@@ -100,15 +139,18 @@ export async function createAdminAuditEventDurable(
     ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
   let lastError: unknown;
+  let attemptCount = 0;
   for (let attempt = 0; attempt <= AUDIT_RETRY_DELAYS_MS.length; attempt++) {
     if (attempt > 0) {
       await delay(AUDIT_RETRY_DELAYS_MS[attempt - 1]);
     }
+    attemptCount = attempt + 1;
     try {
       await write(params);
       return { status: "recorded" };
     } catch (error) {
       lastError = error;
+      if (isAuditCapacityFailure(error)) break;
     }
   }
 
@@ -127,11 +169,10 @@ export async function createAdminAuditEventDurable(
   );
 
   try {
-    const fallbackId = await writeFallback(
-      params,
-      errorMessage,
-      AUDIT_RETRY_DELAYS_MS.length + 1,
-    );
+    // Record what was really tried, not the theoretical maximum: a capacity
+    // failure short-circuits the loop, and a fallback row claiming four
+    // attempts would misdirect whoever reconciles it.
+    const fallbackId = await writeFallback(params, errorMessage, attemptCount);
     void notify(params, errorMessage).catch((notifyError) => {
       console.error(
         "[admin-audit] failure alert delivery also failed:",

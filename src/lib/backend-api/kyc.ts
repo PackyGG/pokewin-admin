@@ -1,5 +1,7 @@
 import "server-only";
 
+import { z } from "zod";
+
 import { backendApi } from "./client";
 import {
   getSumsubApplicantReview,
@@ -26,13 +28,17 @@ import {
  * Errors surface as BackendApiError (`.status`, `.isConflict`, `.isNotFound`)
  * / BackendNetworkError — callers degrade gracefully.
  */
-export type KycAdminDecision = "pending" | "safe" | "rejected";
-export type KycStatus =
-  | "none"
-  | "pending"
-  | "on_hold"
-  | "approved"
-  | "rejected";
+const KYC_ADMIN_DECISIONS = ["pending", "safe", "rejected"] as const;
+const KYC_STATUSES = [
+  "none",
+  "pending",
+  "on_hold",
+  "approved",
+  "rejected",
+] as const;
+
+export type KycAdminDecision = (typeof KYC_ADMIN_DECISIONS)[number];
+export type KycStatus = (typeof KYC_STATUSES)[number];
 
 export type UserKycStatus = {
   /** Our control flag — whether the user must currently pass KYC. */
@@ -53,16 +59,64 @@ export type UserKycStatus = {
   sumsubReview: SumsubApplicantReview | null;
 };
 
-type Success<T> = { success: boolean; data: T };
+/**
+ * Response validation, mirroring `parseFeatureLocks` in `feature-locks.ts`.
+ *
+ * `backendApi` only throws on a non-2xx status: any 2xx body — including `{}`
+ * for a non-JSON response — used to be handed back through a bare TypeScript
+ * cast. A `{ success: false }` body, or a body missing `data` entirely, was
+ * therefore reported to staff as a completed KYC decision, and the cast made it
+ * unobservable. `success: z.literal(true)` and the field shapes below mirror
+ * `KycStatusResponseSchema` / `SuccessWithDataSchema` in
+ * `PackyGG/backend/src/schemas`, which is what the route actually serialises.
+ *
+ * The KYC payload carries no user id, so — unlike the feature-lock parser —
+ * there is nothing here to cross-check the response against the requested
+ * account. Callers must keep treating a thrown error as "not applied".
+ */
+const BackendKycStatusSchema = z.object({
+  kycRequired: z.boolean(),
+  adminDecision: z.enum(KYC_ADMIN_DECISIONS),
+  status: z.enum(KYC_STATUSES),
+  reviewAnswer: z.string().nullable(),
+  moderationComment: z.string().nullable(),
+  verificationCycle: z.number().int().nonnegative(),
+  applicantId: z.string().nullable(),
+});
 
-type BackendUserKycStatus = Omit<UserKycStatus, "sumsubReview">;
+const KycStatusResponseSchema = z.object({
+  success: z.literal(true),
+  data: BackendKycStatusSchema,
+});
+
+const RequireKycResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({ verificationCycle: z.number().int() }),
+});
+
+const ReviewKycResponseSchema = z.object({
+  success: z.literal(true),
+  message: z.string().optional(),
+});
+
+function parseBackendResponse<T>(
+  schema: z.ZodType<T>,
+  response: unknown,
+  what: string,
+): T {
+  const parsed = schema.safeParse(response);
+  if (!parsed.success) {
+    throw new Error(`Backend returned an invalid ${what} response`);
+  }
+  return parsed.data;
+}
 
 export const getUserKyc = async (userId: string): Promise<UserKycStatus> => {
   const status = await backendApi
-    .get<Success<BackendUserKycStatus>>(
-      `/admin/kyc/${encodeURIComponent(userId)}`,
-    )
-    .then((r) => r.data);
+    .get<unknown>(`/admin/kyc/${encodeURIComponent(userId)}`)
+    .then((response) =>
+      parseBackendResponse(KycStatusResponseSchema, response, "KYC status").data,
+    );
   return {
     ...status,
     sumsubReview: status.applicantId
@@ -84,7 +138,7 @@ export const requireUserKyc = (params: {
   levelName?: string;
 }) =>
   backendApi
-    .post<Success<{ verificationCycle: number }>>(
+    .post<unknown>(
       `/admin/kyc/${encodeURIComponent(params.userId)}/require`,
       {
         admin_id: params.adminId,
@@ -92,7 +146,14 @@ export const requireUserKyc = (params: {
         ...(params.levelName ? { level_name: params.levelName } : {}),
       },
     )
-    .then((r) => r.data);
+    .then(
+      (response) =>
+        parseBackendResponse(
+          RequireKycResponseSchema,
+          response,
+          "KYC requirement",
+        ).data,
+    );
 
 /**
  * Record the admin's review of the CURRENT cycle. `safe` clears the
@@ -106,11 +167,12 @@ export const reviewUserKyc = (params: {
   decision: "safe" | "rejected";
   expectedCycle: number;
 }) =>
-  backendApi.post<{ success: boolean; message?: string }>(
-    `/admin/kyc/${encodeURIComponent(params.userId)}/review`,
-    {
+  backendApi
+    .post<unknown>(`/admin/kyc/${encodeURIComponent(params.userId)}/review`, {
       admin_id: params.adminId,
       decision: params.decision,
       verification_cycle: params.expectedCycle,
-    },
-  );
+    })
+    .then((response) =>
+      parseBackendResponse(ReviewKycResponseSchema, response, "KYC review"),
+    );

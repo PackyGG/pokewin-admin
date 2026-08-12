@@ -1,7 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
+
+/**
+ * A refresh that is still resolving is skipped rather than stacked — but only
+ * for this long. `router.refresh()`'s transition settling is not something this
+ * component can guarantee (a discarded navigation, a frozen tab), and a
+ * transition that never settles would otherwise silence the page permanently.
+ */
+const MAX_INFLIGHT_MS = 5 * 60_000;
 
 /**
  * Periodic `router.refresh()` for pages that need server-side numbers
@@ -24,15 +32,30 @@ import { useRouter } from "next/navigation";
  */
 export function AutoRefresh({ intervalMs = 60_000 }: { intervalMs?: number }) {
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const startedAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!isPending) startedAtRef.current = null;
+  }, [isPending]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState !== "visible") return;
+      // Each refresh re-runs the page's whole server fan-out against a MAIN
+      // mirror pool of two connections. Firing the next tick while the previous
+      // render is still queued behind that pool does not produce fresher
+      // numbers — it just adds a second full fan-out to the queue the first one
+      // is already waiting in.
+      const startedAt = startedAtRef.current;
+      if (startedAt !== null && Date.now() - startedAt < MAX_INFLIGHT_MS) return;
+      startedAtRef.current = Date.now();
+      startTransition(() => {
         router.refresh();
-      }
+      });
     }, intervalMs);
     return () => clearInterval(interval);
-  }, [router, intervalMs]);
+  }, [router, intervalMs, startTransition]);
 
   return null;
 }

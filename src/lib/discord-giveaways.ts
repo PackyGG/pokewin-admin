@@ -125,6 +125,37 @@ async function establishedEligibleDiscordUserIds(
   return eligible;
 }
 
+async function meetsEntryRequirement(
+  requirement: GiveawayEntryRequirement,
+  discordUserId: string,
+): Promise<boolean> {
+  if (requirement === "linked_packy_account") {
+    const prodReadDb = getProdReadDrizzleDb();
+    const [linkedAccount] = await prodReadDb
+      .select({ accountId: account.accountId })
+      .from(account)
+      .where(and(
+        eq(account.providerId, "discord"),
+        eq(account.accountId, discordUserId),
+      ))
+      .limit(1);
+    return linkedAccount !== undefined;
+  }
+  if (requirement === "established_linked_packy_account") {
+    const eligible = await establishedEligibleDiscordUserIds([discordUserId]);
+    return eligible.has(discordUserId);
+  }
+  return true;
+}
+
+function entryRequirementMessage(
+  requirement: GiveawayEntryRequirement,
+): string {
+  return requirement === "established_linked_packy_account"
+    ? `A linked Packy.GG account aged ${MINIMUM_PACKY_ACCOUNT_AGE_DAYS}+ days and a Discord account aged ${MINIMUM_DISCORD_ACCOUNT_AGE_DAYS}+ days are required.`
+    : "A linked Packy.GG account is required to enter this giveaway.";
+}
+
 function stateFromRow(
   row: GiveawayRow,
   entryCount: number,
@@ -252,6 +283,31 @@ export async function enterDiscordGiveaway(input: {
   channelId: string;
   discordUserId: string;
 }): Promise<{ entered: boolean; entryCount: number }> {
+  // Resolve the requirement against MAIN BEFORE the transaction opens. Inside
+  // it the giveaway row is held FOR UPDATE, so every concurrent "Enter" click
+  // on the same giveaway queued behind a cross-pool mirror read (mirror pool
+  // max 2, maxUses 1 — a fresh handshake per checkout) while an admin
+  // connection sat idle. The unlocked pre-read narrows on the same conditions
+  // the transaction re-checks, so a giveaway that is gone or closed costs no
+  // mirror read at all and still fails inside the transaction, in the same
+  // order, with the same error.
+  const preflight = await adminDrizzle.execute<{
+    entry_requirement: GiveawayEntryRequirement;
+  }>(sql`
+    SELECT entry_requirement
+    FROM discord_giveaways
+    WHERE id = ${input.giveawayId}::uuid
+      AND guild_id = ${input.guildId}
+      AND channel_id = ${input.channelId}
+      AND status = 'active'
+      AND ends_at > now()
+  `);
+  const preflightRequirement = preflight.rows[0]?.entry_requirement ?? null;
+  const preflightMet =
+    preflightRequirement === null
+      ? null
+      : await meetsEntryRequirement(preflightRequirement, input.discordUserId);
+
   return adminDrizzle.transaction(async (tx) => {
     const giveaway = await tx.execute<Pick<
       GiveawayRow,
@@ -271,29 +327,21 @@ export async function enterDiscordGiveaway(input: {
       || !row.open
     ) throw new GiveawayError("giveaway_not_active", "This giveaway is no longer accepting entries.");
 
-    if (row.entry_requirement === "linked_packy_account") {
-      const prodReadDb = getProdReadDrizzleDb();
-      const [linkedAccount] = await prodReadDb
-        .select({ accountId: account.accountId })
-        .from(account)
-        .where(and(
-          eq(account.providerId, "discord"),
-          eq(account.accountId, input.discordUserId),
-        ))
-        .limit(1);
-      if (!linkedAccount) {
+    if (row.entry_requirement !== "none") {
+      // The pre-read answer only counts for the requirement it was resolved
+      // against; if the locked row disagrees, fall back to the mirror read
+      // inside the transaction rather than admitting on a stale check.
+      const met =
+        row.entry_requirement === preflightRequirement && preflightMet !== null
+          ? preflightMet
+          : await meetsEntryRequirement(
+              row.entry_requirement,
+              input.discordUserId,
+            );
+      if (!met) {
         throw new GiveawayError(
           "giveaway_requirement_not_met",
-          "A linked Packy.GG account is required to enter this giveaway.",
-        );
-      }
-    }
-    if (row.entry_requirement === "established_linked_packy_account") {
-      const eligible = await establishedEligibleDiscordUserIds([input.discordUserId]);
-      if (!eligible.has(input.discordUserId)) {
-        throw new GiveawayError(
-          "giveaway_requirement_not_met",
-          `A linked Packy.GG account aged ${MINIMUM_PACKY_ACCOUNT_AGE_DAYS}+ days and a Discord account aged ${MINIMUM_DISCORD_ACCOUNT_AGE_DAYS}+ days are required.`,
+          entryRequirementMessage(row.entry_requirement),
         );
       }
     }

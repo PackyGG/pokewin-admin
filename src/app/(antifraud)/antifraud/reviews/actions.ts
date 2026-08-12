@@ -1069,6 +1069,9 @@ async function executeQuickReviewAccountAction(
     const issuerMainUserId = await resolveAdminMainUserId(session.userId);
     const reason = `Antifraud review ${reviewId}: ${banReason}`.slice(0, 500);
     let identifiers;
+    /** Null when this call is the one that banned the account. */
+    let previousBan: { reason: string | null; bannedAt: string | null } | null =
+      null;
 
     try {
       identifiers = await blockKnownUserIdentifiers({
@@ -1078,7 +1081,12 @@ async function executeQuickReviewAccountAction(
         actorId: session.userId,
         actorUsername: session.username ?? undefined,
       });
-      await db.transaction(async (tx) => {
+      previousBan = await db.transaction(async (tx) => {
+        // `AND is_banned = FALSE` is what every other ban path in the repo
+        // guards on. Without it this UPDATE rewrote an existing ban's reason,
+        // timestamp and issuer — so a ban placed from /users, from KYC or by
+        // automatic containment lost its attribution the moment an analyst
+        // closed an unrelated open case on the same account.
         const updated = await tx.execute<{ id: string }>(sql`
           UPDATE "user"
           SET is_banned = TRUE,
@@ -1087,12 +1095,33 @@ async function executeQuickReviewAccountAction(
               banned_by = ${issuerMainUserId},
               updated_at = NOW()
           WHERE id = ${review.targetUserId}
+            AND is_banned = FALSE
           RETURNING id
         `);
-        if (updated.rows.length === 0) throw new Error("User not found");
+        let previous: { reason: string | null; bannedAt: string | null } | null =
+          null;
+        if (updated.rows.length === 0) {
+          // Zero rows now means "gone" OR "someone already banned it". Only
+          // the first is a failure: an already-banned account still has to
+          // reach the flagged verdict below, it just keeps its original ban.
+          const existing = await tx.execute<{
+            is_banned: boolean;
+            banned_reason: string | null;
+            banned_at: string | null;
+          }>(sql`
+            SELECT is_banned, banned_reason, banned_at::text AS banned_at
+            FROM "user"
+            WHERE id = ${review.targetUserId}
+            FOR UPDATE
+          `);
+          const row = existing.rows[0];
+          if (!row?.is_banned) throw new Error("User not found");
+          previous = { reason: row.banned_reason, bannedAt: row.banned_at };
+        }
         await tx.execute(
           sql`DELETE FROM session WHERE "userId" = ${review.targetUserId}`,
         );
+        return previous;
       });
     } catch (error) {
       console.error("[antifraud] quick review ban failed:", error);
@@ -1154,6 +1183,16 @@ async function executeQuickReviewAccountAction(
         blocklist_changes: identifiers.changedCount,
         identifier_delivery_status: identifiers.deliveryStatus,
         identifier_operation_id: identifiers.operationId,
+        // The trail has to be able to say "this case did not place the ban",
+        // otherwise the surviving reason/timestamp look like they came from
+        // here.
+        already_banned: previousBan !== null,
+        ...(previousBan
+          ? {
+              previous_banned_reason: previousBan.reason,
+              previous_banned_at: previousBan.bannedAt,
+            }
+          : {}),
       },
     });
     if (auditOutcome.status === "lost") {
@@ -1264,15 +1303,23 @@ async function executeQuickReviewAccountAction(
         locked: true,
       },
     }),
-    adminDrizzle.insert(antifraud_review_notes).values({
+  ]);
+  // Best effort, same as every other trail note in this file: the MAIN lock is
+  // already applied, so a failed note must not report the whole containment
+  // action as failed and send the analyst into a retry that duplicates the
+  // audit rows above.
+  try {
+    await adminDrizzle.insert(antifraud_review_notes).values({
       review_id: reviewId,
       admin_user_id: session.userId,
       kind: "action",
       body: `Locked crypto and item withdrawals for ${
         review.targetUsername ?? review.targetUserId
       }.`,
-    }),
-  ]);
+    });
+  } catch (error) {
+    console.error("[antifraud] withdrawal-lock note failed:", error);
+  }
 
   revalidateTag(userDetailTag(review.targetUserId));
   revalidatePath("/antifraud/reviews");

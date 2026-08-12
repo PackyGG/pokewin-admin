@@ -18,6 +18,7 @@ import { requireWhopCompanyId, whopAdminClient } from "@/lib/whop-admin";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { require2FA } from "@/lib/require-2fa";
+import { logError } from "@/lib/errors/logger";
 
 const decisionFields = {
   intentId: z.string().uuid(),
@@ -257,7 +258,17 @@ export async function decideFiatDepositAction(
           updated_at = NOW(), version = version + 1
       WHERE deposit_intent_id = ${parsed.data.intentId}::uuid
         AND status IN ('approving', 'containing')
-    `).catch(() => undefined);
+    `).catch((recordError: unknown) => {
+      // Last-resort floor: if the durable failure write itself fails the row
+      // stays in 'approving'/'containing' forever and nothing points at it.
+      // Swallowing was right — the caller already has an error to return — but
+      // it must be loud, otherwise the stuck deposit is invisible.
+      logError(
+        "antifraud.fiatDeposits.failureState",
+        `could not persist failure state intent=${parsed.data.intentId}`,
+        recordError,
+      );
+    });
     return {
       success: false,
       // Narrowed: the raw message can carry Postgres constraint/column names

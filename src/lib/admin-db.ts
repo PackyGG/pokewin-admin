@@ -56,7 +56,14 @@ function createPool(): Pool {
     // connections out of the database's 97 usable.
     max: process.env.VERCEL ? (pooled ? 4 : 1) : 5,
     idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis: 10_000,
+    // The acquire budget MUST outlast the worst statement we permit. pg-pool
+    // arms `connectionTimeoutMillis` on the QUEUE WAIT as well as on the TCP
+    // connect, so with a 10s budget and a 30s `statement_timeout` one slow
+    // Admin query starved every sibling queued behind it — including the
+    // `verifySession()` read every request makes — with `timeout exceeded when
+    // trying to connect`, which is not a query timeout and has no page-level
+    // fallback. 35s matches the MAIN primary pools in `src/lib/db.ts`.
+    connectionTimeoutMillis: 35_000,
     statement_timeout: 30_000,
     idle_in_transaction_session_timeout: 30_000,
     maxLifetimeSeconds: 600,

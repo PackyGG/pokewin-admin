@@ -235,17 +235,26 @@ export async function migrate(pool: pg.Pool): Promise<void> {
     // Both cleanup statements are best-effort: on a dead connection they would
     // otherwise throw out of `finally` and REPLACE the real migration error,
     // leaving the logs describing the symptom instead of the cause.
+    let cleanupError: Error | undefined;
+    const asError = (error: unknown): Error =>
+      error instanceof Error ? error : new Error(String(error));
     await client
       .query("SELECT pg_advisory_unlock($1)", [841_772_991])
       .catch((error: unknown) => {
+        cleanupError = asError(error);
         console.error("[migrate] advisory unlock failed", {
-          message: error instanceof Error ? error.message : String(error),
+          message: cleanupError.message,
         });
       });
-    await client.query("RESET statement_timeout").catch(() => {
-      // The connection is going back to the pool either way; pg discards a
-      // client it cannot reset.
+    await client.query("RESET statement_timeout").catch((error: unknown) => {
+      cleanupError ??= asError(error);
     });
-    client.release();
+    // Both statements above are session-scoped, so a failed cleanup on a
+    // still-live connection puts a client back into the shared runtime pool
+    // that may hold the migration advisory lock and/or statement_timeout=0 —
+    // silently removing the 15s bound from unrelated queries and blocking the
+    // next deploy's migrate(). Releasing WITH an error destroys the client
+    // instead of reusing it; the pool just opens a fresh one.
+    client.release(cleanupError);
   }
 }

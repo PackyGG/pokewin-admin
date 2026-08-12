@@ -163,12 +163,35 @@ export async function applyAbstractCatchallContainment(
     WHERE u.id = ${target.userId}
     ON CONFLICT (user_id) DO UPDATE SET
       locked_deposits_fiat = ARRAY['all']::text[],
-      locked_deposits_at = EXCLUDED.locked_deposits_at,
+      -- Keep the timestamp of the FIRST apply. The containment outbox retries
+      -- this whole function after any later leg fails (backend reward lock,
+      -- audit mirror), and re-stamping NOW() on every pass made "locked since"
+      -- drift with the retry instead of the containment. Only a lock this
+      -- automation already owns — same reason text — is preserved: a lock
+      -- another actor placed is still overwritten here and restored verbatim
+      -- by the release path, which matches on exactly this applied reason.
+      locked_deposits_at = CASE
+        WHEN user_feature_locks.locked_deposits_reason
+          = EXCLUDED.locked_deposits_reason
+        THEN COALESCE(
+          user_feature_locks.locked_deposits_at,
+          EXCLUDED.locked_deposits_at
+        )
+        ELSE EXCLUDED.locked_deposits_at
+      END,
       locked_deposits_by = NULL,
       locked_deposits_reason = EXCLUDED.locked_deposits_reason,
       locked_withdrawals_crypto = ARRAY['all']::text[],
       locked_withdrawals_items = TRUE,
-      locked_withdrawals_at = EXCLUDED.locked_withdrawals_at,
+      locked_withdrawals_at = CASE
+        WHEN user_feature_locks.locked_withdrawals_reason
+          = EXCLUDED.locked_withdrawals_reason
+        THEN COALESCE(
+          user_feature_locks.locked_withdrawals_at,
+          EXCLUDED.locked_withdrawals_at
+        )
+        ELSE EXCLUDED.locked_withdrawals_at
+      END,
       locked_withdrawals_by = NULL,
       locked_withdrawals_reason = EXCLUDED.locked_withdrawals_reason,
       updated_at = NOW()

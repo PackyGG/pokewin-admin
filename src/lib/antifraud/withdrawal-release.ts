@@ -566,7 +566,10 @@ export type WithdrawalRestoreOutcome =
   | { status: "relocked" }
   /** This case's clear never released anything, so there is nothing to undo. */
   | { status: "nothing_to_restore" }
-  /** MAIN rejected the write. The case is reopened but the account is open. */
+  /**
+   * MAIN rejected the write, or the account row no longer exists. Either way
+   * the case is reopened but the account is open.
+   */
   | { status: "failed" };
 
 /**
@@ -684,7 +687,18 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
         updated_at = NOW()
       RETURNING user_id
     `);
-    if (locked.rows.length === 0) return { status: "nothing_to_restore" };
+    if (locked.rows.length === 0) {
+      // The INSERT selects `FROM "user" WHERE id = …`, and the ON CONFLICT arm
+      // always returns its row, so zero rows means the account itself is gone.
+      // That is a re-lock that did NOT happen, not the no-op above — reporting
+      // it as `nothing_to_restore` would leave the analyst believing a reopened
+      // case is contained when nothing was written.
+      logError(
+        "antifraud.review.restoreWithdrawals",
+        `withdrawal re-lock matched no account for review ${reviewId}`,
+      );
+      return { status: "failed" };
+    }
   } catch (error) {
     logError(
       "antifraud.review.restoreWithdrawals",

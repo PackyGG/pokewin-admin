@@ -74,6 +74,23 @@ function needsReactivation(rule: IdentifierBlocklistRule): boolean {
   return !rule.enabled || rule.expiresAt !== null;
 }
 
+/**
+ * The monitor answers a mutation with the rule it actually stored. Nothing
+ * checked it, so a response that parsed but did NOT carry the requested
+ * blocking policy still let `applyIdentifierBlockOperation` stamp the outbox
+ * row `applied` — permanently retiring an obligation that was never met.
+ *
+ * Only the policy fields are asserted, not `value`: the monitor normalizes
+ * identifiers, and comparing those would turn a cosmetic difference into an
+ * obligation that retries forever. Same contract as the staff-side action in
+ * `_components/identifier-blocklist-actions.ts`.
+ */
+function assertBlockingRuleConfirmed(saved: IdentifierBlocklistRule): void {
+  if (!saved.enabled || saved.effect !== "block" || saved.expiresAt !== null) {
+    throw new Error("The Antifraud monitor did not confirm the blocklist rule.");
+  }
+}
+
 async function ensureKindBlocked(input: {
   kind: IdentifierBlocklistKind;
   values: string[];
@@ -104,7 +121,7 @@ async function ensureKindBlocked(input: {
         if (existing?.effect === "known_vpn") return false;
         if (existing && !needsReactivation(existing)) return false;
         if (existing) {
-          await updateIdentifierBlocklistRule({
+          const saved = await updateIdentifierBlocklistRule({
             kind: input.kind,
             id: existing.id,
             enabled: true,
@@ -115,11 +132,12 @@ async function ensureKindBlocked(input: {
             actorUsername: input.actorUsername,
             effect: "block",
           });
+          assertBlockingRuleConfirmed(saved);
           return true;
         }
 
         try {
-          await createIdentifierBlocklistRule({
+          const saved = await createIdentifierBlocklistRule({
             kind: input.kind,
             value,
             matchMode: "exact",
@@ -129,6 +147,7 @@ async function ensureKindBlocked(input: {
             actorId: input.actorId,
             actorUsername: input.actorUsername,
           });
+          assertBlockingRuleConfirmed(saved);
           return true;
         } catch (error) {
           // A concurrent operator may have inserted the same normalized IP

@@ -40,6 +40,7 @@ const row: RiskEventRow = {
 
 const quietLogger = {
   warn() {},
+  error() {},
 } as unknown as FastifyBaseLogger;
 
 function deliveryPool(
@@ -512,6 +513,73 @@ test("migration replays containment events skipped by the old cursor race", asyn
     migration,
     /WHERE dashboard_delivered_at IS NULL/,
   );
+});
+
+test("the one-hour write-off is reported, not silently discarded", async () => {
+  const errors: Record<string, unknown>[] = [];
+  const logger = {
+    warn() {},
+    error(payload: Record<string, unknown>) {
+      errors.push(payload);
+    },
+  } as unknown as FastifyBaseLogger;
+  const client = {
+    async query(sql: string) {
+      if (sql.includes("pg_try_advisory_xact_lock")) {
+        return { rows: [{ acquired: true }] };
+      }
+      if (sql.includes("WITH aged_out AS")) {
+        return {
+          rows: [
+            { event_type: "shared_device", expired: 4 },
+            { event_type: "whop_history_auto_ban", expired: 2 },
+          ],
+        };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const delivery = new IngestDelivery(
+    config,
+    { async connect() { return client; } } as unknown as pg.Pool,
+    logger,
+    async () => new Response(),
+  );
+
+  assert.equal(await delivery.flushOnce(), 0);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0]?.expired, 6);
+  // Containment is what makes an expiry an incident: the lock never issued.
+  assert.equal(errors[0]?.expiredContainment, 2);
+  assert.deepEqual(errors[0]?.byEventType, {
+    shared_device: 4,
+    whop_history_auto_ban: 2,
+  });
+});
+
+test("permanently unparseable events are dead-lettered, not retried forever", async () => {
+  const fixture = deliveryPool([row]);
+  const delivery = new IngestDelivery(
+    config,
+    fixture.pool,
+    quietLogger,
+    async () =>
+      new Response(
+        JSON.stringify({ ok: true, accepted: 0, stale: 0, skipped: 1 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  );
+
+  assert.equal(await delivery.flushOnce(), 1);
+  assert.equal(
+    fixture.queries.some((sql) =>
+      sql.includes("UPDATE risk_events") &&
+      sql.includes("id = ANY($1::uuid[])")
+    ),
+    true,
+  );
+  assert.equal(fixture.queries.at(-1), "COMMIT");
 });
 
 test("delivery retries back off to one minute", () => {

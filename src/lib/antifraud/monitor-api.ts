@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { getExcludedUserIdsStrict } from "@/lib/excluded-users/fetch";
 import { isNonActionableRewardEnrollmentSignal } from "@/lib/antifraud/signal-display";
+import { logError } from "@/lib/errors/logger";
 
 const scoreOptionSchema = z.object({
   key: z.string(),
@@ -74,6 +75,18 @@ export type AntifraudBehaviorRule = z.infer<typeof behaviorRuleSchema>;
 export type AntifraudMonitorEvent = z.infer<typeof monitorEventSchema>;
 
 const UPSTREAM_TIMEOUT_MS = 8_000;
+
+/**
+ * `AbortSignal.timeout` rejects with a DOMException named `TimeoutError`, which
+ * is not reliably `instanceof Error` across runtimes — read the name defensively.
+ */
+function isUpstreamTimeout(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: unknown }).name === "TimeoutError"
+  );
+}
 
 const runtimeConfigSchema = z.object({
   discord: z.object({
@@ -424,8 +437,16 @@ export const getAntifraudRuntimeConfig = cache(async (): Promise<{
       .object({ data: runtimeConfigSchema })
       .parse(await response.json());
     return { configured: true, data: payload.data, error: false };
-  } catch {
-    console.error("[antifraud-monitor] runtime config request failed");
+  } catch (error) {
+    // The try covers four distinct failures — DNS/connect, the 8s abort, a
+    // non-2xx turned into `Monitor API returned <status>`, and a Zod parse
+    // failure on schema drift. A bare `catch {}` collapsed all four into one
+    // string, so "the config panel is empty" was undiagnosable from the logs.
+    logError(
+      "antifraud.monitorApi.runtimeConfig",
+      "runtime config request failed",
+      error,
+    );
     return { configured: true, data: null, error: true };
   }
 });
@@ -456,8 +477,12 @@ export const getAntifraudNotificationRoutes = cache(async (): Promise<{
       .object({ data: notificationRoutesSchema })
       .parse(await response.json());
     return { configured: true, data: payload.data, error: false };
-  } catch {
-    console.error("[antifraud-monitor] notification routes request failed");
+  } catch (error) {
+    logError(
+      "antifraud.monitorApi.notificationRoutes",
+      "notification routes request failed",
+      error,
+    );
     return { configured: true, data: null, error: true };
   }
 });
@@ -485,8 +510,12 @@ export const getAntifraudPollerHealth = cache(async (): Promise<{
       .object({ data: pollerHealthSchema })
       .parse(await response.json());
     return { configured: true, data: payload.data, error: false };
-  } catch {
-    console.error("[antifraud-monitor] poller health request failed");
+  } catch (error) {
+    logError(
+      "antifraud.monitorApi.pollerHealth",
+      "poller health request failed",
+      error,
+    );
     return { configured: true, data: null, error: true };
   }
 });
@@ -815,9 +844,17 @@ export async function submitAntifraudCaseDecision(input: {
       },
     );
   } catch (error) {
-    console.error("[antifraud-monitor] decision request failed:", error);
+    logError("antifraud.monitorApi.decision", "decision request failed", error);
+    // A client-side abort proves only that WE stopped waiting: the POST may
+    // already have been received and committed before the response was lost.
+    // Telling the analyst it "was not recorded" and to retry is how a duplicate
+    // decision gets made — the retry mints a fresh idempotency key, so the
+    // service's keyed store cannot match it. A connect/DNS failure is different
+    // and keeps the original, stronger wording.
     throw new Error(
-      "The monitor service did not respond. The decision was not recorded — try again.",
+      isUpstreamTimeout(error)
+        ? "The monitor service did not respond in time. The decision may or may not have been recorded — reload the case before retrying."
+        : "The monitor service did not respond. The decision was not recorded — try again.",
     );
   }
 
@@ -846,10 +883,15 @@ export async function submitAntifraudCaseDecision(input: {
     throw new Error("Too many decisions right now — try again in a minute.");
   }
   if (!response.ok) {
-    console.error(
-      "[antifraud-monitor] decision returned",
-      response.status,
-      await response.text().catch(() => ""),
+    // Nothing bounds or filters what the monitor puts in an error body, and it
+    // can echo the request — which here is a case id, an actor and a free-text
+    // reason. Cap it and hand it to the logger's redaction rather than dumping
+    // it verbatim.
+    const body = (await response.text().catch(() => "")).slice(0, 300);
+    logError(
+      "antifraud.monitorApi.decision",
+      `decision returned ${response.status}`,
+      body || undefined,
     );
     throw new Error("The monitor service could not record that decision.");
   }

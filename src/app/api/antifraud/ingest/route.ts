@@ -31,6 +31,7 @@ import {
   appendAntifraudSecurityAudit,
   antifraudErrorCode,
 } from "@/lib/antifraud/security-audit";
+import { logError } from "@/lib/errors/logger";
 
 /**
  * Durable inbound webhook from the separate antifraud backend service.
@@ -201,6 +202,12 @@ export async function POST(request: Request): Promise<Response> {
   for (const signal of signals) {
     let correlationId: string;
     try {
+      // Pre-flight receipt, written BEFORE anything is stored so an
+      // unavailable audit fails the delivery CLOSED instead of acting
+      // unlogged. The `allowed` outcome is deliberately per-ATTEMPT: the audit
+      // INSERT's conflict clause only de-duplicates `succeeded`/`failed`, so a
+      // redelivery writes another row — `idempotencyKey` correlates the
+      // attempts here, it does not collapse them.
       correlationId = await appendAntifraudSecurityAudit({
         actorUsername: "system:antifraud-monitor",
         actorRoles: ["system"],
@@ -247,7 +254,11 @@ export async function POST(request: Request): Promise<Response> {
       if (isPostgresError(err, "42P01")) {
         return json({ error: "not_provisioned" }, 503);
       }
-      console.error("[antifraud-ingest] failed to store signal:", err);
+      // Never hand the raw throwable to `console.error`: a DrizzleQueryError's
+      // message carries the failed SQL text and its bound parameters, which for
+      // the ingest INSERT are the signal's target account and full payload.
+      // `logError` keeps the operational detail and drops that payload.
+      logError("antifraud.ingest", "failed to store signal", err);
       // 500 so the backend retries this delivery — the external_id unique
       // index makes the retry safe (id-less signals get a deterministic
       // synthetic id, see externalIdForSignal).
@@ -256,17 +267,10 @@ export async function POST(request: Request): Promise<Response> {
 
     if (result.outcome === "duplicate") {
       duplicates += 1;
-      await appendAntifraudSecurityAudit({
+      await appendOutcomeAudit({
         correlationId,
-        actorUsername: "system:antifraud-monitor",
-        actorRoles: ["system"],
-        sessionRef: `signed-ingest:${timestamp}`,
-        eventKind: "action",
-        action: `antifraud.automated:${signal.kind}`,
-        outcome: "succeeded",
-        targetType: "user",
-        targetId: signal.userId ?? signal.id,
-        idempotencyKey: signal.id,
+        timestamp,
+        signal,
         metadata: { duplicate: true },
       });
       continue;
@@ -274,17 +278,10 @@ export async function POST(request: Request): Promise<Response> {
     accepted += 1;
     if (result.outcome === "review_opened") reviewsOpened += 1;
     if (result.lockSkipped) locksSkipped += 1;
-    await appendAntifraudSecurityAudit({
+    await appendOutcomeAudit({
       correlationId,
-      actorUsername: "system:antifraud-monitor",
-      actorRoles: ["system"],
-      sessionRef: `signed-ingest:${timestamp}`,
-      eventKind: "action",
-      action: `antifraud.automated:${signal.kind}`,
-      outcome: "succeeded",
-      targetType: "user",
-      targetId: signal.userId ?? signal.id,
-      idempotencyKey: signal.id,
+      timestamp,
+      signal,
       metadata: {
         result: result.outcome,
         lockSkipped: result.lockSkipped,
@@ -297,6 +294,44 @@ export async function POST(request: Request): Promise<Response> {
     { ok: true, accepted, duplicates, stale, reviewsOpened, locksSkipped },
     200,
   );
+}
+
+/**
+ * The `succeeded` receipt for one signal, appended AFTER `ingestOne` committed.
+ *
+ * Deliberately never throws, unlike the pre-flight `allowed` append that fails
+ * the delivery closed at 503. By this point the ADMIN write is durable, so an
+ * unavailable audit sink escaping the handler would only turn a real success
+ * into a 500 and make the backend redeliver work that is already done — with
+ * every earlier signal in the batch reprocessed too. Log it and move on.
+ */
+async function appendOutcomeAudit(input: {
+  correlationId: string;
+  timestamp: string;
+  signal: AntifraudSignalEvent;
+  metadata: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    await appendAntifraudSecurityAudit({
+      correlationId: input.correlationId,
+      actorUsername: "system:antifraud-monitor",
+      actorRoles: ["system"],
+      sessionRef: `signed-ingest:${input.timestamp}`,
+      eventKind: "action",
+      action: `antifraud.automated:${input.signal.kind}`,
+      outcome: "succeeded",
+      targetType: "user",
+      targetId: input.signal.userId ?? input.signal.id,
+      idempotencyKey: input.signal.id,
+      metadata: input.metadata,
+    });
+  } catch (err) {
+    logError(
+      "antifraud.ingest",
+      `post-commit audit append failed for ${input.signal.kind}`,
+      err,
+    );
+  }
 }
 
 /**
@@ -316,6 +351,14 @@ type IngestResult = {
   outcome: "stored" | "review_opened" | "duplicate";
   /** Containment was permanently un-appliable and acked instead of retried. */
   lockSkipped: boolean;
+};
+
+/** The live-case columns the signal merge reads before rewriting them. */
+type LiveCaseRow = {
+  id: string;
+  severity: string;
+  risk_score: number | null;
+  signals: string[];
 };
 
 /**
@@ -455,30 +498,40 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
   let opened = false;
 
   if (shouldAttachToLiveCase && signal.userId) {
-    const [live] = await tx
-      .select({
-        id: antifraud_reviews.id,
-        severity: antifraud_reviews.severity,
-        risk_score: antifraud_reviews.risk_score,
-        signals: antifraud_reviews.signals,
-      })
-      .from(antifraud_reviews)
-      .where(
-        and(
-          eq(antifraud_reviews.target_user_id, signal.userId),
-          inArray(antifraud_reviews.status, ["open", "in_review"]),
-        ),
-      )
-      .limit(1)
-      // The merge below is read-modify-write; lock the row so two concurrent
-      // deliveries for the same account can't lose a signal-kind append or a
-      // severity escalation.
-      .for("update");
+    const selectLiveCase = async (
+      targetUserId: string,
+    ): Promise<LiveCaseRow[]> =>
+      tx
+        .select({
+          id: antifraud_reviews.id,
+          severity: antifraud_reviews.severity,
+          risk_score: antifraud_reviews.risk_score,
+          signals: antifraud_reviews.signals,
+        })
+        .from(antifraud_reviews)
+        .where(
+          and(
+            eq(antifraud_reviews.target_user_id, targetUserId),
+            inArray(antifraud_reviews.status, ["open", "in_review"]),
+          ),
+        )
+        .limit(1)
+        // The merge below is read-modify-write; lock the row so two concurrent
+        // deliveries for the same account can't lose a signal-kind append or a
+        // severity escalation.
+        .for("update");
 
-    if (live) {
-      reviewId = live.id;
-      // Merge onto the live case: escalate severity/score if this signal is
-      // worse, and record the rule key.
+    /**
+     * Merge onto the live case: escalate severity/score if this signal is
+     * worse, record the rule key, append the trail line.
+     *
+     * Shared by all three paths that end up on an existing case — the plain
+     * lookup and BOTH create-conflict branches below. The conflict branches
+     * used to only stamp `review_id`, so a signal that lost the create race
+     * silently lost its kind, its escalation and its trail entry: exactly the
+     * hazard the `FOR UPDATE` above exists to prevent.
+     */
+    const mergeOntoLiveCase = async (live: LiveCaseRow): Promise<void> => {
       const worseSeverity =
         SEVERITY_RANK[signal.severity] >
         SEVERITY_RANK[
@@ -507,6 +560,13 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
           body: trailEntry,
         });
       }
+    };
+
+    const [live] = await selectLiveCase(signal.userId);
+
+    if (live) {
+      reviewId = live.id;
+      await mergeOntoLiveCase(live);
     } else if (shouldOpenCase) {
       try {
         const [created] = await tx
@@ -528,34 +588,18 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
           reviewId = created.id;
           opened = true;
         } else {
-          const [winner] = await tx
-            .select({ id: antifraud_reviews.id })
-            .from(antifraud_reviews)
-            .where(
-              and(
-                eq(antifraud_reviews.target_user_id, signal.userId),
-                inArray(antifraud_reviews.status, ["open", "in_review"]),
-              ),
-            )
-            .limit(1);
+          const [winner] = await selectLiveCase(signal.userId);
           if (!winner) throw new Error("Concurrent live case was not found");
           reviewId = winner.id;
+          await mergeOntoLiveCase(winner);
         }
       } catch (err) {
         // Lost a race against a concurrent delivery for the same account —
         // the partial unique index did its job. Attach to the winner.
         if ((err as { code?: string })?.code === "23505") {
-          const [winner] = await tx
-            .select({ id: antifraud_reviews.id })
-            .from(antifraud_reviews)
-            .where(
-              and(
-                eq(antifraud_reviews.target_user_id, signal.userId),
-                inArray(antifraud_reviews.status, ["open", "in_review"]),
-              ),
-            )
-            .limit(1);
+          const [winner] = await selectLiveCase(signal.userId);
           reviewId = winner?.id ?? null;
+          if (winner) await mergeOntoLiveCase(winner);
         } else {
           throw err;
         }

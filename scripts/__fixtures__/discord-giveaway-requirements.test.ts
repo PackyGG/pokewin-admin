@@ -18,11 +18,15 @@ test("giveaway account requirements are durable, compatible, and server-enforced
   assert.match(establishedMigration, /'established_linked_packy_account'/);
   assert.match(createRoute, /"none",\s+"linked_packy_account",\s+"established_linked_packy_account"/);
   assert.match(service, /entry_requirement !== entryRequirement/);
-  assert.match(service, /row\.entry_requirement === "linked_packy_account"/);
-  assert.match(service, /row\.entry_requirement === "established_linked_packy_account"/);
+  // The locked giveaway row still decides whether a requirement applies; the
+  // MAIN-side check itself lives in `meetsEntryRequirement` so it can run
+  // before the transaction takes the row lock.
+  assert.match(service, /row\.entry_requirement !== "none"/);
+  assert.match(service, /requirement === "linked_packy_account"/);
+  assert.match(service, /requirement === "established_linked_packy_account"/);
   assert.match(service, /getProdReadDrizzleDb\(\)/);
   assert.match(service, /eq\(account\.providerId, "discord"\)/);
-  assert.match(service, /eq\(account\.accountId, input\.discordUserId\)/);
+  assert.match(service, /eq\(account\.accountId, discordUserId\)/);
   assert.match(service, /MINIMUM_PACKY_ACCOUNT_AGE_DAYS = 5/);
   assert.match(service, /MINIMUM_DISCORD_ACCOUNT_AGE_DAYS = 90/);
   assert.match(service, /innerJoin\(user, eq\(user\.id, account\.userId\)\)/);

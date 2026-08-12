@@ -15,10 +15,7 @@ import {
 import { adminDrizzle } from "@/lib/admin-db";
 import { antifraud_review_notes, antifraud_reviews, antifraud_signals } from "@/lib/db-schema/admin/schema";
 import { getReadDrizzleDb } from "@/lib/db";
-import { isPostgresError } from "@/lib/postgres-errors";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
-import { getLocalDayBounds } from "@/lib/timezone/core";
-import { getAdminDisplayTimeZone } from "@/lib/timezone/server";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   loadAdminIdentities,
@@ -120,9 +117,37 @@ export type ReviewNote = {
   createdAt: Date;
 };
 
-function isMissingRelationError(error: unknown): boolean {
-  return isPostgresError(error, "42P01");
-}
+/**
+ * The columns every review surface actually renders.
+ *
+ * `antifraud_reviews` also carries a `metadata` jsonb blob that neither
+ * {@link toRow} nor any queue card, dialog or case pane reads. A bare
+ * `select()` still decoded one of those per row — 51 per queue page — only to
+ * throw it away, so the reads below name their columns instead.
+ */
+const REVIEW_ROW_COLUMNS = {
+  id: antifraud_reviews.id,
+  target_user_id: antifraud_reviews.target_user_id,
+  target_username: antifraud_reviews.target_username,
+  status: antifraud_reviews.status,
+  severity: antifraud_reviews.severity,
+  source: antifraud_reviews.source,
+  risk_score: antifraud_reviews.risk_score,
+  reason: antifraud_reviews.reason,
+  signals: antifraud_reviews.signals,
+  assigned_to: antifraud_reviews.assigned_to,
+  opened_by: antifraud_reviews.opened_by,
+  resolution: antifraud_reviews.resolution,
+  resolved_by: antifraud_reviews.resolved_by,
+  resolved_at: antifraud_reviews.resolved_at,
+  created_at: antifraud_reviews.created_at,
+  updated_at: antifraud_reviews.updated_at,
+} as const;
+
+type ReviewRowSelection = Pick<
+  typeof antifraud_reviews.$inferSelect,
+  keyof typeof REVIEW_ROW_COLUMNS
+>;
 
 function toRow(row: {
   id: string;
@@ -197,6 +222,12 @@ export type ReviewFilters = {
  * `(target_user_id)` and `(created_at DESC, id DESC)`):
  *
  *   • status / assigned-to / bare list — served by one of those indexes.
+ *   • severity — NOT indexed. `antifraud_reviews` carries no index on
+ *     `severity` and none on the severity-rank expression the queue orders by
+ *     (see {@link listReviewPage}), so the band filter is a post-filter on the
+ *     status bitmap and the rank ordering is always an explicit sort. That is
+ *     acceptable while the open backlog is small; it needs the partial
+ *     expression index recorded in the index audit before the backlog grows.
  *   • search — each prefix ILIKE arm is covered by the pg_trgm GIN indexes
  *     installed by `20260726_antifraud_review_search_indexes.sql`; exact
  *     player ids can additionally use `antifraud_reviews_target_idx`. The same
@@ -266,34 +297,8 @@ function buildReviewConditions(filters: ReviewFilters): SQL[] {
   return conditions;
 }
 
-/**
- * Flat list, newest first. Used by surfaces that want a fixed handful of
- * cases (the overview's "needs work" strip). The paginated queue uses
- * {@link listReviewPage} instead — a bare `limit` silently hides everything
- * past it, which is fine for a preview strip and wrong for the queue.
- */
-export async function listReviews(
-  filters: ReviewFilters = {},
-): Promise<ReviewListItem[]> {
-  const limit = Math.min(Math.max(filters.limit ?? 100, 1), 300);
-  try {
-    const conditions = buildReviewConditions(filters);
-
-    const rows = await adminDrizzle.select().from(antifraud_reviews)
-      .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(desc(antifraud_reviews.created_at)).limit(limit);
-
-    return await attachQueueEnrichment(rows, { automatedActionTimes: true });
-  } catch (err) {
-    if (!isMissingRelationError(err)) {
-      console.error("[antifraud] listReviews failed:", err);
-    }
-    return [];
-  }
-}
-
 async function attachQueueEnrichment(
-  rows: (typeof antifraud_reviews.$inferSelect)[],
+  rows: ReviewRowSelection[],
   options: { automatedActionTimes: boolean },
 ): Promise<ReviewListItem[]> {
   // Queue cards do not render workflow evidence. Avoid spending one scarce
@@ -470,7 +475,7 @@ export async function listReviewPage(
   }
 
   const rowsPromise =
-    adminDrizzle.select().from(antifraud_reviews)
+    adminDrizzle.select(REVIEW_ROW_COLUMNS).from(antifraud_reviews)
       .where(pageConditions.length ? and(...pageConditions) : undefined)
       .orderBy(
         ...(filters.severityFirst ? [desc(severityRank)] : []),
@@ -558,12 +563,14 @@ export type ReviewDetail = {
   }[];
 };
 
-/** Reads the per-event score contribution out of a signal payload. */
-function signalScoreDelta(payload: unknown): number | null {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-    return null;
-  }
-  const raw = (payload as Record<string, unknown>).scoreDelta;
+/**
+ * Reads the per-event score contribution out of a signal payload.
+ *
+ * The key is now extracted in SQL (`payload -> 'scoreDelta'`), so this only has
+ * to reject the non-numeric shapes: producers that do not score per event leave
+ * the key out, and a non-object payload yields SQL NULL for the same reason.
+ */
+function signalScoreDelta(raw: unknown): number | null {
   return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
 }
 
@@ -595,7 +602,7 @@ export async function getReviewDetail(
   // no error ⇒ the id genuinely has no row.
   const head = await safeQueryOrNull(
     async () => {
-      const [row] = await adminDrizzle.select().from(antifraud_reviews)
+      const [row] = await adminDrizzle.select(REVIEW_ROW_COLUMNS).from(antifraud_reviews)
         .where(eq(antifraud_reviews.id, reviewId)).limit(1);
       return row ?? null;
     },
@@ -615,7 +622,21 @@ export async function getReviewDetail(
         adminDrizzle.select().from(antifraud_review_notes)
           .where(eq(antifraud_review_notes.review_id, reviewId))
           .orderBy(desc(antifraud_review_notes.created_at)).limit(200),
-        adminDrizzle.select().from(antifraud_signals)
+        adminDrizzle.select({
+          id: antifraud_signals.id,
+          kind: antifraud_signals.kind,
+          severity: antifraud_signals.severity,
+          summary: antifraud_signals.summary,
+          risk_score: antifraud_signals.risk_score,
+          received_at: antifraud_signals.received_at,
+          // The trail renders one number out of `payload`. Pulling just that
+          // key keeps the whole delivery blob — and the eight containment
+          // bookkeeping columns a bare `select()` also fetched — off the wire
+          // for all 25 rows. `->` returns jsonb, so a numeric value survives as
+          // a number and anything else arrives as a value signalScoreDelta
+          // already rejects.
+          score_delta: sql<unknown>`${antifraud_signals.payload} -> 'scoreDelta'`,
+        }).from(antifraud_signals)
           .where(
             and(
               eq(antifraud_signals.target_user_id, review.target_user_id),
@@ -767,7 +788,7 @@ export async function getReviewDetail(
           severity: s.severity,
           summary: s.summary,
           riskScore: s.risk_score,
-          scoreDelta: signalScoreDelta(s.payload),
+          scoreDelta: signalScoreDelta(s.score_delta),
           receivedAt: new Date(s.received_at),
         })),
       };
@@ -782,22 +803,6 @@ export async function getReviewDetail(
 
   return { kind: "ok", detail: body.data };
 }
-
-export type ReviewStats = {
-  open: number;
-  inReview: number;
-  resolvedToday: number;
-  flaggedTotal: number;
-  mineOpen: number;
-  postponed: number;
-};
-
-export type ReviewQueueStats = {
-  priority: number;
-  normal: number;
-  waitingKyc: number;
-  postponed: number;
-};
 
 export type AccountReviewTabCounts = {
   reviews: number;
@@ -832,7 +837,13 @@ export async function getAccountReviewTabCounts(): Promise<AccountReviewTabCount
       FROM antifraud_reviews AS review
       LEFT JOIN antifraud_review_workflow AS workflow
         ON workflow.review_id = review.id
-      WHERE review.severity IN ('high', 'critical')
+      -- Hoisted out of the three FILTER arms, which every one of them already
+      -- required, so the counts are unchanged. As an outer predicate it lets
+      -- antifraud_reviews_status_created_idx bound the scan to the live
+      -- backlog instead of joining every resolved case ever opened to the
+      -- workflow table on each render of the queue.
+      WHERE review.status IN ('open', 'in_review', 'escalated')
+        AND review.severity IN ('high', 'critical')
     `);
     const row = result.rows[0];
     return {
@@ -843,181 +854,5 @@ export async function getAccountReviewTabCounts(): Promise<AccountReviewTabCount
   } catch (error) {
     console.error("[antifraud] getAccountReviewTabCounts failed:", error);
     return empty;
-  }
-}
-
-export async function getReviewQueueStats(): Promise<ReviewQueueStats> {
-  const empty = { priority: 0, normal: 0, waitingKyc: 0, postponed: 0 };
-  try {
-    const result = await adminDrizzle.execute<{
-      priority: string;
-      normal: string;
-      waiting_kyc: string;
-      postponed: string;
-    }>(sql`
-      SELECT
-        COUNT(*) FILTER (
-          WHERE workflow.queue_state = 'priority'
-            AND NOT COALESCE(workflow.postponed_until > now(), false)
-        ) AS priority,
-        COUNT(*) FILTER (
-          WHERE COALESCE(workflow.queue_state, 'normal') = 'normal'
-            AND NOT COALESCE(workflow.postponed_until > now(), false)
-        ) AS normal,
-        COUNT(*) FILTER (
-          WHERE workflow.queue_state = 'waiting_kyc'
-            AND NOT COALESCE(workflow.postponed_until > now(), false)
-        ) AS waiting_kyc,
-        COUNT(*) FILTER (
-          WHERE workflow.postponed_until > now()
-        ) AS postponed
-      FROM antifraud_reviews AS review
-      LEFT JOIN antifraud_review_workflow AS workflow
-        ON workflow.review_id = review.id
-      WHERE review.status IN ('open', 'in_review', 'escalated')
-    `);
-    const row = result.rows[0];
-    return {
-      priority: Number(row?.priority ?? 0),
-      normal: Number(row?.normal ?? 0),
-      waitingKyc: Number(row?.waiting_kyc ?? 0),
-      postponed: Number(row?.postponed ?? 0),
-    };
-  } catch (error) {
-    console.error("[antifraud] getReviewQueueStats failed:", error);
-    return empty;
-  }
-}
-
-/** The dashboard KPI strip. One grouped count + three narrow counts. */
-export async function getReviewStats(
-  adminUserId?: string,
-  excludedTargetUserIds: readonly string[] = [],
-): Promise<ReviewStats> {
-  const empty: ReviewStats = {
-    open: 0,
-    inReview: 0,
-    resolvedToday: 0,
-    flaggedTotal: 0,
-    mineOpen: 0,
-    postponed: 0,
-  };
-  try {
-    // "Resolved today" means the ANALYST's today. `setHours(0,0,0,0)` uses the
-    // SERVER's zone, which on Vercel is UTC — so for anyone outside UTC the
-    // tile was wrong twice a day (cases resolved after local midnight were
-    // still counted as yesterday's, or vice versa). The workspace already
-    // carries a per-admin zone (profile preference → `admin_tz` cookie → UTC);
-    // `getLocalDayBounds` turns it into the exact half-open [start, end)
-    // instant pair for that zone, DST included.
-    const timeZone = await getAdminDisplayTimeZone();
-    const { start: startOfToday, end: endOfToday } = getLocalDayBounds(
-      new Date(),
-      timeZone,
-    );
-    const targetScope = excludedTargetUserIds.length
-      ? sql`
-          NOT (
-            ${antifraud_reviews.target_user_id} =
-            ANY(${pgArrayParam(excludedTargetUserIds)}::text[])
-          )
-        `
-      : sql`TRUE`;
-
-    const result = await adminDrizzle.execute<{
-      open: string; in_review: string; flagged: string; postponed: string;
-      resolved_today: string; mine_open: string;
-    }>(sql`
-      SELECT
-        COUNT(*) FILTER (
-          WHERE status = 'open'
-            AND NOT EXISTS (
-              SELECT 1 FROM antifraud_review_workflow workflow
-              WHERE workflow.review_id = antifraud_reviews.id
-                AND workflow.postponed_until > now()
-            )
-        ) AS open,
-        COUNT(*) FILTER (
-          WHERE status IN ('in_review', 'escalated')
-            AND NOT EXISTS (
-              SELECT 1 FROM antifraud_review_workflow workflow
-              WHERE workflow.review_id = antifraud_reviews.id
-                AND workflow.postponed_until > now()
-            )
-        ) AS in_review,
-        COUNT(*) FILTER (
-          WHERE status IN ('open', 'in_review', 'escalated')
-            AND EXISTS (
-              SELECT 1 FROM antifraud_review_workflow workflow
-              WHERE workflow.review_id = antifraud_reviews.id
-                AND workflow.postponed_until > now()
-            )
-        ) AS postponed,
-        COUNT(*) FILTER (WHERE status = 'flagged') AS flagged,
-        COUNT(*) FILTER (WHERE resolved_at >= ${startOfToday} AND resolved_at < ${endOfToday}) AS resolved_today,
-        COUNT(*) FILTER (WHERE assigned_to = ${adminUserId ?? null}::uuid AND status = ANY(${pgArrayParam([...REVIEW_QUEUE_STORAGE_STATUSES])}::text[])) AS mine_open
-      FROM antifraud_reviews
-      WHERE ${targetScope}
-    `);
-    const row = result.rows[0];
-    const value = (key: keyof NonNullable<typeof row>) => Number(row?.[key] ?? 0);
-
-    return {
-      open: value("open"), inReview: value("in_review"),
-      resolvedToday: value("resolved_today"),
-      flaggedTotal: value("flagged"),
-      mineOpen: value("mine_open"),
-      postponed: value("postponed"),
-    };
-  } catch (err) {
-    if (!isMissingRelationError(err)) {
-      console.error("[antifraud] getReviewStats failed:", err);
-    }
-    return empty;
-  }
-}
-
-export type SignalRow = {
-  id: string;
-  externalId: string | null;
-  kind: string;
-  severity: string;
-  riskScore: number | null;
-  targetUserId: string | null;
-  targetUsername: string | null;
-  summary: string;
-  reviewId: string | null;
-  receivedAt: Date;
-};
-
-/** The dashboard's recent-signal feed (the persisted twin of the live stream). */
-export async function listRecentSignals(limit = 25): Promise<SignalRow[]> {
-  try {
-    const rows = await adminDrizzle.select().from(antifraud_signals)
-      .where(
-        notInArray(
-          antifraud_signals.kind,
-          [...NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS],
-        ),
-      )
-      .orderBy(desc(antifraud_signals.received_at))
-      .limit(Math.min(Math.max(limit, 1), 100));
-    return rows.map((row) => ({
-      id: row.id,
-      externalId: row.external_id,
-      kind: row.kind,
-      severity: row.severity,
-      riskScore: row.risk_score,
-      targetUserId: row.target_user_id,
-      targetUsername: row.target_username,
-      summary: row.summary,
-      reviewId: row.review_id,
-      receivedAt: new Date(row.received_at),
-    }));
-  } catch (err) {
-    if (!isMissingRelationError(err)) {
-      console.error("[antifraud] listRecentSignals failed:", err);
-    }
-    return [];
   }
 }

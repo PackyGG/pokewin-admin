@@ -73,7 +73,10 @@ export function whopHistoryAutoBanTarget(signal: {
 /**
  * Idempotently ban the Packy account and revoke every active session. An
  * already-banned account is skipped so the automation never overwrites a
- * human or earlier system ban reason and never claims somebody else's ban.
+ * human or earlier system ban reason and never claims somebody else's ban —
+ * with one exception: a ban this very automation already placed is reported as
+ * `"banned"` again, because the guarded UPDATE cannot tell "somebody else got
+ * here first" from "my own outcome write was lost and I am being retried".
  */
 export async function applyWhopHistoryAutoBan(
   target: WhopHistoryAutoBanTarget,
@@ -95,7 +98,25 @@ export async function applyWhopHistoryAutoBan(
           && ARRAY['admin','support','creator']::text[]
       RETURNING id
     `);
-    if (result.rows.length !== 1) return "skipped";
+    if (result.rows.length !== 1) {
+      // Zero rows means "already banned", "missing", or "staff" — and on a
+      // retry the common cause is this automation's OWN earlier ban whose
+      // outcome write never landed. Reporting that as skipped left the outbox
+      // status `skipped` and `containment_applied_at` NULL, so Auto Bans
+      // rendered a "Skipped" badge with no ban time for an account that really
+      // is banned. `banned_by IS NULL` plus the exact reason string (it carries
+      // this payment id) can only ever match our own ban, so the "never claim
+      // somebody else's ban" contract still holds.
+      const priorAutoBan = await tx.execute<{ id: string }>(sql`
+        SELECT id
+        FROM "user"
+        WHERE id = ${target.userId}
+          AND is_banned = TRUE
+          AND banned_by IS NULL
+          AND banned_reason = ${target.reason}
+      `);
+      if (priorAutoBan.rows.length !== 1) return "skipped";
+    }
     await tx.execute(sql`
       DELETE FROM session WHERE "userId" = ${target.userId}
     `);

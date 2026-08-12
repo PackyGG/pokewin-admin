@@ -45,6 +45,17 @@ export function createFixedWindowIpLimiter(
       for (const [key, value] of windows) {
         if (value.resetAt <= currentTime) windows.delete(key);
       }
+      // The expiry sweep frees nothing when every window is still live, so a
+      // flood of distinct IPs would keep growing the map AND make each request
+      // pay a full iteration first. Map iteration is insertion-ordered, so
+      // dropping from the front evicts the windows closest to expiring — the
+      // correct victims for a fixed-window counter — and bounds both memory
+      // and the sweep cost above.
+      while (windows.size > 20_000) {
+        const oldest = windows.keys().next().value;
+        if (oldest === undefined) break;
+        windows.delete(oldest);
+      }
     }
     const window = windows.get(ip);
     if (!window || window.resetAt <= currentTime) {

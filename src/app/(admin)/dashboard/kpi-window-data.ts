@@ -41,6 +41,20 @@ const KPI_LEG_TIMEOUT_MS = 11_000;
 const KPI_PAYLOAD_TIMEOUT_MS = 13_000;
 
 /**
+ * Empty-but-valid GGR breakdown, returned FRESH each call so the degraded
+ * payload and the empty payload never share the same arrays.
+ */
+function emptyGgrBreakdown(): GgrBreakdown {
+  return {
+    wagers: [],
+    payouts: [],
+    wagersTotal: 0,
+    payoutsTotal: 0,
+    ggr: 0,
+  };
+}
+
+/**
  * Serializable snapshot of every dashboard KPI box for ONE window
  * ("today" or "24h"). Built from the shared `getDashboardKpiStats`
  * aggregate (+ the GGR breakdown legs) and handed to the client KPI
@@ -128,7 +142,7 @@ async function computeKpiWindowPayload(
   // too. The mirror pool's admission limiter bounds the actual DB concurrency,
   // so issuing them together costs nothing and keeps one slow leg off the
   // others' clock.
-  const [statsResult, cashflowResult, ggrBreakdown] = await Promise.all([
+  const [statsResult, cashflowResult, ggrBreakdownResult] = await Promise.all([
     safeQuery(
       () => getDashboardKpiStats(window),
       null,
@@ -141,16 +155,22 @@ async function computeKpiWindowPayload(
       "dashboard.cashflow",
       KPI_LEG_TIMEOUT_MS,
     ),
-    getGgrBreakdownForKpiWindow(window).catch(() => ({
-      wagers: [],
-      payouts: [],
-      wagersTotal: 0,
-      payoutsTotal: 0,
-      ggr: 0,
-    })),
+    // Same leg budget as the other two. A bare `.catch` covers a REJECTION but
+    // not a hang: without a timeout this leg could outlive
+    // KPI_PAYLOAD_TIMEOUT_MS, and when the outer backstop wins `partial` is
+    // never assigned — so a slow breakdown blanked the ENTIRE strip even
+    // though the stats and cash-flow legs had already succeeded. That is
+    // exactly the invariant documented on `buildResilientKpiWindowPayload`.
+    safeQuery(
+      () => getGgrBreakdownForKpiWindow(window),
+      emptyGgrBreakdown(),
+      "dashboard.ggrBreakdown",
+      KPI_LEG_TIMEOUT_MS,
+    ),
   ]);
   const stats = statsResult.data;
   const cashflow = cashflowResult.data;
+  const ggrBreakdown = ggrBreakdownResult.data;
 
   // The shared aggregate above produces the GGR and wager boxes. Cash-flow
   // figures use their dedicated PostgreSQL read so they stay aligned with the
@@ -238,13 +258,7 @@ export function emptyKpiWindowPayload(
     fiatRefundCount: 0,
     withdrawals: 0,
     withdrawalCount: 0,
-    ggrBreakdown: {
-      wagers: [],
-      payouts: [],
-      wagersTotal: 0,
-      payoutsTotal: 0,
-      ggr: 0,
-    },
+    ggrBreakdown: emptyGgrBreakdown(),
   };
 }
 

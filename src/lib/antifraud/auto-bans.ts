@@ -110,6 +110,13 @@ export async function listWhopAutoBans(input: {
   const statusFilter = selectedStatus
     ? sql`AND ${statusSql} = ${selectedStatus}`
     : sql``;
+  // `antifraud_signals` has no index on `kind`, so every one of these queries
+  // is a full pass over the signal stream. The unfiltered status GROUP BY
+  // already visits every whop auto-ban row, so without a search term its group
+  // totals *are* the count — running COUNT(*) beside it buys a second scan and
+  // no new information. Only a search narrows the set in a way the GROUP BY
+  // cannot express, and only then is the extra pass earned.
+  const needsCountScan = search !== null;
 
   const [rows, totals, states] = await Promise.all([
     adminDrizzle.execute<RawRow>(sql`
@@ -140,13 +147,15 @@ export async function listWhopAutoBans(input: {
       ORDER BY received_at DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `),
-    adminDrizzle.execute<{ total: string }>(sql`
-      SELECT COUNT(*)::text AS total
-      FROM antifraud_signals
-      WHERE kind='whop_history_auto_ban'
-        ${searchFilter}
-        ${statusFilter}
-    `),
+    needsCountScan
+      ? adminDrizzle.execute<{ total: string }>(sql`
+          SELECT COUNT(*)::text AS total
+          FROM antifraud_signals
+          WHERE kind='whop_history_auto_ban'
+            ${searchFilter}
+            ${statusFilter}
+        `)
+      : null,
     adminDrizzle.execute<{ status: string; total: string }>(sql`
       SELECT ${statusSql} AS status, COUNT(*)::text AS total
       FROM antifraud_signals
@@ -154,18 +163,24 @@ export async function listWhopAutoBans(input: {
       GROUP BY ${statusSql}
     `),
   ]);
-  const total = Number(totals.rows[0]?.total ?? 0);
   const counts = {
     pending: 0,
     applied: 0,
     failed: 0,
     skipped: 0,
   } satisfies Record<WhopAutoBanRow["status"], number>;
+  let unfilteredTotal = 0;
   for (const row of states.rows) {
+    unfilteredTotal += Number(row.total) || 0;
     if (row.status in counts) {
       counts[row.status as keyof typeof counts] = Number(row.total) || 0;
     }
   }
+  const total = totals
+    ? Number(totals.rows[0]?.total ?? 0)
+    : selectedStatus
+      ? counts[selectedStatus as WhopAutoBanRow["status"]]
+      : unfilteredTotal;
   return {
     data: rows.rows.map(mapRow),
     pagination: {
