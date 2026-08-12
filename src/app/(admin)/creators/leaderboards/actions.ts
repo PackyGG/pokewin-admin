@@ -239,6 +239,8 @@ function revalidate(id: string): void {
     // Cost/profitability surfaces combine backend board terms with the
     // admin-side per-board house-share annotation.
     revalidateTag("creators-leaderboard-cost");
+    revalidateTag("profitability-past-deals");
+    revalidateTag("creator-hub-4w-summary");
 }
 
 /**
