@@ -5,7 +5,7 @@
     "buildCommand": "npm ci && npm run build"
   },
   "deploy": {
-    "startCommand": "npm start",
+    "startCommand": "node --enable-source-maps --import ./dist/src/instrument.js dist/src/server.js",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
