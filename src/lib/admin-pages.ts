@@ -24,7 +24,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // in place through reviewed Admin SQL, so anyone who
   // had /top-chatters granted keeps access. Note the PAYOUT step also
   // requires /users — it goes through the normal balance-adjustment path.
-  { group: "Navigation", label: "Chat Raffle", key: "/chat-raffle" },
+  { group: "Navigation", label: "Chat Leaderboard", key: "/chat-raffle" },
   // Player CRM was folded into the owner-only Insights Overview as a tab
   // (/insights/real-numbers?tab=crm); /crm now 308-redirects there and its
   // permission inherits from /insights/real-numbers, so the standalone /crm

@@ -212,7 +212,7 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
   {
     id: "nav.chat-raffle",
     group: "Players",
-    label: "Chat Raffle",
+    label: "Chat Leaderboard",
     href: "/chat-raffle",
     pageKey: "/chat-raffle",
     icon: "Dices",

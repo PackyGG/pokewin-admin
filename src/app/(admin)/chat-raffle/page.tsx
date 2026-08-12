@@ -63,7 +63,7 @@ import {
   RoundFormDialog,
 } from "./chat-raffle-dialogs";
 
-export const metadata = { title: "Chat Raffle" };
+export const metadata = { title: "Chat Leaderboard" };
 
 /**
  * Players → Chat Raffle.

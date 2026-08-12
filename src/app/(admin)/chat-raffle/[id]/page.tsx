@@ -33,7 +33,7 @@ import {
 } from "@/lib/chat-raffle/rounds";
 import { PayPrizeDialog } from "../chat-raffle-dialogs";
 
-export const metadata = { title: "Chat Raffle round" };
+export const metadata = { title: "Chat Leaderboard round" };
 
 const DETAIL_TIMEOUT_MS = 10_000;
 
