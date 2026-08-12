@@ -32,7 +32,7 @@ test("failed or unrouted Discord delivery leaves reviews retryable", async () =>
   assert.match(detector, /SET discord_alerted_at = now\(\)/);
 });
 
-test("only a confirmed manual decision adds the Rain reward lock", async () => {
+test("only a confirmed manual decision adds Rain, tips, and sponsored-battle locks", async () => {
   const action = await readFile(actionPath, "utf8");
   assert.match(action, /decision === "confirm"/);
   assert.match(action, /requireCapability[\s\S]*__can_toggle_feature_locks/);
@@ -46,6 +46,10 @@ test("only a confirmed manual decision adds the Rain reward lock", async () => {
   assert.match(action, /getUserFeatureLocks/);
   assert.match(action, /updateUserRewardLocks/);
   assert.match(action, /\.\.\.current\.locked_reward_categories/);
+  assert.match(action, /"rain" as const/);
+  assert.match(action, /"tips" as const/);
+  assert.match(action, /"sponsored_battles" as const/);
+  assert.match(action, /requiredLocks\.every/);
   assert.match(action, /review\.status !== "pending"/);
   assert.match(action, /pg_advisory_xact_lock/);
 });
@@ -78,7 +82,8 @@ test("reward abuse page exposes explicit unambiguous staff decisions", async () 
     "src/app/(antifraud)/antifraud/reward-abuse/review-actions.tsx",
     "utf8",
   );
-  assert.match(controls, /Confirm abuse & disable Rain/);
+  assert.match(controls, /Confirm abuse & lock rewards/);
+  assert.match(controls, /Lock Rain, tips, and sponsored battles/);
   assert.match(controls, /Dismiss finding/);
 });
 

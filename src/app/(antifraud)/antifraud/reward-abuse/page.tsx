@@ -273,7 +273,7 @@ function ReviewCard({ review }: { review: RewardAbuseReview }) {
               {review.reviewerUsername ?? "Staff"} ·{" "}
               {review.reviewedAt ? formatDateTime(review.reviewedAt) : ""}
               {review.rainLockApplied
-                ? ` · Rain disabled${review.rainFundsRemovedUsd > 0 ? ` · ${usd(review.rainFundsRemovedUsd)} removed` : " · No balance removed"}`
+                ? ` · Rain, tips & sponsored battles locked${review.rainFundsRemovedUsd > 0 ? ` · ${usd(review.rainFundsRemovedUsd)} removed` : " · No balance removed"}`
                 : " · No account change"}
             </p>
           </div>

@@ -35,17 +35,17 @@ function DecisionDialog({
       <AlertDialogTrigger render={
         <Button variant={confirming ? "destructive" : "outline"} size="sm">
           {confirming ? <Ban /> : <XCircle />}
-          {confirming ? "Confirm abuse & disable Rain" : "Dismiss finding"}
+          {confirming ? "Confirm abuse & lock rewards" : "Dismiss finding"}
         </Button>
       } />
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {confirming ? "Disable Rain rewards for this account?" : "Dismiss this finding?"}
+            {confirming ? "Lock Rain, tips, and sponsored battles?" : "Dismiss this finding?"}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {confirming
-              ? "This disables future Rain joins and tips and removes remaining Rain-attributable general-bonus funds, capped by both the reviewed net Rain and the live available balance. The balance can never go below $0. Any active rain already joined still settles normally."
+              ? "This disables future Rain participation, tips, and sponsored battles. It also removes remaining Rain-attributable general-bonus funds, capped by both the reviewed net Rain and the live available balance. The balance can never go below $0. Any active rain already joined still settles normally."
               : "The account will remain unchanged and will not be detected again for 30 days."}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -82,7 +82,7 @@ function DecisionDialog({
                 }
                 toast.success(
                   confirming
-                    ? `Abuse confirmed, Rain disabled, and $${result.rainFundsRemovedUsd.toFixed(2)} removed`
+                    ? `Abuse confirmed, rewards locked, and $${result.rainFundsRemovedUsd.toFixed(2)} removed`
                     : "Finding dismissed — no account changes made",
                 );
                 setCredential("");
@@ -92,7 +92,7 @@ function DecisionDialog({
             }}
           >
             {pending ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
-            {confirming ? "Confirm and disable Rain" : "Dismiss finding"}
+            {confirming ? "Confirm and lock rewards" : "Dismiss finding"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

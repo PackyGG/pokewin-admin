@@ -215,9 +215,9 @@ export async function decideRewardAbuseReview(
     try {
       await Promise.all([
         requireCapability(
-          session,
-          "__can_toggle_feature_locks",
-          "disable Rain rewards after confirming abuse",
+        session,
+        "__can_toggle_feature_locks",
+        "lock Rain, tips, and sponsored battles after confirming abuse",
         ),
         requireCapability(
           session,
@@ -278,7 +278,7 @@ export async function decideRewardAbuseReview(
       return {
         result: {
           ok: false,
-          message: "Rain funds were already processed for this review. Confirm it again to finish applying the Rain lock.",
+          message: "Rain funds were already processed for this review. Confirm it again to finish applying the reward locks.",
         } as const,
       };
     }
@@ -299,11 +299,14 @@ export async function decideRewardAbuseReview(
       rainForfeitLedgerTxId = forfeit.ledgerTransactionId;
 
       // The deployed backend exposes a replacement-style reward-lock API.
-      // Preserve all currently locked categories and add only Rain.
+      // Preserve all currently locked categories and add every reward surface
+      // covered by a confirmed Rain-abuse finding.
       const current = await getUserFeatureLocks(review.userId);
       const categories = [...new Set([
         ...current.locked_reward_categories,
         "rain" as const,
+        "tips" as const,
+        "sponsored_battles" as const,
       ])];
       const updated = await updateUserRewardLocks(
         review.userId,
@@ -311,8 +314,13 @@ export async function decideRewardAbuseReview(
         session.userId,
         `Confirmed rain reward abuse: ${reason}`,
       );
+      const requiredLocks = ["rain", "tips", "sponsored_battles"] as const;
       rainLocked = updated.locked_reward_categories.includes("rain");
-      if (!rainLocked) throw new Error("Backend did not confirm the Rain lock");
+      if (!requiredLocks.every((category) =>
+        updated.locked_reward_categories.includes(category)
+      )) {
+        throw new Error("Backend did not confirm all reward-abuse locks");
+      }
     }
 
     await tx.update(reward_abuse_reviews).set({
@@ -334,7 +342,7 @@ export async function decideRewardAbuseReview(
     return {
       result: {
         ok: false,
-        message: "Rain access or attributable balance could not be updated, so the review was left pending. Try again.",
+        message: "Reward access or attributable balance could not be updated, so the review was left pending. Try again.",
       } as const,
     };
   });
