@@ -13,6 +13,10 @@ const LEADER_LOCK = 841_772_993;
 // Keep each signed request below the dashboard's function timeout even when
 // an entire batch contains withdrawal-lock commands.
 const BATCH_SIZE = 10;
+// Containment admission may trigger several bounded downstream lock calls in
+// the dashboard. Keep those requests single-account so one slow target cannot
+// push an otherwise healthy batch past the end-to-end delivery deadline.
+const CONTAINMENT_BATCH_SIZE = 1;
 const DELIVERY_INTERVAL_MS = 5_000;
 const DELIVERY_TIMEOUT_MS = 10_000;
 const MAX_BACKOFF_MS = 60_000;
@@ -271,7 +275,7 @@ export class IngestDelivery {
             re.id
           LIMIT $1
         `,
-        [BATCH_SIZE],
+        [CONTAINMENT_BATCH_SIZE],
       );
 
       // The blacklist half keeps the original LEFT JOIN and its exact ON
@@ -302,7 +306,7 @@ export class IngestDelivery {
           ORDER BY re.recorded_at, re.id
           LIMIT $1
         `,
-        [BATCH_SIZE],
+        [CONTAINMENT_BATCH_SIZE],
       );
 
       // The two reads are disjoint on `event_type` in SQL; re-asserting it in
@@ -318,7 +322,7 @@ export class IngestDelivery {
         ),
       ]
         .sort(byContainmentDeliveryOrder)
-        .slice(0, BATCH_SIZE);
+        .slice(0, CONTAINMENT_BATCH_SIZE);
       if (containmentRows.length > 0) {
         await this.deliverEvents(containmentRows);
         await this.confirmDashboardEvents(client, containmentRows);
@@ -393,24 +397,49 @@ export class IngestDelivery {
       events: events.map(ingestEvent),
     });
     const timestamp = String(Date.now());
-    const response = await this.send(target.url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-antifraud-timestamp": timestamp,
-        "x-antifraud-signature": signIngest(
-          target.secret,
-          timestamp,
-          rawBody,
-        ),
-      },
-      body: rawBody,
-      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+    const controller = new AbortController();
+    let timeout: NodeJS.Timeout | null = null;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(new Error("Dashboard ingest timed out"));
+      }, DELIVERY_TIMEOUT_MS);
+      timeout.unref();
     });
-    if (!response.ok) {
-      throw new Error(`Dashboard ingest returned HTTP ${response.status}`);
+    let result: IngestResponse;
+    try {
+      // Race the complete response-body read, not only the initial fetch.
+      // Some runtimes resolve fetch after headers and then ignore an abort
+      // while a streamed body stalls; the explicit deadline still releases
+      // the database lease and lets the durable event retry.
+      result = await Promise.race([
+        (async () => {
+          const response = await this.send(target.url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-antifraud-timestamp": timestamp,
+              "x-antifraud-signature": signIngest(
+                target.secret,
+                timestamp,
+                rawBody,
+              ),
+            },
+            body: rawBody,
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            throw new Error(
+              `Dashboard ingest returned HTTP ${response.status}`,
+            );
+          }
+          return (await response.json()) as IngestResponse;
+        })(),
+        deadline,
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
-    const result = (await response.json()) as IngestResponse;
     const confirmed =
       Number(result.accepted ?? 0) + Number(result.duplicates ?? 0);
     if (result.ok !== true || confirmed !== events.length) {
@@ -482,7 +511,7 @@ export class IngestDelivery {
       this.lastSuccessAt = new Date().toISOString();
       this.consecutiveFailures = 0;
       this.nextAttemptAt = 0;
-      if (delivered === BATCH_SIZE && !this.stopped) {
+      if (delivered > 0 && !this.stopped) {
         setImmediate(() => void this.tick());
       }
     } catch (error) {

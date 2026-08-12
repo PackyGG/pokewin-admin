@@ -358,6 +358,9 @@ test("signed delivery batches stay bounded for containment writes", async () => 
     readFile(new URL("../src/ingest-delivery.ts", import.meta.url), "utf8")
   );
   assert.match(source, /const BATCH_SIZE = 10/);
+  assert.match(source, /const CONTAINMENT_BATCH_SIZE = 1/);
+  assert.match(source, /Promise\.race\(\[/);
+  assert.match(source, /if \(delivered > 0 && !this\.stopped\)/);
 });
 
 test("partial confirmation keeps the cursor for an idempotent retry", async () => {
