@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { listWhopAutoBans, type WhopAutoBanRow } from "@/lib/antifraud/auto-bans";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
-import { formatRelative } from "@/lib/utils/format";
+import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import { ListSearchForm } from "../_components/list-search-form";
 
 export const metadata = { title: "Auto Bans · Antifraud" };
@@ -124,7 +124,9 @@ export default async function AutoBansPage({
                     <span>Payment: {row.paymentId ?? "Unavailable"}</span>
                     <span>Intent: {row.depositIntentId ?? "Unavailable"}</span>
                     <span>Detected {formatRelative(row.detectedAt)}</span>
-                    {row.appliedAt && <span>Applied {formatRelative(row.appliedAt)}</span>}
+                    {row.appliedAt && (
+                      <span>Banned {formatDateTime(row.appliedAt)}</span>
+                    )}
                     <span>{row.attempts} containment attempt(s)</span>
                   </div>
                   {row.error && (

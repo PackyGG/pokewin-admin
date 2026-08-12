@@ -19,6 +19,7 @@ const BATCH_SIZE = 10;
 const CONTAINMENT_BATCH_SIZE = 1;
 const DELIVERY_INTERVAL_MS = 5_000;
 const DELIVERY_TIMEOUT_MS = 10_000;
+const DELIVERY_MAX_AGE_SQL = "1 hour";
 const MAX_BACKOFF_MS = 60_000;
 const MAX_EVIDENCE_PAYLOAD_BYTES = 3 * 1024;
 
@@ -57,6 +58,7 @@ type IngestResponse = {
   ok?: unknown;
   accepted?: unknown;
   duplicates?: unknown;
+  stale?: unknown;
 };
 
 // Containment signals that are gated purely on `dashboard_delivered_at`.
@@ -240,6 +242,20 @@ export class IngestDelivery {
         return 0;
       }
 
+      // Account Review is an operational queue, not a historical event
+      // archive. If delivery was unavailable for longer than one hour, close
+      // the old dashboard receipts without replaying stale cases or automatic
+      // containment. Discord has its own durable receipt and is unaffected.
+      await client.query(
+        `
+          UPDATE risk_events
+          SET dashboard_delivered_at = COALESCE(dashboard_delivered_at, now())
+          WHERE dashboard_delivered_at IS NULL
+            AND occurred_at < now() - $1::interval
+        `,
+        [DELIVERY_MAX_AGE_SQL],
+      );
+
       // Split deliberately into two indexable reads instead of one six-branch
       // disjunction over a post-join column. The old shape referenced
       // `match.lock_delivered_at` inside the OR, so the whole predicate had to
@@ -258,6 +274,7 @@ export class IngestDelivery {
           FROM risk_events re
           JOIN subjects s ON s.user_id = re.user_id
           WHERE re.dashboard_delivered_at IS NULL
+            AND re.occurred_at >= now() - $2::interval
             AND (
               re.event_type = 'abstract_email_catchall'
               OR re.event_type = 'behavioral_withdrawal_containment'
@@ -275,7 +292,7 @@ export class IngestDelivery {
             re.id
           LIMIT $1
         `,
-        [CONTAINMENT_BATCH_SIZE],
+        [CONTAINMENT_BATCH_SIZE, DELIVERY_MAX_AGE_SQL],
       );
 
       // The blacklist half keeps the original LEFT JOIN and its exact ON
@@ -305,12 +322,13 @@ export class IngestDelivery {
                 'blacklisted-checkout:' || match.source_event_id
             )
           WHERE re.event_type = 'fiat_blacklisted_email_domain'
+            AND re.occurred_at >= now() - $2::interval
             AND match.lock_delivered_at IS NULL
             AND re.payload ->> 'reviewOnly' IS DISTINCT FROM 'true'
           ORDER BY re.recorded_at, re.id
           LIMIT $1
         `,
-        [CONTAINMENT_BATCH_SIZE],
+        [CONTAINMENT_BATCH_SIZE, DELIVERY_MAX_AGE_SQL],
       );
 
       // The two reads are disjoint on `event_type` in SQL; re-asserting it in
@@ -349,10 +367,11 @@ export class IngestDelivery {
           -- but committed after the cursor advanced. This receipt is written
           -- only after the dashboard confirms the complete signed batch.
           WHERE re.dashboard_delivered_at IS NULL
+            AND re.occurred_at >= now() - $2::interval
           ORDER BY re.recorded_at, re.id
           LIMIT $1
         `,
-        [BATCH_SIZE],
+        [BATCH_SIZE, DELIVERY_MAX_AGE_SQL],
       );
       if (events.rows.length === 0) {
         await client.query("COMMIT");
@@ -445,7 +464,9 @@ export class IngestDelivery {
       if (timeout) clearTimeout(timeout);
     }
     const confirmed =
-      Number(result.accepted ?? 0) + Number(result.duplicates ?? 0);
+      Number(result.accepted ?? 0) +
+      Number(result.duplicates ?? 0) +
+      Number(result.stale ?? 0);
     if (result.ok !== true || confirmed !== events.length) {
       throw new Error(
         `Dashboard ingest confirmed ${confirmed}/${events.length} events`,

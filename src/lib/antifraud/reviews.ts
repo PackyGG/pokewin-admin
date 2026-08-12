@@ -109,6 +109,8 @@ export type ReviewListItem = ReviewRow & {
   assignee: AdminIdentity | null;
   opener: AdminIdentity | null;
   workflow: ReviewWorkflow | null;
+  /** Exact time the automatic containment write completed. */
+  automatedActionAt: Date | null;
 };
 
 export type ReviewNote = {
@@ -298,16 +300,39 @@ async function attachIdentities(
   // Independent reads — the workflow lookup does not need the identities.
   // Awaiting them in sequence put a second full round-trip on the hottest
   // path in the workspace (every queue page and every case dialog).
-  const [identities, workflows] = await Promise.all([
+  const reviewIds = rows.map((row) => row.id);
+  const [identities, workflows, actionTimes] = await Promise.all([
     loadAdminIdentities(rows.flatMap((r) => [r.assigned_to, r.opened_by])),
-    loadReviewWorkflows(rows.map((row) => row.id)),
+    loadReviewWorkflows(reviewIds),
+    loadAutomatedActionTimes(reviewIds),
   ]);
   return rows.map((row) => ({
     ...toRow(row),
     assignee: row.assigned_to ? identities.get(row.assigned_to) ?? null : null,
     opener: row.opened_by ? identities.get(row.opened_by) ?? null : null,
     workflow: workflows.get(row.id) ?? null,
+    automatedActionAt: actionTimes.get(row.id) ?? null,
   }));
+}
+
+async function loadAutomatedActionTimes(
+  reviewIds: readonly string[],
+): Promise<Map<string, Date>> {
+  if (reviewIds.length === 0) return new Map();
+  const result = await adminDrizzle.execute<{
+    review_id: string;
+    action_at: string;
+  }>(sql`
+    SELECT review_id::text, MAX(containment_applied_at)::text AS action_at
+    FROM antifraud_signals
+    WHERE review_id = ANY(${pgArrayParam(reviewIds)}::uuid[])
+      AND kind = ANY(${pgArrayParam([...AUTO_BANNED_REVIEW_SIGNAL_KINDS])}::text[])
+      AND containment_applied_at IS NOT NULL
+    GROUP BY review_id
+  `);
+  return new Map(
+    result.rows.map((row) => [row.review_id, new Date(row.action_at)]),
+  );
 }
 
 // ─── Keyset pagination ────────────────────────────────────────────────────

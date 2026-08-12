@@ -540,17 +540,32 @@ function CaseRow({
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-3 lg:justify-end">
           <div className="text-left lg:text-right">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Opened by{" "}
-              {review.opener?.label ??
-                (review.openedBy ? "Unknown staff" : "Antifraud monitor")}
-            </p>
-            <p
-              className="text-xs font-medium tabular-nums"
-              title={formatDateTime(review.createdAt)}
-            >
-              {formatRelative(review.createdAt)}
-            </p>
+            {tab === "auto-banned" ? (
+              <>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Automatically contained at
+                </p>
+                <p className="text-xs font-medium tabular-nums">
+                  {formatDateTime(
+                    review.automatedActionAt ?? review.createdAt,
+                  )}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Opened by{" "}
+                  {review.opener?.label ??
+                    (review.openedBy ? "Unknown staff" : "Antifraud monitor")}
+                </p>
+                <p
+                  className="text-xs font-medium tabular-nums"
+                  title={formatDateTime(review.createdAt)}
+                >
+                  {formatRelative(review.createdAt)}
+                </p>
+              </>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             <HostLink

@@ -88,6 +88,9 @@ const MAX_SKEW_MS = 5 * 60 * 1000;
 /** Cap on one delivery so a malformed batch can't fan out unbounded work. */
 const MAX_EVENTS_PER_DELIVERY = 50;
 
+/** Account Review intentionally ignores historical delivery replays. */
+const MAX_EVENT_AGE_MS = 60 * 60 * 1000;
+
 /**
  * Body size ceiling in BYTES. A too-large `Content-Length` is rejected before
  * the body is read; because the header is optional (and spoofable) the
@@ -167,16 +170,27 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "too_many_events" }, 400);
   }
 
-  const signals = rawEvents
+  const parsedSignals = rawEvents
     .map(parseAntifraudEvent)
     .filter(
       (event): event is AntifraudSignalEvent =>
         event !== null && event.type === "signal",
     );
+  const oldestAcceptedAt = Date.now() - MAX_EVENT_AGE_MS;
+  const signals = parsedSignals.filter((event) => {
+    const occurredAt = Date.parse(event.at);
+    return Number.isFinite(occurredAt) && occurredAt >= oldestAcceptedAt;
+  });
+  const stale = parsedSignals.length - signals.length;
 
   if (signals.length === 0) {
     // Well-formed but nothing actionable — a 200 stops the backend retrying.
-    return json({ ok: true, accepted: 0, skipped: rawEvents.length }, 200);
+    return json({
+      ok: true,
+      accepted: 0,
+      stale,
+      skipped: rawEvents.length - parsedSignals.length,
+    }, 200);
   }
 
   let accepted = 0;
@@ -279,7 +293,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   return json(
-    { ok: true, accepted, duplicates, reviewsOpened, locksSkipped },
+    { ok: true, accepted, duplicates, stale, reviewsOpened, locksSkipped },
     200,
   );
 }

@@ -367,6 +367,14 @@ test("signed delivery batches stay bounded for containment writes", async () => 
   );
   assert.match(source, /const BATCH_SIZE = 10/);
   assert.match(source, /const CONTAINMENT_BATCH_SIZE = 1/);
+  assert.match(source, /const DELIVERY_MAX_AGE_SQL = "1 hour"/);
+  assert.match(source, /occurred_at < now\(\) - \$1::interval/);
+  assert.equal(
+    fixture.queries.filter((sql) =>
+      sql.includes("occurred_at >= now() - $2::interval")
+    ).length,
+    3,
+  );
   assert.match(source, /Promise\.race\(\[/);
   assert.match(source, /if \(delivered > 0 && !this\.stopped\)/);
 });
@@ -394,11 +402,35 @@ test("partial confirmation keeps the cursor for an idempotent retry", async () =
   assert.equal(
     fixture.queries.some((sql) =>
       sql.includes("UPDATE risk_events") &&
-      sql.includes("dashboard_delivered_at")
+      sql.includes("id = ANY($1::uuid[])")
     ),
     false,
   );
   assert.equal(fixture.queries.at(-1), "ROLLBACK");
+});
+
+test("dashboard-declared stale events are acknowledged without retry", async () => {
+  const fixture = deliveryPool([row]);
+  const delivery = new IngestDelivery(
+    config,
+    fixture.pool,
+    quietLogger,
+    async () =>
+      new Response(
+        JSON.stringify({ ok: true, accepted: 0, duplicates: 0, stale: 1 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  );
+
+  assert.equal(await delivery.flushOnce(), 1);
+  assert.equal(
+    fixture.queries.some((sql) =>
+      sql.includes("UPDATE risk_events") &&
+      sql.includes("id = ANY($1::uuid[])")
+    ),
+    true,
+  );
+  assert.equal(fixture.queries.at(-1), "COMMIT");
 });
 
 test("delivery leader lease is transaction-scoped", async () => {

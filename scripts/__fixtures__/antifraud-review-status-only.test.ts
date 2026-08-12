@@ -22,6 +22,9 @@ test("Account Review exposes the simplified high-risk workflow", async () => {
   assert.match(reads, /filters\.severities/);
   assert.match(reads, /isUsefulReviewSignalTrailEntry\(note\.body\)/);
   assert.match(ingest, /isUsefulReviewSignalTrailEntry\(trailEntry\)/);
+  assert.match(ingest, /const MAX_EVENT_AGE_MS = 60 \* 60 \* 1000/);
+  assert.match(ingest, /occurredAt >= oldestAcceptedAt/);
+  assert.match(ingest, /accepted, duplicates, stale, reviewsOpened/);
 
   assert.doesNotMatch(queue, /Assigned to me|params\.mine|assignedTo:/);
   const hero = queue.slice(
@@ -33,6 +36,8 @@ test("Account Review exposes the simplified high-risk workflow", async () => {
   assert.match(filterBar, /<OpenCaseDialog \{\.\.\.openCaseProps\} \/>/);
   assert.match(queue, /<StartReviewButton/);
   assert.match(queue, /review\.assignee\.label/);
+  assert.match(queue, /review\.automatedActionAt \?\? review\.createdAt/);
+  assert.match(queue, /Automatically contained at/);
   assert.match(queue, /review:\s*review\.id/);
   assert.match(queue, /<ReviewCaseDialog/);
   assert.doesNotMatch(workspace, /aria-label="Review progress"/);
