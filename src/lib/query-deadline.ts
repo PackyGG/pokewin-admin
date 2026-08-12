@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { registerQueryAbortRunner } from "./query-deadline-bridge";
 
 /**
  * Request-local cancellation for database work hidden below query helpers.
@@ -27,3 +28,5 @@ export function withQueryAbortSignal<T>(
 ): Promise<T> {
   return queryDeadlineStorage.run(signal, operation);
 }
+
+registerQueryAbortRunner(withQueryAbortSignal);

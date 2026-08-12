@@ -1,4 +1,4 @@
-import { withQueryAbortSignal } from "../query-deadline";
+import { withRegisteredQueryAbortSignal } from "../query-deadline-bridge";
 import { logQueryFailure } from "./logger";
 
 /**
@@ -138,7 +138,7 @@ export async function withTimeout<T>(
   });
   try {
     return await Promise.race([
-      withQueryAbortSignal(controller.signal, fn),
+      withRegisteredQueryAbortSignal(controller.signal, fn),
       timeout,
     ]);
   } finally {
