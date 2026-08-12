@@ -11,7 +11,6 @@ import {
   Users,
 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -123,32 +122,6 @@ export function DirectNotificationsContent({
 
   return (
     <div className="space-y-4">
-      <div
-        className={
-          backendEnv === "prod"
-            ? "flex items-start justify-between gap-3 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300"
-            : "flex items-start justify-between gap-3 rounded-lg border border-blue-500/40 bg-blue-500/10 p-3 text-xs text-blue-700 dark:text-blue-300"
-        }
-      >
-        <div className="flex items-start gap-2">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <p>
-            Sends write to the{" "}
-            <strong>
-              {backendEnv === "prod" ? "production" : "development"}
-            </strong>{" "}
-            personal notification feed. Bulk and reward sends ask for a final
-            confirmation before the first batch.
-          </p>
-        </div>
-        <Badge
-          variant="outline"
-          className="shrink-0 border-current font-mono uppercase"
-        >
-          {backendEnv}
-        </Badge>
-      </div>
-
       <Tabs value={mode} onValueChange={(v: string) => setMode(v as Mode)}>
         <TabsList className="grid h-auto w-full grid-cols-2 gap-2 bg-transparent p-0 sm:grid-cols-3 xl:grid-cols-5">
           {COMPOSER_OPTIONS.map((option) => {
