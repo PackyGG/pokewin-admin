@@ -2772,8 +2772,8 @@ type RemoveInventoryItemResult = { ok: true } | { ok: false; error: string };
  * Core per-item inventory removal: validates the item is removable, deletes
  * it (with its dependent provably-fair rows), and writes a VISIBLE
  * `admin_balance_adjustment` ledger row so the removal shows up in the
- * user's Deposits & Withdrawals / Admin balance adjustments box — exactly
- * like a balance adjustment. The ledger row leaves `balance_before ==
+ * user's Deposits & Withdrawals history — exactly like a balance adjustment.
+ * The ledger row leaves `balance_before ==
  * balance_after` (removing a card doesn't change cash), so PnL /
  * onSiteBalance are untouched; the signed `amount` (− item value) and the
  * description carry the removed value for display only. NOT tagged with an

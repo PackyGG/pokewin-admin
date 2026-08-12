@@ -86,7 +86,6 @@ import {
   InventoryGrid,
   GAMING_TX_TYPES,
   FINANCIAL_TX_TYPES,
-  ADJUSTMENT_TX_TYPES,
   formatSignupProvider,
 } from "./user-tabs";
 import { UserBattleLimitsCard } from "./user-battle-limits-card";
@@ -112,7 +111,6 @@ import {
   DEPOSIT_TX_TYPES,
   WITHDRAWAL_TX_TYPES,
 } from "./user-tabs-types";
-import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import type { UserRewardPackOpensResult } from "@/lib/queries/users-reward-pack-opens";
@@ -342,71 +340,6 @@ function DepositsWithdrawalsStreamed({
       canEditBalanceAdjustments={canEditBalanceAdjustments}
       wagerRequirement={toWagerRequirementSummary(wagerProgress)}
     />
-  );
-}
-
-function AdminAdjustmentsStreamed({
-  userId,
-  adjustmentsTxPromise,
-  isAdmin,
-  canEditBalanceAdjustments,
-  open,
-  onOpenChange,
-}: {
-  userId: string;
-  adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>>;
-  isAdmin: boolean;
-  canEditBalanceAdjustments: boolean;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const r = use(adjustmentsTxPromise);
-  // Load failure → a VISIBLE compact error card. The owner must be able to
-  // tell "no adjustments exist" (genuine empty → block self-hides below)
-  // from "the adjustments query failed" — silently self-hiding on failure
-  // would hide real adjustments behind a transient error. The collapsible
-  // lives INSIDE this component (not wrapped around it in AccountTab) so the
-  // whole section still self-hides when the user has zero adjustments.
-  if (r.error) {
-    return (
-      <CollapsibleSection
-        icon={Coins}
-        title="Admin balance adjustments"
-        open={open}
-        onOpenChange={onOpenChange}
-      >
-        <InlineError
-          compact
-          title="Couldn't load admin balance adjustments"
-          hint="This is a load failure, not an empty history — retry to re-run the query."
-        />
-      </CollapsibleSection>
-    );
-  }
-  const adjustmentsTx = r.data;
-  if (adjustmentsTx.total <= 0) return null;
-  const mothaOnly = isMothaOnlyAdjustmentsProfile(userId);
-  return (
-    <CollapsibleSection
-      icon={Coins}
-      title="Admin balance adjustments"
-      open={open}
-      onOpenChange={onOpenChange}
-    >
-      {mothaOnly ? (
-        <p className="mb-2 text-xs text-muted-foreground">
-          Motha adjustments only — other admins&apos; balance changes are hidden on this profile.
-        </p>
-      ) : null}
-      <CategoryTransactionsTable
-        title="Admin balance adjustments"
-        userId={userId}
-        types={ADJUSTMENT_TX_TYPES}
-        initialTx={adjustmentsTx}
-        isAdmin={isAdmin}
-        canEditBalanceAdjustments={canEditBalanceAdjustments}
-      />
-    </CollapsibleSection>
   );
 }
 
@@ -1958,9 +1891,6 @@ export function AccountTab({
   fiatDepositAccessPromise,
   preFiatOverridePromise,
   wagerProgressPromise,
-  adjustmentsTxPromise,
-  viewerIsAdjustmentOwner,
-  viewerCanSeeUltraLossback,
 }: {
   data: UserDetail;
   pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
@@ -1982,15 +1912,6 @@ export function AccountTab({
   // How each part of the balance is weighted toward each destination
   // (funding-source wager-weight matrix × balance composition). null = tab
   // not active / read failed → muted card.
-  // Owner-only (motha) dedicated uncapped admin_balance_adjustment page —
-  // moved here from the Overview tab. Streamed + lazy: page.tsx kicks
-  // adjustmentsTxPromise only when the Account tab is active
-  // (Active-Timeframe-Only). null for a non-owner viewer / non-active tab.
-  adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
-  // Owner-only flag (motha). Gates the adjustments block below so a non-owner
-  // never sees it (defence-in-depth; the server already returns zero rows).
-  viewerIsAdjustmentOwner: boolean;
-  viewerCanSeeUltraLossback: boolean;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, capabilities } = data;
   // Local open/close state for each collapsible Account-tab section. Every
@@ -1999,7 +1920,6 @@ export function AccountTab({
   // top is always shown; the admin expands the rest as needed. Same
   // controlled pattern as the Deposits & Withdrawals collapsible on the
   // Overview tab (CollapsibleSection).
-  const [adminAdjustmentsOpen, setAdminAdjustmentsOpen] = useState(false);
   const [featureAccessOpen, setFeatureAccessOpen] = useState(false);
   const [battleLimitsOpen, setBattleLimitsOpen] = useState(false);
   const [wagerProgressOpen, setWagerProgressOpen] = useState(false);
@@ -2028,29 +1948,6 @@ export function AccountTab({
           </div>
         </CardContent>
       </Card>
-
-      {/* Admin balance adjustments — OWNER ONLY (motha). Moved here from the
-          Overview tab. Non-owner admins never see this block: the server
-          returns zero adjustment rows for them (so it would self-hide anyway),
-          but we also gate the render here so the heading can't flash. Streamed
-          + lazy — adjustmentsTxPromise is kicked only when the Account tab is
-          active (Active-Timeframe-Only). Admin inventory removals/sales are
-          written as admin_balance_adjustment rows ("Inventory removed: …"), so
-          they surface here + in the Deposits & Withdrawals box on Overview —
-          like any other balance adjustment. */}
-      {(viewerIsAdjustmentOwner || viewerCanSeeUltraLossback) &&
-        adjustmentsTxPromise && (
-        <Suspense fallback={null}>
-          <AdminAdjustmentsStreamed
-            userId={user.id}
-            adjustmentsTxPromise={adjustmentsTxPromise}
-            isAdmin={data.sessionRole === "admin"}
-            canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
-            open={adminAdjustmentsOpen}
-            onOpenChange={setAdminAdjustmentsOpen}
-          />
-        </Suspense>
-        )}
 
       <CollapsibleSection
         icon={ShieldCheck}

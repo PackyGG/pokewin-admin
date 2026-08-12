@@ -146,18 +146,6 @@ const FINANCIAL_TYPES = [
   "vault_lock",
   "vault_unlock",
 ];
-// Admin balance adjustments get a DEDICATED, generously-sized fetch on top of
-// the shared FINANCIAL page. Reason: `admin_balance_adjustment` is just one of
-// the 12 FINANCIAL_TYPES above, so on an active account a burst of newer
-// deposits/withdrawals/claims fills the shared 10-row page and pushes an older
-// adjustment off page 1 entirely — making it vanish from the Overview feed.
-// Pulling adjustments separately (rare admin events; ADJ_LIMIT covers a user's
-// lifetime) guarantees EVERY adjustment reaches the Overview timeline + the
-// dedicated block. Same query path, so the official_stream fake-balance
-// exclusion still applies automatically.
-const ADJUSTMENT_TYPES = ["admin_balance_adjustment"];
-const ADJ_LIMIT = 200;
-
 export default async function UserDetailPage({
   params,
   searchParams,
@@ -310,7 +298,7 @@ async function UserDetailBody({
   backSlot: ReactNode;
 }) {
   // Empty paginated-transaction shape used as the safeQuery fallback for
-  // the gaming / financial / adjustments tx fetches below. Same shape
+  // the gaming / financial transaction fetches below. Same shape
   // `getUserTransactions` already returns for users with zero matching
   // ledger rows. NOTE (reliability remake): the fallback now travels WITH
   // its `error` string inside a SafeQueryResult — the tables render a
@@ -457,31 +445,6 @@ async function UserDetailBody({
           ),
         )
       : null;
-  // Adjustments: Account-tab-only (moved off Overview — the dedicated
-  // admin-balance-adjustments block now lives on the Account tab). Kicked
-  // only when the viewer is the owner `motha` — a non-owner gets a resolved
-  // empty page instead of a wasted round trip (the server returns zero
-  // adjustment rows for them anyway; the fail-closed gate inside
-  // getUserTransactions remains the security authority, this skip is purely a
-  // perf nicety). Chained on the owner probe (fast admin-DB read), NOT on the
-  // heavy body gate.
-  const adjustmentsTxPromise: Promise<SafeQueryResult<UserTxPage>> | null =
-    initialTab === "account"
-      ? viewerIsOwnerPromise.then((ownerRes) =>
-          ownerRes.data || viewerCanSeeUltraLossback
-            ? safeQuery(
-                () =>
-                  getUserTransactions(id, 1, ADJ_LIMIT, {
-                    types: ADJUSTMENT_TYPES,
-                  }, ownerRes.data, viewerCanSeeUltraLossback),
-                EMPTY_TX_PAGE,
-                "users.detail.adjustmentsTx",
-                USER_DETAIL_QUERY_TIMEOUT_MS,
-              )
-            : { data: EMPTY_TX_PAGE, error: null },
-        )
-      : null;
-
   // Inventory tab: owned grid page + disposed "Sold & Exchanged" page.
   // The hero's inventory/voucher VALUES come from `balances` inside the
   // detail aggregate (userPnl components), so gating these on the tab
@@ -762,7 +725,6 @@ async function UserDetailBody({
       pnlResultPromise={pnlResultPromise}
       gamingTxPromise={gamingTxPromise}
       financialTxPromise={financialTxPromise}
-      adjustmentsTxPromise={adjustmentsTxPromise}
       rewardsPromise={rewardsPromise}
       rewardPackOpensPromise={rewardPackOpensPromise}
       inventoryPromise={inventoryPromise}

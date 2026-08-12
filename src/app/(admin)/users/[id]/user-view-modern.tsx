@@ -208,7 +208,6 @@ export function UserViewModern({
   pnlResultPromise,
   gamingTxPromise,
   financialTxPromise,
-  adjustmentsTxPromise,
   rewardsPromise,
   rewardPackOpensPromise,
   inventoryPromise,
@@ -247,12 +246,6 @@ export function UserViewModern({
   gamingTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Overview — deposits & withdrawals feed:
   financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
-  // Account tab, owner only — dedicated uncapped admin_balance_adjustment page
-  // (see page.tsx ADJ_LIMIT) so the Account tab can surface every
-  // adjustment without the shared financial page hiding older ones behind
-  // newer activity. Non-owners receive a resolved empty page (the server
-  // gate in getUserTransactions stays the authority).
-  adjustmentsTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
   // Rewards tab:
   rewardsPromise: Promise<SafeQueryResult<UserRewards>> | null;
   // Rewards tab — reward / sign-up pack opens (welcome/level/daily packs) and
@@ -700,9 +693,6 @@ export function UserViewModern({
             fiatDepositAccessPromise={fiatDepositAccessPromise}
             preFiatOverridePromise={preFiatOverridePromise}
             wagerProgressPromise={wagerProgressPromise}
-            adjustmentsTxPromise={adjustmentsTxPromise}
-            viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
-            viewerCanSeeUltraLossback={viewerCanSeeUltraLossback}
           />
         )}
 

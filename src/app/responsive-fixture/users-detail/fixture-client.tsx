@@ -447,7 +447,6 @@ export function UserDetailFixtureClient({
       pnlResultPromise={ok(PNL)}
       gamingTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       financialTxPromise={ok<PaginatedTransactions>(FINANCIAL_TX)}
-      adjustmentsTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       rewardsPromise={ok<UserRewards>(REWARDS)}
       rewardPackOpensPromise={ok<UserRewardPackOpensResult>(REWARD_PACK_OPENS)}
       inventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}

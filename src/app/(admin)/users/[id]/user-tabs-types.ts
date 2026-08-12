@@ -923,13 +923,6 @@ export const WITHDRAWAL_TX_TYPES = [
   "balance_withdrawal",
   "withdrawal_shipping_fee",
 ] as const;
-// Admin balance adjustments only. Used for the dedicated, UNCAPPED Overview
-// fetch + block so every manual admin credit/clawback is guaranteed to
-// surface, instead of competing for slots in the shared 10-row financial
-// page (where a single newer batch of deposits/withdrawals could hide an
-// older adjustment). Shares the same query path, so the official_stream
-// fake-balance exclusion still applies automatically.
-export const ADJUSTMENT_TX_TYPES = ["admin_balance_adjustment"] as const;
 // Item cash-OUTS surfaced on the Inventory tab's "Card & Voucher Sales"
 // section: selling a won (card_sale) or reward (reward_card_sale) card back to
 // balance, OR cashing a won voucher back to balance (voucher_redeemed). All

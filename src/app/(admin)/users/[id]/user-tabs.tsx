@@ -24,7 +24,6 @@ export type {
 export {
   GAMING_TX_TYPES,
   FINANCIAL_TX_TYPES,
-  ADJUSTMENT_TX_TYPES,
   CARD_SALE_TX_TYPES,
   EXCHANGE_TX_TYPES,
 } from "./user-tabs-types";
