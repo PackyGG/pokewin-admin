@@ -185,9 +185,7 @@ export async function registerFiatRoutes(
     const summaryValues: unknown[] = [FIAT_ASSESSMENT_STATUSES];
     const summaryConditions = ["status=ANY($1::text[])"];
     if (excludeKycRequired) {
-      summaryConditions.push(
-        `COALESCE((account_evidence->>'kycRequired')::boolean,false)=false`,
-      );
+      summaryConditions.push("kyc_required=false");
     }
     if (ignored.length > 0) {
       summaryValues.push(ignored);
@@ -197,61 +195,88 @@ export async function registerFiatRoutes(
     }
     const summaryWhere = `WHERE ${summaryConditions.join(" AND ")}`;
 
-    const [rows, total, summary] = await Promise.all([
-      db.antifraud.query(
+    const [rows, summary] = await Promise.all([
+      db.antifraud.query<Record<string, unknown> & { total_count: number }>(
         `
-          SELECT ${assessmentSelect}
+          WITH page AS (
+            SELECT
+              deposit_intent_id,
+              COUNT(*) OVER ()::int AS total_count
+            FROM fiat_deposit_assessments
+            ${where}
+            ORDER BY occurred_at DESC, deposit_intent_id DESC
+            LIMIT $${listValues.length - 1} OFFSET $${listValues.length}
+          )
+          SELECT ${assessmentSelect}, page.total_count
           FROM fiat_deposit_assessments
-          ${where}
+          JOIN page USING (deposit_intent_id)
           ORDER BY occurred_at DESC, deposit_intent_id DESC
-          LIMIT $${listValues.length - 1} OFFSET $${listValues.length}
         `,
         listValues,
-      ),
-      db.antifraud.query<{ count: number }>(
-        `SELECT COUNT(*)::int AS count
-         FROM fiat_deposit_assessments ${where}`,
-        values,
       ),
       db.antifraud.query(
         `
           SELECT
-            COUNT(*)::int AS total,
-            COUNT(*) FILTER (WHERE verdict='good')::int AS good,
-            COUNT(*) FILTER (WHERE verdict='review')::int AS review,
-            COUNT(*) FILTER (WHERE verdict='bad')::int AS bad,
-            COUNT(*) FILTER (WHERE review_status='unreviewed')::int
+            COALESCE(SUM(deposit_count), 0)::int AS total,
+            COALESCE(SUM(deposit_count) FILTER (
+              WHERE verdict='good'
+            ), 0)::int AS good,
+            COALESCE(SUM(deposit_count) FILTER (
+              WHERE verdict='review'
+            ), 0)::int AS review,
+            COALESCE(SUM(deposit_count) FILTER (
+              WHERE verdict='bad'
+            ), 0)::int AS bad,
+            COALESCE(SUM(deposit_count) FILTER (
+              WHERE review_status='unreviewed'
+            ), 0)::int
               AS unreviewed,
-            COUNT(*) FILTER (
+            COALESCE(SUM(deposit_count) FILTER (
               WHERE review_status IN ('in_review','escalated')
-            )::int
+            ), 0)::int
               AS in_review,
-            COUNT(*) FILTER (WHERE review_status='hold_recommended')::int
+            COALESCE(SUM(deposit_count) FILTER (
+              WHERE review_status='hold_recommended'
+            ), 0)::int
               AS hold_recommended,
             0::int AS provider_high_risk,
-            COUNT(*) FILTER (WHERE three_ds_verified=false)::int
+            COALESCE(SUM(deposit_count) FILTER (
+              WHERE three_ds_state=0
+            ), 0)::int
               AS three_ds_failed,
-            COUNT(*) FILTER (WHERE status='disputed')::int AS disputed,
-            COUNT(*) FILTER (
+            COALESCE(SUM(deposit_count) FILTER (
+              WHERE status='disputed'
+            ), 0)::int AS disputed,
+            COALESCE(SUM(deposit_count) FILTER (
               WHERE status NOT IN ('refunded','partially_refunded')
-            )::int AS normal,
-            COUNT(*) FILTER (
+            ), 0)::int AS normal,
+            COALESCE(SUM(deposit_count) FILTER (
               WHERE verdict='bad'
                 AND status NOT IN ('refunded','partially_refunded')
-            )::int AS fraud,
-            COUNT(*) FILTER (
+            ), 0)::int AS fraud,
+            COALESCE(SUM(deposit_count) FILTER (
               WHERE status IN ('refunded','partially_refunded')
-            )::int AS refunded,
+            ), 0)::int AS refunded,
             COALESCE(SUM(credited_amount_usd),0)::float8 AS amount_usd
-          FROM fiat_deposit_assessments
+          FROM fiat_deposit_dashboard_rollups
           ${summaryWhere}
         `,
         summaryValues,
       ),
     ]);
-    const count = total.rows[0]?.count ?? 0;
+    // COUNT OVER folds page retrieval and the exact filtered total into one
+    // scan. Only a stale/out-of-range deep page needs the rare fallback count.
+    let count = rows.rows[0]?.total_count ?? 0;
+    if (rows.rows.length === 0 && query.page > 1) {
+      const fallback = await db.antifraud.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+         FROM fiat_deposit_assessments ${where}`,
+        values,
+      );
+      count = fallback.rows[0]?.count ?? 0;
+    }
     return {
-      data: rows.rows,
+      data: rows.rows.map(({ total_count: _totalCount, ...row }) => row),
       pagination: {
         page: query.page,
         limit: query.limit,

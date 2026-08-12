@@ -25,8 +25,7 @@ export async function registerProfileRoutes(
     const query = parsed.data;
     const search = query.search ? `${query.search.toLowerCase()}%` : null;
     const offset = (query.page - 1) * query.limit;
-    const [profiles, count] = await Promise.all([
-      db.antifraud.query<{
+    const profiles = await db.antifraud.query<{
         user_id: string;
         username: string | null;
         email: string | null;
@@ -42,35 +41,45 @@ export async function registerProfileRoutes(
         policy_matches: unknown;
         assessed_at: Date;
         updated_at: Date;
+        total_count: number;
       }>(
         `
+          WITH page AS (
+            SELECT p.user_id, COUNT(*) OVER ()::int AS total_count
+            FROM antifraud_profiles p
+            JOIN subjects s ON s.user_id=p.user_id
+            WHERE ($1::text IS NULL OR p.outcome=$1)
+              AND (
+                $5::uuid IS NULL
+                OR EXISTS (
+                  SELECT 1 FROM identifier_blocklist_matches bm
+                  WHERE bm.user_id=p.user_id AND bm.blocklist_id=$5
+                )
+              )
+              AND (
+                $2::text IS NULL
+                OR lower(p.user_id) LIKE $2
+                OR lower(COALESCE(s.username,'')) LIKE $2
+                OR lower(COALESCE(s.email,'')) LIKE $2
+              )
+            ORDER BY p.score DESC,p.assessed_at DESC,p.user_id
+            LIMIT $3 OFFSET $4
+          )
           SELECT
             p.user_id,s.username,s.email,s.avatar_url,s.country_code,
             s.source_created_at,p.score,p.raw_score,p.severity,p.outcome,
             p.completeness,p.confidence,p.policy_matches,p.assessed_at,
-            p.updated_at
-          FROM antifraud_profiles p
+            p.updated_at,page.total_count
+          FROM page
+          JOIN antifraud_profiles p ON p.user_id=page.user_id
           JOIN subjects s ON s.user_id=p.user_id
-          WHERE ($1::text IS NULL OR p.outcome=$1)
-            AND (
-              $5::uuid IS NULL
-              OR EXISTS (
-                SELECT 1 FROM identifier_blocklist_matches bm
-                WHERE bm.user_id=p.user_id AND bm.blocklist_id=$5
-              )
-            )
-            AND (
-              $2::text IS NULL
-              OR lower(p.user_id) LIKE $2
-              OR lower(COALESCE(s.username,'')) LIKE $2
-              OR lower(COALESCE(s.email,'')) LIKE $2
-            )
           ORDER BY p.score DESC,p.assessed_at DESC,p.user_id
-          LIMIT $3 OFFSET $4
         `,
         [query.outcome ?? null, search, query.limit, offset, query.blocklist ?? null],
-      ),
-      db.antifraud.query<{ count: number }>(
+      );
+    let total = profiles.rows[0]?.total_count ?? 0;
+    if (profiles.rows.length === 0 && query.page > 1) {
+      const fallback = await db.antifraud.query<{ count: number }>(
         `
           SELECT count(*)::int AS count
           FROM antifraud_profiles p
@@ -91,9 +100,9 @@ export async function registerProfileRoutes(
             )
         `,
         [query.outcome ?? null, search, query.blocklist ?? null],
-      ),
-    ]);
-    const total = count.rows[0]?.count ?? 0;
+      );
+      total = fallback.rows[0]?.count ?? 0;
+    }
     return {
       data: profiles.rows.map((row) => ({
         userId: row.user_id,
@@ -127,8 +136,7 @@ export async function registerProfileRoutes(
       .safeParse(request.params);
     if (!params.success) return reply.code(400).send({ error: "invalid_user" });
     const userId = params.data.userId;
-    const [profile, account, assessments, providers, relationships, matches] =
-      await Promise.all([
+    const [profile, account] = await Promise.all([
         db.antifraud.query<{
           user_id: string;
           username: string | null;
@@ -152,6 +160,10 @@ export async function registerProfileRoutes(
           recommended_actions: unknown;
           explanation: unknown;
           assessed_at: Date;
+          assessments: Array<Record<string, unknown>>;
+          providers: Array<Record<string, unknown>>;
+          relationships: Array<Record<string, unknown>>;
+          blocklist_matches: Array<Record<string, unknown>>;
         }>(
           `
             SELECT
@@ -159,7 +171,98 @@ export async function registerProfileRoutes(
               s.country_code,s.state,s.city,s.source_created_at,
               p.assessment_version,p.raw_score,p.score,p.severity,p.outcome,
               p.completeness,p.confidence,p.provider_status,p.policy_matches,
-              p.recommended_actions,p.explanation,p.assessed_at
+              p.recommended_actions,p.explanation,p.assessed_at,
+              COALESCE((
+                SELECT jsonb_agg(
+                  to_jsonb(item) - 'assessed_sort_at'
+                  ORDER BY item.assessed_sort_at DESC,item.id DESC
+                )
+                FROM (
+                  SELECT id,assessment_version,score,raw_score,severity,outcome,
+                    completeness,confidence,policy_matches,recommended_actions,
+                    to_char(
+                      assessed_at AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+                    ) AS assessed_at,
+                    assessed_at AS assessed_sort_at
+                  FROM profile_assessment_history
+                  WHERE user_id=p.user_id
+                  ORDER BY assessed_at DESC,id DESC
+                  LIMIT 50
+                ) item
+              ), '[]'::jsonb) AS assessments,
+              COALESCE((
+                SELECT jsonb_agg(
+                  to_jsonb(item) - 'observed_sort_at'
+                  ORDER BY item.observed_sort_at DESC,item.id DESC
+                )
+                FROM (
+                  SELECT id,provider,outcome,failure_kind,
+                    provider_score::float8 AS provider_score,
+                    normalized_signals,
+                    to_char(
+                      observed_at AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+                    ) AS observed_at,
+                    observed_at AS observed_sort_at
+                  FROM profile_provider_evidence
+                  WHERE user_id=p.user_id
+                  ORDER BY observed_at DESC,id DESC
+                  LIMIT 100
+                ) item
+              ), '[]'::jsonb) AS providers,
+              COALESCE((
+                SELECT jsonb_agg(
+                  to_jsonb(item) - 'last_observed_sort_at'
+                  ORDER BY item.last_observed_sort_at DESC,item.id DESC
+                )
+                FROM (
+                  SELECT id,related_user_id,relationship_type,
+                    confidence::float8 AS confidence,occurrence_count,
+                    to_char(
+                      first_observed_at AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+                    ) AS first_observed_at,
+                    to_char(
+                      last_observed_at AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+                    ) AS last_observed_at,
+                    last_observed_at AS last_observed_sort_at,
+                    evidence
+                  FROM account_relationship_evidence
+                  WHERE subject_user_id=p.user_id
+                  ORDER BY last_observed_at DESC,id DESC
+                  LIMIT 100
+                ) item
+              ), '[]'::jsonb) AS relationships,
+              COALESCE((
+                SELECT jsonb_agg(
+                  to_jsonb(item) - 'matched_sort_at'
+                  ORDER BY item.matched_sort_at DESC,item.id DESC
+                )
+                FROM (
+                  SELECT
+                    m.id,b.kind,
+                    CASE
+                      WHEN b.kind='ip' AND b.match_mode='exact'
+                        THEN host(b.ip_network)
+                      WHEN b.kind='ip' THEN b.ip_network::text
+                      ELSE b.fingerprint_id
+                    END AS value,
+                    m.match_context,m.resulting_action,
+                    to_char(
+                      m.matched_at AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+                    ) AS matched_at,
+                    m.matched_at AS matched_sort_at,
+                    b.reason
+                  FROM identifier_blocklist_matches m
+                  JOIN identifier_blocklists b ON b.id=m.blocklist_id
+                  WHERE m.user_id=p.user_id
+                  ORDER BY m.matched_at DESC,m.id DESC
+                  LIMIT 100
+                ) item
+              ), '[]'::jsonb) AS blocklist_matches
             FROM antifraud_profiles p
             JOIN subjects s ON s.user_id=p.user_id
             WHERE p.user_id=$1
@@ -176,95 +279,6 @@ export async function registerProfileRoutes(
         }>(
           `SELECT id,is_banned,banned_reason,banned_at,is_locked,locked_reason
            FROM "user" WHERE id=$1`,
-          [userId],
-        ),
-        db.antifraud.query<{
-          id: string;
-          assessment_version: string;
-          score: number;
-          raw_score: number;
-          severity: string;
-          outcome: string;
-          completeness: string;
-          confidence: number;
-          policy_matches: unknown;
-          recommended_actions: unknown;
-          assessed_at: Date;
-        }>(
-          `
-            SELECT id,assessment_version,score,raw_score,severity,outcome,
-              completeness,confidence,policy_matches,recommended_actions,
-              assessed_at
-            FROM profile_assessment_history
-            WHERE user_id=$1
-            ORDER BY assessed_at DESC,id DESC
-            LIMIT 50
-          `,
-          [userId],
-        ),
-        db.antifraud.query<{
-          id: string;
-          provider: string;
-          outcome: string;
-          failure_kind: string | null;
-          provider_score: string | null;
-          normalized_signals: unknown;
-          observed_at: Date;
-        }>(
-          `
-            SELECT id,provider,outcome,failure_kind,provider_score,
-              normalized_signals,observed_at
-            FROM profile_provider_evidence
-            WHERE user_id=$1
-            ORDER BY observed_at DESC,id DESC
-            LIMIT 100
-          `,
-          [userId],
-        ),
-        db.antifraud.query<{
-          id: string;
-          related_user_id: string | null;
-          relationship_type: string;
-          confidence: string;
-          occurrence_count: number;
-          first_observed_at: Date;
-          last_observed_at: Date;
-          evidence: unknown;
-        }>(
-          `
-            SELECT id,related_user_id,relationship_type,confidence,
-              occurrence_count,first_observed_at,last_observed_at,evidence
-            FROM account_relationship_evidence
-            WHERE subject_user_id=$1
-            ORDER BY last_observed_at DESC,id DESC
-            LIMIT 100
-          `,
-          [userId],
-        ),
-        db.antifraud.query<{
-          id: string;
-          kind: string;
-          value: string;
-          match_context: string;
-          resulting_action: string;
-          matched_at: Date;
-          reason: string;
-        }>(
-          `
-            SELECT
-              m.id,b.kind,
-              CASE
-                WHEN b.kind='ip' AND b.match_mode='exact' THEN host(b.ip_network)
-                WHEN b.kind='ip' THEN b.ip_network::text
-                ELSE b.fingerprint_id
-              END AS value,
-              m.match_context,m.resulting_action,m.matched_at,b.reason
-            FROM identifier_blocklist_matches m
-            JOIN identifier_blocklists b ON b.id=m.blocklist_id
-            WHERE m.user_id=$1
-            ORDER BY m.matched_at DESC,m.id DESC
-            LIMIT 100
-          `,
           [userId],
         ),
       ]);
@@ -302,26 +316,10 @@ export async function registerProfileRoutes(
           isLocked: status?.is_locked ?? null,
           lockedReason: status?.locked_reason ?? null,
         },
-        assessments: assessments.rows.map((item) => ({
-          ...item,
-          assessed_at: item.assessed_at.toISOString(),
-        })),
-        providers: providers.rows.map((item) => ({
-          ...item,
-          provider_score:
-            item.provider_score === null ? null : Number(item.provider_score),
-          observed_at: item.observed_at.toISOString(),
-        })),
-        relationships: relationships.rows.map((item) => ({
-          ...item,
-          confidence: Number(item.confidence),
-          first_observed_at: item.first_observed_at.toISOString(),
-          last_observed_at: item.last_observed_at.toISOString(),
-        })),
-        blocklistMatches: matches.rows.map((item) => ({
-          ...item,
-          matched_at: item.matched_at.toISOString(),
-        })),
+        assessments: row.assessments,
+        providers: row.providers,
+        relationships: row.relationships,
+        blocklistMatches: row.blocklist_matches,
       },
     };
   });

@@ -25,7 +25,8 @@ async function buildApp() {
       return { rows: [] };
     }
 
-    const excludesKyc = sql.includes(kycPredicate);
+    const excludesKyc =
+      sql.includes(kycPredicate) || sql.includes("kyc_required=false");
     const searchesNeedle = values.includes("%needle%");
     const total = searchesNeedle
       ? excludesKyc
@@ -35,10 +36,7 @@ async function buildApp() {
         ? 17
         : 23;
 
-    if (sql.includes("COUNT(*)::int AS count") && !sql.includes("verdict=")) {
-      return { rows: [{ count: total }] };
-    }
-    if (sql.includes("COUNT(*)::int AS total")) {
+    if (sql.includes("FROM fiat_deposit_dashboard_rollups")) {
       return {
         rows: [
           {
@@ -64,6 +62,7 @@ async function buildApp() {
           {
             deposit_intent_id: intentId,
             account_evidence: { kycRequired: false },
+            total_count: total,
           },
         ],
       };
@@ -105,8 +104,11 @@ test("fiat list API preserves its existing include-KYC default", async () => {
   const assessmentQueries = calls.filter((call) =>
     call.sql.includes("fiat_deposit_assessments"),
   );
-  assert.ok(assessmentQueries.length >= 3);
+  assert.equal(assessmentQueries.length, 1);
   assert.ok(assessmentQueries.every((call) => !call.sql.includes(kycPredicate)));
+  assert.ok(calls.some((call) =>
+    call.sql.includes("FROM fiat_deposit_dashboard_rollups")
+  ));
 });
 
 test("explicit KYC exclusion applies before rows, counts, and summaries", async () => {
@@ -128,17 +130,12 @@ test("explicit KYC exclusion applies before rows, counts, and summaries", async 
   const listQuery = calls.find((call) =>
     call.sql.includes("ORDER BY occurred_at DESC"),
   );
-  const countQuery = calls.find(
-    (call) =>
-      call.sql.includes("COUNT(*)::int AS count") &&
-      !call.sql.includes("verdict="),
-  );
   const summaryQuery = calls.find((call) =>
-    call.sql.includes("COUNT(*)::int AS total"),
+    call.sql.includes("FROM fiat_deposit_dashboard_rollups"),
   );
   assert.ok(listQuery?.sql.includes(kycPredicate));
-  assert.ok(countQuery?.sql.includes(kycPredicate));
-  assert.ok(summaryQuery?.sql.includes(kycPredicate));
+  assert.ok(listQuery?.sql.includes("COUNT(*) OVER ()"));
+  assert.ok(summaryQuery?.sql.includes("kyc_required=false"));
 });
 
 test("a concrete search includes KYC-required matching payments", async () => {
@@ -155,27 +152,17 @@ test("a concrete search includes KYC-required matching payments", async () => {
   const listQuery = calls.find((call) =>
     call.sql.includes("ORDER BY occurred_at DESC"),
   );
-  const countQuery = calls.find(
-    (call) =>
-      call.sql.includes("COUNT(*)::int AS count") &&
-      !call.sql.includes("verdict="),
-  );
   const summaryQuery = calls.find((call) =>
-    call.sql.includes("COUNT(*)::int AS total"),
+    call.sql.includes("FROM fiat_deposit_dashboard_rollups"),
   );
   assert.ok(!listQuery?.sql.includes(kycPredicate));
-  assert.ok(!countQuery?.sql.includes(kycPredicate));
-  assert.ok(!summaryQuery?.sql.includes(kycPredicate));
+  assert.ok(!summaryQuery?.sql.includes("kyc_required=false"));
   assert.ok(listQuery?.values.includes("%needle%"));
-  assert.ok(countQuery?.values.includes("%needle%"));
   assert.match(
     listQuery?.sql ?? "",
     /provider_evidence->>'checkoutEmail'/,
   );
-  assert.match(
-    countQuery?.sql ?? "",
-    /provider_evidence->>'checkoutEmail'/,
-  );
+  assert.match(listQuery?.sql ?? "", /COUNT\(\*\) OVER \(\)/);
 });
 
 test("an explicit false value retains the include-KYC API behavior", async () => {

@@ -931,19 +931,19 @@ async function loadOverview(
       }>;
     }>(
       `
-        WITH scoped_fiat AS (
+        WITH scoped_rollups AS (
           SELECT
-            occurred_at,
+            bucket_date,
             verdict = 'bad' AS is_fraud,
             status IN ('refunded', 'partially_refunded') AS is_refunded,
             credited_amount_usd AS amount_usd
-          FROM fiat_deposit_assessments
+          FROM fiat_deposit_dashboard_rollups
           WHERE status = ANY($1::text[])
             AND user_id <> ALL($2::text[])
         ),
         daily AS (
           SELECT
-            (occurred_at AT TIME ZONE 'UTC')::date AS bucket,
+            bucket_date AS bucket,
             COALESCE(
               ROUND(SUM(amount_usd) FILTER (
                 WHERE NOT is_fraud AND NOT is_refunded
@@ -956,38 +956,54 @@ async function loadOverview(
               ) * 100),
               0
             )::float8 AS fraudulent_cents
-          FROM scoped_fiat
-          WHERE occurred_at >=
-              date_trunc('day', now() AT TIME ZONE 'UTC') - interval '29 days'
-            AND occurred_at <
-              date_trunc('day', now() AT TIME ZONE 'UTC') + interval '1 day'
+          FROM scoped_rollups
+          WHERE bucket_date >=
+              (now() AT TIME ZONE 'UTC')::date - 29
+            AND bucket_date <= (now() AT TIME ZONE 'UTC')::date
           GROUP BY 1
           ORDER BY 1
+        ),
+        lifetime AS (
+          SELECT
+            COALESCE(ROUND(SUM(amount_usd) FILTER (
+              WHERE NOT is_fraud AND NOT is_refunded
+            ) * 100), 0)::float8 AS legitimate_cents,
+            COALESCE(ROUND(SUM(amount_usd) FILTER (
+              WHERE is_fraud AND NOT is_refunded
+            ) * 100), 0)::float8 AS fraudulent_cents,
+            COALESCE(ROUND(SUM(amount_usd) FILTER (
+              WHERE is_refunded
+            ) * 100), 0)::float8 AS refunded_cents,
+            COALESCE(ROUND(SUM(amount_usd) FILTER (
+              WHERE is_refunded AND is_fraud
+            ) * 100), 0)::float8 AS fraudulent_refunded_cents
+          FROM scoped_rollups
+        ),
+        recent AS (
+          -- The rollup is day-granular. Keep the rolling 24-hour slice exact
+          -- with one bounded index-range scan over the canonical table.
+          SELECT
+            verdict = 'bad' AS is_fraud,
+            status IN ('refunded', 'partially_refunded') AS is_refunded,
+            credited_amount_usd AS amount_usd
+          FROM fiat_deposit_assessments
+          WHERE status = ANY($1::text[])
+            AND user_id <> ALL($2::text[])
+            AND occurred_at >= now() - interval '24 hours'
+            AND occurred_at < now()
         )
         SELECT
-          COALESCE(ROUND(SUM(amount_usd) FILTER (
+          lifetime.legitimate_cents AS legitimate_lifetime_cents,
+          lifetime.fraudulent_cents AS fraudulent_lifetime_cents,
+          COALESCE((SELECT ROUND(SUM(amount_usd) FILTER (
             WHERE NOT is_fraud AND NOT is_refunded
-          ) * 100), 0)::float8 AS legitimate_lifetime_cents,
-          COALESCE(ROUND(SUM(amount_usd) FILTER (
+          ) * 100)::float8 FROM recent), 0) AS legitimate_last_24_hours_cents,
+          COALESCE((SELECT ROUND(SUM(amount_usd) FILTER (
             WHERE is_fraud AND NOT is_refunded
-          ) * 100), 0)::float8 AS fraudulent_lifetime_cents,
-          COALESCE(ROUND(SUM(amount_usd) FILTER (
-            WHERE NOT is_fraud
-              AND NOT is_refunded
-              AND occurred_at >= now() - interval '24 hours'
-              AND occurred_at < now()
-          ) * 100), 0)::float8 AS legitimate_last_24_hours_cents,
-          COALESCE(ROUND(SUM(amount_usd) FILTER (
-            WHERE is_fraud
-              AND NOT is_refunded
-              AND occurred_at >= now() - interval '24 hours'
-              AND occurred_at < now()
-          ) * 100), 0)::float8 AS fraudulent_last_24_hours_cents,
-          COALESCE(ROUND(SUM(amount_usd) FILTER (WHERE is_refunded) * 100), 0)
-            ::float8 AS refunded_lifetime_cents,
-          COALESCE(ROUND(SUM(amount_usd) FILTER (
-            WHERE is_refunded AND is_fraud
-          ) * 100), 0)::float8 AS fraudulent_refunded_lifetime_cents,
+          ) * 100)::float8 FROM recent), 0) AS fraudulent_last_24_hours_cents,
+          lifetime.refunded_cents AS refunded_lifetime_cents,
+          lifetime.fraudulent_refunded_cents
+            AS fraudulent_refunded_lifetime_cents,
           COALESCE((
             SELECT json_agg(json_build_object(
               'date', bucket::text,
@@ -996,7 +1012,7 @@ async function loadOverview(
             ) ORDER BY bucket)
             FROM daily
           ), '[]'::json)::json AS days
-        FROM scoped_fiat
+        FROM lifetime
       `,
       [FIAT_ASSESSMENT_STATUSES, ignoredFiatUsers],
     ),
