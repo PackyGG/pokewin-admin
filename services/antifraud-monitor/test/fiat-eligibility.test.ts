@@ -1979,3 +1979,136 @@ test("an enabled per-user override allows before source or provider checks", asy
   assert.equal(sourceCalls, 0);
   assert.equal(providerCalls, 0);
 });
+
+test("an enabled per-user override supersedes a cached automatic denial", async () => {
+  const now = new Date("2026-08-12T00:10:00.000Z");
+  const request = {
+    env: "prod" as const,
+    createdAt: now.toISOString(),
+    ipAddress: "203.0.113.21",
+    fingerprint: "previously-denied-fingerprint",
+    userID: "known-safe-user",
+  };
+  const requestHash = fiatEligibilityInternals.requestHash(
+    request,
+    request.ipAddress,
+  );
+  let sourceCalls = 0;
+  let providerCalls = 0;
+  const antifraud = {
+    async query(sql: string) {
+      if (sql.includes("FROM fiat_eligibility_assessments")) {
+        return {
+          rows: [{
+            id: "previous-denial",
+            request_hash: requestHash,
+            decision: "deny",
+            risk_score: 100,
+            reason_codes: ["risk_score_threshold"],
+            enforcement_reasons: [],
+            enforcement: "none",
+            expires_at: now,
+            created_at: now,
+          }],
+        };
+      }
+      if (sql.includes("FROM fiat_eligibility_overrides")) {
+        return { rows: [{ enabled: true }] };
+      }
+      if (sql.includes("INSERT INTO fiat_eligibility_gate_events")) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: "override-after-denial",
+            request_hash: requestHash,
+            decision: "allow",
+            reason_code: "fiat_always_allow_override",
+            created_at: now,
+          }],
+        };
+      }
+      throw new Error(`unexpected replay override query: ${sql.slice(0, 80)}`);
+    },
+  };
+  const service = new FiatEligibilityService(
+    {
+      source: { query: async () => { sourceCalls += 1; } },
+      fiatDevSource: null,
+      antifraud,
+    } as never,
+    { get: async () => { throw new Error("weights must not load"); } } as never,
+    {
+      fingerprintCheck: async () => {
+        providerCalls += 1;
+        throw new Error("provider must not run");
+      },
+      proxycheck: async () => {
+        providerCalls += 1;
+        throw new Error("provider must not run");
+      },
+    } as never,
+    true,
+  );
+
+  const decision = await service.assess(request, now);
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.decision, "allow");
+  assert.deepEqual(decision.reasonCodes, ["fiat_always_allow_override"]);
+  assert.equal(decision.idempotent, false);
+  assert.equal(sourceCalls, 0);
+  assert.equal(providerCalls, 0);
+});
+
+test("an override never bypasses fingerprint request reuse protection", async () => {
+  const now = new Date("2026-08-12T00:20:00.000Z");
+  const request = {
+    env: "prod" as const,
+    createdAt: now.toISOString(),
+    ipAddress: "203.0.113.22",
+    fingerprint: "reused-override-fingerprint",
+    userID: "known-safe-user",
+  };
+  let overrideReads = 0;
+  const service = new FiatEligibilityService(
+    {
+      source: { query: async () => { throw new Error("source must not run"); } },
+      fiatDevSource: null,
+      antifraud: {
+        async query(sql: string) {
+          if (sql.includes("FROM fiat_eligibility_assessments")) {
+            return {
+              rows: [{
+                id: "different-request",
+                request_hash: "0".repeat(64),
+                decision: "deny",
+                risk_score: 100,
+                reason_codes: ["risk_score_threshold"],
+                enforcement_reasons: [],
+                enforcement: "none",
+                expires_at: now,
+                created_at: now,
+              }],
+            };
+          }
+          if (sql.includes("FROM fiat_eligibility_overrides")) {
+            overrideReads += 1;
+            return { rows: [{ enabled: true }] };
+          }
+          throw new Error("override decision must not be persisted");
+        },
+      },
+    } as never,
+    { get: async () => { throw new Error("weights must not load"); } } as never,
+    {
+      fingerprintCheck: async () => { throw new Error("provider must not run"); },
+      proxycheck: async () => { throw new Error("provider must not run"); },
+    } as never,
+    true,
+  );
+
+  await assert.rejects(
+    service.assess(request, now),
+    (error: unknown) => error instanceof FingerprintReuseError,
+  );
+  assert.equal(overrideReads, 0);
+});

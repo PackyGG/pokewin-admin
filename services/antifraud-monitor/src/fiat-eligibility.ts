@@ -1137,7 +1137,7 @@ export class FiatEligibilityService {
     );
     if (previous) {
       if (previous.request_hash !== hash) throw new FingerprintReuseError();
-      return storedDecision(previous, true);
+      if (previous.decision === "allow") return storedDecision(previous, true);
     }
     const alwaysAllow = await withDeadline(
       fiatEligibilityOverrideEnabled(
@@ -1148,9 +1148,8 @@ export class FiatEligibilityService {
       ANTIFRAUD_READ_TIMEOUT_MS,
       "fiat_override_read",
     );
-    if (alwaysAllow) {
-      return this.allowByOverride(input, now, hash);
-    }
+    if (alwaysAllow) return this.allowByOverride(input, now, hash);
+    if (previous) return storedDecision(previous, true);
 
     const source = this.sourceFor(input.env);
     const subject = await withDeadline(
@@ -1703,7 +1702,7 @@ export class FiatEligibilityService {
       `,
       [input.env, input.userID, input.fingerprint, hash, now],
     );
-    const row = inserted.rows[0];
+    let row = inserted.rows[0];
     if (!row) {
       const existing = await this.db.antifraud.query<{
         id: string;
