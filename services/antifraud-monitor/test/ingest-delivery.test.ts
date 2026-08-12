@@ -49,7 +49,7 @@ function deliveryPool(
   const client = {
     async query(sql: string) {
       queries.push(sql);
-      if (sql.includes("pg_try_advisory_lock")) {
+      if (sql.includes("pg_try_advisory_xact_lock")) {
         return { rows: [{ acquired: true }] };
       }
       if (sql.includes("JOIN fiat_email_domain_matches")) {
@@ -199,6 +199,12 @@ test("delivery advances only after every event is confirmed", async () => {
       sql.includes("dashboard_delivered_at")
     ),
     true,
+  );
+  assert.equal(fixture.queries[0], "BEGIN");
+  assert.equal(fixture.queries.at(-1), "COMMIT");
+  assert.equal(
+    fixture.queries.some((sql) => sql.includes("pg_advisory_unlock")),
+    false,
   );
 });
 
@@ -381,6 +387,25 @@ test("partial confirmation keeps the cursor for an idempotent retry", async () =
     ),
     false,
   );
+  assert.equal(fixture.queries.at(-1), "ROLLBACK");
+});
+
+test("delivery leader lease is transaction-scoped", async () => {
+  const fixture = deliveryPool([]);
+  const delivery = new IngestDelivery(
+    config,
+    fixture.pool,
+    quietLogger,
+    async () => new Response(),
+  );
+
+  assert.equal(await delivery.flushOnce(), 0);
+  assert.equal(fixture.queries[0], "BEGIN");
+  assert.equal(
+    fixture.queries.some((sql) => sql.includes("pg_try_advisory_xact_lock")),
+    true,
+  );
+  assert.equal(fixture.queries.at(-1), "COMMIT");
 });
 
 test("Abstract catch-all containment is delivered ahead of ordinary events", async () => {

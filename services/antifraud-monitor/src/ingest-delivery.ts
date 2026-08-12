@@ -216,14 +216,25 @@ export class IngestDelivery {
 
   async flushOnce(): Promise<number> {
     const client = await this.pool.connect();
-    let leader = false;
+    let transactionOpen = false;
     try {
+      // The leader lease must be transaction-scoped. A session advisory lock
+      // can survive an interrupted cleanup while the pg Pool keeps that
+      // physical connection alive. Once that poisoned connection goes idle,
+      // every other pool checkout sees the lock as held and silently returns
+      // without delivering anything. The transaction lock is released by
+      // PostgreSQL on COMMIT, ROLLBACK, connection loss, or process exit.
+      await client.query("BEGIN");
+      transactionOpen = true;
       const lock = await client.query<{ acquired: boolean }>(
-        "SELECT pg_try_advisory_lock($1) AS acquired",
+        "SELECT pg_try_advisory_xact_lock($1) AS acquired",
         [LEADER_LOCK],
       );
-      leader = lock.rows[0]?.acquired === true;
-      if (!leader) return 0;
+      if (lock.rows[0]?.acquired !== true) {
+        await client.query("ROLLBACK");
+        transactionOpen = false;
+        return 0;
+      }
 
       // Split deliberately into two indexable reads instead of one six-branch
       // disjunction over a post-join column. The old shape referenced
@@ -312,6 +323,8 @@ export class IngestDelivery {
         await this.deliverEvents(containmentRows);
         await this.confirmDashboardEvents(client, containmentRows);
         await this.confirmContainmentEvents(client, containmentRows);
+        await client.query("COMMIT");
+        transactionOpen = false;
         return containmentRows.length;
       }
 
@@ -333,7 +346,11 @@ export class IngestDelivery {
         `,
         [BATCH_SIZE],
       );
-      if (events.rows.length === 0) return 0;
+      if (events.rows.length === 0) {
+        await client.query("COMMIT");
+        transactionOpen = false;
+        return 0;
+      }
 
       await this.deliverEvents(events.rows);
       await this.confirmDashboardEvents(client, events.rows);
@@ -349,18 +366,20 @@ export class IngestDelivery {
         `,
         [CURSOR, last.recorded_at, last.id],
       );
+      await client.query("COMMIT");
+      transactionOpen = false;
       return events.rows.length;
-    } finally {
-      if (leader) {
-        await client
-          .query("SELECT pg_advisory_unlock($1)", [LEADER_LOCK])
-          .catch((error) =>
-            this.log.warn(
-              { err: error },
-              "Antifraud ingest delivery lock release failed",
-            ),
-          );
+    } catch (error) {
+      if (transactionOpen) {
+        await client.query("ROLLBACK").catch((rollbackError) =>
+          this.log.warn(
+            { err: rollbackError },
+            "Antifraud ingest delivery rollback failed",
+          ),
+        );
       }
+      throw error;
+    } finally {
       client.release();
     }
   }
