@@ -93,7 +93,7 @@ export async function GET(request: Request): Promise<Response> {
 
   return runSentryCronMonitor(
     {
-      slug: "admin-antifraud-containment-retry",
+      slug: "/api/cron/antifraud-containment-retry",
       schedule: "* * * * *",
     },
     async () => {

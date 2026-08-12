@@ -17,7 +17,7 @@ export async function GET(request: Request): Promise<Response> {
   }
   return runSentryCronMonitor(
     {
-      slug: "admin-reward-abuse-detection",
+      slug: "/api/cron/reward-abuse-detection",
       schedule: "17 * * * *",
     },
     async () => {

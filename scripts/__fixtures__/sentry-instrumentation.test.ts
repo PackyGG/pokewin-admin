@@ -75,9 +75,9 @@ test("Sentry initializes all Next.js runtimes with privacy and tracing guards", 
   assert.match(sentryCron, /Sentry\.metrics\.count\("cron\.runs"/);
   assert.match(sentryCron, /Sentry\.logger\.error\(/);
   assert.match(sentryCron, /function observe\(/);
-  assert.match(cronRoutes, /slug: "admin-cache-warm"/);
-  assert.match(cronRoutes, /slug: "admin-antifraud-containment-retry"/);
-  assert.match(cronRoutes, /slug: "admin-reward-abuse-detection"/);
+  assert.match(cronRoutes, /slug: "\/api\/cron\/warm"/);
+  assert.match(cronRoutes, /slug: "\/api\/cron\/antifraud-containment-retry"/);
+  assert.match(cronRoutes, /slug: "\/api\/cron\/reward-abuse-detection"/);
 });
 
 test("Sentry sampling and request sanitization behavior stays bounded", () => {
