@@ -1,4 +1,5 @@
-import { queryMainRows } from "@/lib/drizzle-query";
+import { getPrimaryDrizzleDb } from "@/lib/db";
+import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import * as mainSchema from "@/lib/db-schema/main/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import { isUserId, isUuid } from "@/lib/utils/ids";
@@ -8,6 +9,7 @@ import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboar
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
 import { logError } from "@/lib/errors/logger";
+import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
 import { hasWagerProgressColumns } from "./users-wager-progress";
 
 const TIP_RECENT_LIMIT = 10;
@@ -368,9 +370,8 @@ async function enrichLeaderboardWins(
  * The username branch is a RAW parameterized `lower(username) = lower($1)`
  * lookup rather than an `ILIKE`, which
  * `username ILIKE $1` and (EXPLAIN-proven against prod, read-only) SEQ-SCANS
- * the `"user"` table (cost ≈ 912). Under the MAIN `max:3` pool that seq scan
- * is the crash source on this (#1-traffic) route. The `lower(username) = $1`
- * form is served as an Index Scan by the EXISTING functional index
+ * the `"user"` table (cost ≈ 912). The `lower(username) = $1` form is
+ * served as an Index Scan by the EXISTING functional index
  * `idx_user_lower_username_prefix` (`btree (lower(username) text_pattern_ops)`):
  * the `text_pattern_ops` opclass includes the `=` operator, so the planner
  * uses it with a clean `Index Cond: (lower(username) = $1)` (cost ≈ 8.30,
@@ -378,6 +379,13 @@ async function enrichLeaderboardWins(
  * key. Exact-match semantics are preserved (no wildcard → the route key must
  * equal the whole handle, case-insensitively). UUID / nanoid ids keep the PK
  * lookup path unchanged.
+ *
+ * This one critical indexed read deliberately uses the primary pool instead
+ * of the shared two-slot analytics mirror pool. Detail/list aggregates can
+ * occupy both mirror slots for tens of seconds; queueing this prerequisite
+ * behind them made the page's 4s critical-path guard report an outage even
+ * though the lookup itself takes milliseconds. The primary also gives the
+ * route an authoritative existence result immediately after account creation.
  */
 export async function resolveUserIdFromRouteKey(
   key: string,
@@ -386,9 +394,14 @@ export async function resolveUserIdFromRouteKey(
   if (!trimmed) return null;
 
   if (isUuid(trimmed) || isUserId(trimmed)) {
-    const rows = await queryMainRows<{ id: string }[]>(
-      `SELECT id FROM "user" WHERE id = $1 LIMIT 1`,
-      trimmed,
+    const rows = await withTransientPostgresReadRetry(
+      async () =>
+        queryRows<{ id: string }[]>(
+          await getPrimaryDrizzleDb(),
+          `SELECT id FROM "user" WHERE id = $1 LIMIT 1`,
+          trimmed,
+        ),
+      { context: "users.detail.resolve.primary", delayMs: 0 },
     );
     return rows[0]?.id ?? null;
   }
@@ -396,9 +409,14 @@ export async function resolveUserIdFromRouteKey(
   // Case-insensitive EXACT username → id. Parameterized ($1 via tagged
   // template), so no injection surface; served by
   // idx_user_lower_username_prefix as an Index Scan (see doc comment above).
-  const rows = await queryMainRows<{ id: string }[]>(
-    `SELECT id FROM "user" WHERE lower(username) = lower($1) LIMIT 1`,
-    trimmed,
+  const rows = await withTransientPostgresReadRetry(
+    async () =>
+      queryRows<{ id: string }[]>(
+        await getPrimaryDrizzleDb(),
+        `SELECT id FROM "user" WHERE lower(username) = lower($1) LIMIT 1`,
+        trimmed,
+      ),
+    { context: "users.detail.resolve.primary", delayMs: 0 },
   );
   return rows[0]?.id ?? null;
 }

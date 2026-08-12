@@ -1526,27 +1526,33 @@ const cachedUsersListStats = unstable_cache(
   // not read inside — so the cache key tracks the admin-managed
   // /system/excluded-users list and the tiles re-fetch when it changes.
   async (excludedUserIds: string[]): Promise<UsersListStats> => {
-    const [userRows, depositorRows, ftdRows] = await Promise.all([
-      queryMainRows<
-        {
-          non_banned: string;
-          banned: string;
-          signups_24h: string;
-        }[]
-      >(`
+    // One statement / one mirror-pool slot. The page streams this cache fill
+    // alongside the list query, and the mirror pool intentionally has only
+    // two slots. Launching these three tiny aggregates through Promise.all
+    // occupied both slots and queued a third before the list's own ranking /
+    // hydration fan-out even started, amplifying a busy mirror into users.list
+    // timeouts (and starving the 4s /users/[id] route-key lookup). CTEs retain
+    // the exact aggregate definitions while bounding a cold stats fill to one
+    // checkout, matching the one-shot pattern used by dashboard daily P&L.
+    // The balances aggregate remains a deliberate seq scan (one row per
+    // user, ~11% match rate); the FTD anti-join remains index-served. See the
+    // prior v3 implementation/history for the measured plans and timings.
+    const [r] = await queryMainRows<
+      {
+        non_banned: string;
+        banned: string;
+        signups_24h: string;
+        depositors: string;
+        ftds_24h: string;
+      }[]
+    >(
+      `WITH user_stats AS (
         SELECT
-          COUNT(*) FILTER (WHERE is_banned = false)::text                                 AS non_banned,
-          COUNT(*) FILTER (WHERE is_banned = true)::text                                  AS banned,
-          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::text         AS signups_24h
+          COUNT(*) FILTER (WHERE is_banned = false)::text                         AS non_banned,
+          COUNT(*) FILTER (WHERE is_banned = true)::text                          AS banned,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::text AS signups_24h
         FROM "user"
-      `),
-      // Deliberate SEQ SCAN, not an index miss: `balances` is one row per
-      // user (16.5k rows / 626 pages today) and this counts ~11% of them,
-      // so a btree on total_deposited would be read in full anyway while
-      // adding write cost to a table every bet touches. Measured 3.2 ms
-      // end-to-end (EXPLAIN ANALYZE, read-only prod 2026-07-23) behind a
-      // 60s cache. Revisit if `balances` ever grows an order of magnitude.
-      queryMainRows<{ depositors: string }[]>(`
+      ), depositor_stats AS (
         SELECT COUNT(*)::text AS depositors
           FROM balances b
          WHERE b.total_deposited::numeric - COALESCE((
@@ -1555,27 +1561,14 @@ const cachedUsersListStats = unstable_cache(
            WHERE fri.user_id = b.user_id
              AND fri.status IN ('partially_refunded', 'refunded')
          ), 0) > 0
-      `),
-      // FTDs (24h). Fully index-served — EXPLAIN (ANALYZE, BUFFERS) on
-      // read-only prod, 2026-07-23, 0.31 ms execution / 86 shared hits:
-      //   • the window leg index-scans idx_ledger_tx_deposit_created_at
-      //     (partial `WHERE type = 'deposit'`, created_at DESC)
-      //   • the "already deposited before" leg is an ANTI JOIN served by
-      //     an INDEX-ONLY scan on idx_ledger_user_deposit_created
-      //   • the staff filter is a user_pkey lookup on the ~25 in-window rows
-      // Written as NOT EXISTS rather than the dashboard's DISTINCT ON so it
-      // never touches the deposit history outside the window: "first
-      // deposit is in the last 24h" ⟺ "deposited in the window AND has no
-      // completed deposit older than it".
-      queryMainRows<{ ftds_24h: string }[]>(
-        `
-        WITH d24 AS (
+      ),
+      d24 AS (
           SELECT DISTINCT user_id
             FROM ledger_transactions
            WHERE type = 'deposit'
              AND status = 'completed'
              AND created_at >= NOW() - INTERVAL '24 hours'
-        )
+      ), ftd_stats AS (
         SELECT COUNT(*)::text AS ftds_24h
           FROM d24
          WHERE NOT EXISTS (
@@ -1592,20 +1585,23 @@ const cachedUsersListStats = unstable_cache(
                   WHERE role NOT IN ('admin', 'support')
                     AND NOT (id = ANY($1::text[]))
                )
-      `,
-        excludedUserIds,
-      ),
-    ]);
-    const r = userRows[0];
+      )
+      SELECT us.non_banned, us.banned, us.signups_24h,
+             ds.depositors, fs.ftds_24h
+        FROM user_stats us
+        CROSS JOIN depositor_stats ds
+        CROSS JOIN ftd_stats fs`,
+      excludedUserIds,
+    );
     return {
       totalNonBanned: Number(r?.non_banned ?? 0),
       totalBanned: Number(r?.banned ?? 0),
       signups24h: Number(r?.signups_24h ?? 0),
-      depositors: Number(depositorRows[0]?.depositors ?? 0),
-      ftds24h: Number(ftdRows[0]?.ftds_24h ?? 0),
+      depositors: Number(r?.depositors ?? 0),
+      ftds24h: Number(r?.ftds_24h ?? 0),
     };
   },
-  ["users-list-stats-v3"],
+  ["users-list-stats-v4-one-shot"],
   { revalidate: 60, tags: ["users-list-stats"] },
 );
 

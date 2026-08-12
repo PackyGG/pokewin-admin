@@ -49,3 +49,14 @@ test("referrer facts are resolved inside the existing user query", () => {
   assert.match(detail, /AS latest_referral_code/);
   assert.doesNotMatch(detail, /const \[referrer, signupUsage, latestUsage\]/);
 });
+
+test("critical route-key lookup is isolated from the analytics mirror pool", () => {
+  const detail = read("src/lib/queries/users-detail.ts");
+
+  assert.match(detail, /import \{ getPrimaryDrizzleDb \} from "@\/lib\/db"/);
+  assert.match(
+    detail,
+    /queryRows<\{ id: string \}\[]>\(\s*await getPrimaryDrizzleDb\(\)/,
+  );
+  assert.match(detail, /users\.detail\.resolve\.primary/);
+});

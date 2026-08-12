@@ -248,11 +248,11 @@ export async function getUserFinancialTransactionsCached(
  * nothing (not even the shell) can render until we know whether the route
  * key maps to a real user (→ id) or an unknown one (→ 404). It is now a
  * single indexed lookup (a PK read for id/uuid keys, or a
- * `lower(username) = $1` Index Scan for handles). But because it runs on
- * the bare critical path, if the Postgres pool is momentarily starved (a
- * couple of runaway per-user scans pinning the `max: 3` slots — the exact
- * failure `db.ts` documents), even this cheap read can block long enough
- * that the query THROWS, and — with no Suspense above it — that throw goes
+ * `lower(username) = $1` Index Scan for handles). It uses the separate
+ * primary pool so slow analytics reads occupying the mirror's two slots do
+ * not queue this prerequisite. The short guard remains as protection against
+ * a primary connection outage. If the query THROWS, with no Suspense above
+ * it, that throw would otherwise go
  * straight to the segment error boundary, white-screening the WHOLE page
  * ("Couldn't load this user", digest 497656675) on the #1-traffic route.
  *

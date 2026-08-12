@@ -54,13 +54,14 @@ function createPool(
     // The production mirror role is capped at 30 sessions and is shared with
     // Antifraud. Two slots prevent one slow read from serializing every query
     // on a page, while remaining far below the old eight-session fan-out.
-    // Reuse a checkout within a hot isolate so a page with several reads does
-    // not pay a fresh TLS/PostgreSQL handshake for every query. The short
-    // client idle timeout closes normally scheduled isolates; maxLifetime
-    // bounds sockets that remain busy or survive repeated reuse. Primary
-    // pools remain at three.
+    // Vercel can freeze an isolate before node-postgres runs its idle timer.
+    // Retire mirror clients after every checkout so a completed request cannot
+    // retain one of the shared role's 30 sessions indefinitely. A previous
+    // attempt to reclaim them with PostgreSQL idle_session_timeout made thawed
+    // isolates reuse server-killed sockets (57P05); maxUses=1 closes them from
+    // the client as part of release instead. Primary pools remain at three.
     max: isReadMirror ? 2 : 3,
-    maxUses: isReadMirror ? 100 : Infinity,
+    maxUses: isReadMirror ? 1 : Infinity,
     idleTimeoutMillis: isReadMirror ? 1_000 : 10_000,
     // A queued read must be allowed to outlive the longest statement already
     // occupying a slot. The old 10s acquire budget guaranteed false pool
@@ -76,9 +77,9 @@ function createPool(
     allowExitOnIdle: true,
     // Defense in depth: even if a caller accidentally sends mutation SQL
     // through a mirror client, PostgreSQL rejects it before state can change.
-    // Do not set idle_session_timeout here. Vercel may freeze an isolate before
-    // node-postgres runs its idle cleanup timer; killing that pooled socket on
-    // the server makes the first query after thaw fail with PostgreSQL 57P05.
+    // Do not set idle_session_timeout here. Mirror clients are retired on
+    // release above; a server timeout instead leaves a frozen isolate holding
+    // a stale socket that fails with PostgreSQL 57P05 after thaw.
     // work_mem: the mirror server runs the PostgreSQL default of 4MB, which
     // spilled ~98GB of sort/hash temp files and made analytics reads thrash
     // disk instead of finishing in memory. 32MB per sort node across at most
