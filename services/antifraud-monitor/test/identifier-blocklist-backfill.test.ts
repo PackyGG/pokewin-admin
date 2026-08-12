@@ -58,6 +58,7 @@ function fakeDb(options: {
   onChunk?: () => void;
 }) {
   const chunks: ChunkCall[] = [];
+  const inserts: ChunkCall[] = [];
   let served = 0;
   const query = async (sql: string, values?: unknown[]) => {
     if (sql.includes("WITH scanned AS")) {
@@ -94,11 +95,12 @@ function fakeDb(options: {
     };
   };
   const client = {
-    query: async (sql: string) => {
+    query: async (sql: string, values?: unknown[]) => {
       if (sql.includes("FROM identifier_blocklist_audit")) {
         return { rows: [], rowCount: 0 };
       }
       if (sql.includes("INSERT INTO identifier_blocklists")) {
+        inserts.push({ sql, values: values ?? [] });
         return {
           rows: [{ id: RULE_ID, value: "203.0.113.0/24" }],
           rowCount: 1,
@@ -111,7 +113,7 @@ function fakeDb(options: {
   const db = {
     antifraud: { query, connect: async () => client },
   } as unknown as Databases;
-  return { db, chunks };
+  return { db, chunks, inserts };
 }
 
 async function createRule(
@@ -165,6 +167,34 @@ test("the historical backfill is chunked, never one unbounded statement", async 
     failed: false,
   });
 });
+
+for (const kind of ["ip", "fingerprint"] as const) {
+  test(`${kind} rule insert uses contiguous typed parameters`, async () => {
+    const { db, inserts } = fakeDb({ snapshotRows: 0, kind });
+    const response = await createRule(db, kind);
+
+    assert.equal(response.statusCode, 201);
+    assert.equal(inserts.length, 1);
+    const insert = inserts[0]!;
+    const placeholders = [...insert.sql.matchAll(/\$(\d+)/g)].map((match) =>
+      Number(match[1])
+    );
+    assert.deepEqual(
+      [...new Set(placeholders)].sort((left, right) => left - right),
+      [1, 2, 3, 4, 5, 6],
+      "every supplied parameter must be referenced from $1 without a gap",
+    );
+    assert.equal(Math.max(...placeholders), insert.values.length);
+    assert.deepEqual(insert.values, [
+      kind === "ip" ? "203.0.113.0/24" : "abcd1234efgh",
+      kind === "ip" ? "cidr" : "exact",
+      "Blocked from the antifraud admin panel",
+      null,
+      "admin-1",
+      null,
+    ]);
+  });
+}
 
 test("a failing backfill never turns a committed rule into a 500", async () => {
   const { db, chunks } = fakeDb({ snapshotRows: 12_000, failBackfill: true });

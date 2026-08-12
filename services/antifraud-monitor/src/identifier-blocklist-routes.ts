@@ -410,8 +410,8 @@ export async function registerIdentifierBlocklistRoutes(
               expires_at,created_by,created_by_username,updated_by,
               updated_by_username
             ) VALUES (
-              'ip',$2::cidr,NULL,
-              $3,$4,true,$5,$6,$7,$6,$7
+              'ip',$1::cidr,NULL,
+              $2,$3,true,$4,$5,$6,$5,$6
             )
             ON CONFLICT DO NOTHING
             RETURNING id,
@@ -427,8 +427,8 @@ export async function registerIdentifierBlocklistRoutes(
               expires_at,created_by,created_by_username,updated_by,
               updated_by_username
             ) VALUES (
-              'fingerprint',NULL,$2,
-              $3,$4,true,$5,$6,$7,$6,$7
+              'fingerprint',NULL,$1,
+              $2,$3,true,$4,$5,$6,$5,$6
             )
             ON CONFLICT DO NOTHING
             RETURNING id,fingerprint_id AS value
@@ -436,7 +436,6 @@ export async function registerIdentifierBlocklistRoutes(
         const inserted = await client.query<{ id: string; value: string }>(
           insertSql,
           [
-            kind,
             normalizedValue,
             parsed.data.matchMode,
             parsed.data.reason,

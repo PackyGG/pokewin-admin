@@ -350,7 +350,7 @@ test("fingerprint blocklist inserts never pass visitor IDs through a CIDR cast",
   assert.notEqual(end, -1, "fingerprint insert end marker not found");
   const fingerprintInsert = source.slice(start, end);
   assert.ok(fingerprintInsert.length > 0, "expected a separate fingerprint insert");
-  assert.match(fingerprintInsert, /'fingerprint',NULL,\$2/);
+  assert.match(fingerprintInsert, /'fingerprint',NULL,\$1/);
   assert.doesNotMatch(fingerprintInsert, /::cidr/);
 });
 
