@@ -103,6 +103,26 @@ export const DISCORD_MENTION_GROUPS = [
   description: string;
 }>;
 
+/**
+ * Event-specific recipient policies that must not be broadened by a channel's
+ * general mention selection. Reward-abuse findings are a support workflow:
+ * managers and engineering can still read the channel, but only Support is
+ * notified when a new review batch is queued.
+ */
+export const DISCORD_EVENT_MENTION_GROUP_OVERRIDES = {
+  "antifraud.reward_abuse_rain": ["support"],
+} as const satisfies Readonly<Record<string, readonly AntifraudTeam[]>>;
+
+export function discordEventMentionGroupOverride(
+  eventKey: string,
+): readonly AntifraudTeam[] | null {
+  return (
+    DISCORD_EVENT_MENTION_GROUP_OVERRIDES[
+      eventKey as keyof typeof DISCORD_EVENT_MENTION_GROUP_OVERRIDES
+    ] ?? null
+  );
+}
+
 export function isDiscordMentionGroup(
   value: string,
 ): value is (typeof DISCORD_MENTION_GROUP_KEYS)[number] {

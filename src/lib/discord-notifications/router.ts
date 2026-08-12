@@ -6,9 +6,11 @@ import { adminDrizzle } from "@/lib/admin-db";
 import {
   DISCORD_BOUNDARY_MARKERS,
   assertApprovedCategoryBoundary,
+  discordEventMentionGroupOverride,
 } from "./antifraud-policy";
 import {
   approvedCategoryIds,
+  mentionGroupKeyRows,
   mentionGroupMemberRows,
   silentCategoryIds,
 } from "./policy-sql";
@@ -191,8 +193,10 @@ export async function syncDiscordChannels(input: {
  * pre-rendered `content` string, which meant one hardcoded tag list applied to
  * every destination and operators could not change it without a deploy.
  *
- * Alert severity never changes recipients. The channel's saved selection is
- * the complete tag list, including for urgent alerts and review reminders.
+ * Alert severity never changes recipients. Normally the channel's saved
+ * selection is the complete tag list. A small reviewed event override may
+ * narrow that list for a dedicated workflow; it can never broaden it based on
+ * severity or producer-controlled payload data.
  */
 export async function enqueueDiscordEvent(input: {
   guildId: string;
@@ -215,6 +219,21 @@ export async function enqueueDiscordEvent(input: {
   if (componentsJson.length > 8_000) {
     throw new Error("components are too large.");
   }
+  const mentionGroupOverride = discordEventMentionGroupOverride(key);
+  const channelGroupsQuery = mentionGroupOverride
+    ? sql`
+        SELECT eligible.channel_id, required.group_key
+        FROM eligible
+        CROSS JOIN (VALUES ${mentionGroupKeyRows(mentionGroupOverride)})
+          AS required(group_key)
+      `
+    : sql`
+        SELECT eligible.channel_id, selection.group_key
+        FROM eligible
+        JOIN discord_notification_channel_mentions AS selection
+          ON selection.guild_id = ${guildId}
+         AND selection.channel_id = eligible.channel_id
+      `;
 
   const result = await adminDrizzle.execute<{ inserted: number; eligible: number }>(
     sql`
@@ -255,13 +274,11 @@ export async function enqueueDiscordEvent(input: {
           AND parent.position < boundary_bottom.position
       ),
       -- The operator's saved selection is the complete recipient policy for
-      -- each channel. Alert severity cannot add recipients behind the UI.
+      -- each channel unless the event has a narrower reviewed override.
+      -- Reward-abuse batches, for example, notify Support only even when the
+      -- shared destination channel selects additional teams.
       channel_groups AS (
-        SELECT eligible.channel_id, selection.group_key
-        FROM eligible
-        JOIN discord_notification_channel_mentions AS selection
-          ON selection.guild_id = ${guildId}
-         AND selection.channel_id = eligible.channel_id
+        ${channelGroupsQuery}
       ),
       -- DISTINCT on the id, not the group: one teammate can sit in two selected
       -- groups and must still be tagged exactly once.

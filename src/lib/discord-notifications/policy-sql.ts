@@ -46,3 +46,11 @@ export function mentionGroupMemberRows(): SQL {
   );
   return sql.join(rows, sql`, `);
 }
+
+/** Parameterised `VALUES` rows for a non-empty event recipient override. */
+export function mentionGroupKeyRows(groupKeys: readonly string[]): SQL {
+  if (groupKeys.length === 0) {
+    throw new Error("A Discord mention-group override cannot be empty.");
+  }
+  return sql.join(groupKeys.map((groupKey) => sql`(${groupKey})`), sql`, `);
+}

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { StepUpField } from "@/components/step-up-field";
 import { Textarea } from "@/components/ui/textarea";
 import { decideRewardAbuseReview } from "./actions";
 
@@ -20,10 +21,17 @@ function DecisionDialog({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
+  const [credential, setCredential] = useState("");
   const [pending, startTransition] = useTransition();
   const confirming = decision === "confirm";
   return (
-    <AlertDialog open={open} onOpenChange={setOpen}>
+    <AlertDialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setCredential("");
+      }}
+    >
       <AlertDialogTrigger render={
         <Button variant={confirming ? "destructive" : "outline"} size="sm">
           {confirming ? <Ban /> : <XCircle />}
@@ -37,7 +45,7 @@ function DecisionDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             {confirming
-              ? "This disables future Rain joins and tips and removes remaining Rain-attributable bonus funds from the available balance. The balance can never go below $0. Any active rain already joined still settles normally."
+              ? "This disables future Rain joins and tips and removes remaining Rain-attributable general-bonus funds, capped by both the reviewed net Rain and the live available balance. The balance can never go below $0. Any active rain already joined still settles normally."
               : "The account will remain unchanged and will not be detected again for 30 days."}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -48,14 +56,26 @@ function DecisionDialog({
           onChange={(event) => setReason(event.target.value)}
           rows={4}
         />
+        {confirming ? (
+          <StepUpField value={credential} onChange={setCredential} />
+        ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            disabled={pending || reason.trim().length < 3}
+            disabled={
+              pending ||
+              reason.trim().length < 3 ||
+              (confirming && !credential.trim())
+            }
             onClick={(event) => {
               event.preventDefault();
               startTransition(async () => {
-                const result = await decideRewardAbuseReview({ reviewId, decision, reason });
+                const result = await decideRewardAbuseReview({
+                  reviewId,
+                  decision,
+                  reason,
+                  credential: confirming ? credential.trim() : undefined,
+                });
                 if (!result.ok) {
                   toast.error(result.message);
                   return;
@@ -65,6 +85,7 @@ function DecisionDialog({
                     ? `Abuse confirmed, Rain disabled, and $${result.rainFundsRemovedUsd.toFixed(2)} removed`
                     : "Finding dismissed — no account changes made",
                 );
+                setCredential("");
                 setOpen(false);
                 router.refresh();
               });

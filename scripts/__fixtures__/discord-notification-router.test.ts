@@ -141,6 +141,22 @@ test("errors and KYC channels post without tagging anyone", () => {
   );
 });
 
+test("rain reward-abuse batches notify Support only", () => {
+  const policy = read("src/lib/discord-notifications/antifraud-policy.ts");
+  const policySql = read("src/lib/discord-notifications/policy-sql.ts");
+  const router = read("src/lib/discord-notifications/router.ts");
+
+  assert.match(
+    policy,
+    /"antifraud\.reward_abuse_rain": \["support"\]/,
+  );
+  assert.match(router, /discordEventMentionGroupOverride\(key\)/);
+  assert.match(router, /CROSS JOIN \(VALUES \$\{mentionGroupKeyRows\(mentionGroupOverride\)\}\)/);
+  assert.match(policySql, /export function mentionGroupKeyRows/);
+  assert.match(router, /jsonb_agg\(DISTINCT member\.user_id\) AS user_ids/);
+  assert.match(router, /'users', mentions\.user_ids/);
+});
+
 test("error routing uses only the four surviving channels", () => {
   const originalMigration = read(
     "drizzle/admin/migrations/20260805_consolidate_error_discord_routing.sql",
