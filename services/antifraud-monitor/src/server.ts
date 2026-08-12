@@ -2361,25 +2361,6 @@ app.setErrorHandler((error, request, reply) => {
   return reply.code(500).send({ error: "internal_error" });
 });
 
-app.addHook("onResponse", (request, reply, done) => {
-  const route = request.routeOptions.url ?? "unknown";
-  if (route === "/health" || route === "/ready") {
-    done();
-    return;
-  }
-  const statusClass = `${Math.floor(reply.statusCode / 100)}xx`;
-  observe(() => {
-    Sentry.metrics.count("http.requests", 1, {
-      attributes: { method: request.method, route, status_class: statusClass },
-    });
-    Sentry.metrics.distribution("http.response_time", reply.elapsedTime, {
-      unit: "millisecond",
-      attributes: { method: request.method, route, status_class: statusClass },
-    });
-  });
-  done();
-});
-
 app.addHook("onClose", async () => {
   shuttingDown = true;
   dashboardOpsTick.stop();

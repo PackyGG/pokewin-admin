@@ -1,5 +1,7 @@
 const DEFAULT_TRACE_SAMPLE_RATE = 0.1;
-const DEFAULT_REPLAY_ERROR_SAMPLE_RATE = 1;
+// Replay keeps a rolling DOM buffer even when only error sessions are uploaded.
+// Sample that runtime work as well as ingestion to protect dense admin pages.
+const DEFAULT_REPLAY_ERROR_SAMPLE_RATE = 0.25;
 const DEFAULT_PROFILE_SESSION_SAMPLE_RATE = 0.01;
 
 type SanitizableSentryEvent = {
@@ -42,7 +44,7 @@ export function sentryTraceSampleRate(value: string | undefined): number {
     : DEFAULT_TRACE_SAMPLE_RATE;
 }
 
-/** Capture the buffered replay for every error by default, never normal sessions. */
+/** Upload a bounded sample of error replays; normal sessions are never uploaded. */
 export function sentryReplayErrorSampleRate(value: string | undefined): number {
   if (value === undefined || value.trim() === "") {
     return DEFAULT_REPLAY_ERROR_SAMPLE_RATE;

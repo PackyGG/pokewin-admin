@@ -219,12 +219,6 @@ export function logQueryFailure(
           details.kind,
         ]);
         Sentry.captureMessage("PostgreSQL query failed", "error");
-        Sentry.logger.error("PostgreSQL query failed", {
-          area: area.slice(0, 120),
-          db_engine: details.engine,
-          failure_kind: details.kind,
-          duration_ms: Math.max(0, Math.round(details.durationMs)),
-        });
         Sentry.metrics.count("database.query_failures", 1, {
           attributes: {
             area: area.slice(0, 120),
@@ -232,18 +226,6 @@ export function logQueryFailure(
             kind: details.kind,
           },
         });
-        Sentry.metrics.distribution(
-          "database.failed_query_duration",
-          Math.max(0, details.durationMs),
-          {
-            unit: "millisecond",
-            attributes: {
-              area: area.slice(0, 120),
-              engine: details.engine,
-              kind: details.kind,
-            },
-          },
-        );
       });
     });
   }

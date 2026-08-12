@@ -14,8 +14,8 @@ import {
  * first App Router transition cannot race a lazy SDK import. With no DSN the
  * SDK remains disabled and sends nothing.
  *
- * Normal sessions are never recorded. Error replays mask every text/input and
- * block all media, preserving interaction timing without visible admin data.
+ * Normal sessions are never uploaded. A bounded sample keeps the rolling error
+ * replay buffer; all text/inputs are masked and all media is blocked.
  */
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 

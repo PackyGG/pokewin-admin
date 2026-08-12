@@ -918,12 +918,15 @@ export class IngestDelivery {
     const startedAt = Date.now();
     try {
       const delivered = await this.flushOnce();
+      const recoveredFromFailure = this.consecutiveFailures > 0;
       this.lastDeliveredCount = delivered;
       this.lastSuccessAt = new Date().toISOString();
       this.consecutiveFailures = 0;
       this.nextAttemptAt = 0;
       observe(() => {
-        Sentry.metrics.gauge("ingest.consecutive_failures", 0);
+        if (recoveredFromFailure) {
+          Sentry.metrics.gauge("ingest.consecutive_failures", 0);
+        }
         if (delivered > 0) {
           Sentry.metrics.count("ingest.delivery_runs", 1, {
             attributes: { status: "ok" },

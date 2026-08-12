@@ -107,7 +107,7 @@ test("Sentry sampling and request sanitization behavior stays bounded", () => {
   const result = JSON.parse(output);
 
   assert.deepEqual(result.rates, [0.1, 0, 1, 0.1, 0.1]);
-  assert.deepEqual(result.replayRates, [1, 0, 1]);
+  assert.deepEqual(result.replayRates, [0.25, 0, 0.25]);
   assert.deepEqual(result.profileRates, [0.01, 0, 1, 0.01]);
   assert.deepEqual(result.event, {
     request: { url: "https://packydash.com/users", method: "GET" },
