@@ -391,16 +391,19 @@ export async function registerIdentifierBlocklistRoutes(
         ruleId = prior.rows[0].blocklist_id;
         idempotent = true;
       } else {
-        const inserted = await client.query<{ id: string; value: string }>(
-          `
+        // PostgreSQL resolves a CASE expression to one common type before it
+        // evaluates the condition. Keeping `$2::cidr` in the IP-only branch
+        // therefore still tried to cast fingerprint visitor IDs to CIDR and
+        // made every fingerprint rule creation fail with 22P02. Use separate
+        // statements so a fingerprint value never enters a network cast.
+        const insertSql = kind === "ip"
+          ? `
             INSERT INTO identifier_blocklists (
               kind,ip_network,fingerprint_id,match_mode,reason,enabled,
               expires_at,created_by,created_by_username,updated_by,
               updated_by_username
             ) VALUES (
-              $1,
-              CASE WHEN $1='ip' THEN $2::cidr ELSE NULL END,
-              CASE WHEN $1='fingerprint' THEN $2 ELSE NULL END,
+              'ip',$2::cidr,NULL,
               $3,$4,true,$5,$6,$7,$6,$7
             )
             ON CONFLICT DO NOTHING
@@ -410,7 +413,21 @@ export async function registerIdentifierBlocklistRoutes(
                 WHEN kind='ip' THEN ip_network::text
                 ELSE fingerprint_id
               END AS value
-          `,
+          `
+          : `
+            INSERT INTO identifier_blocklists (
+              kind,ip_network,fingerprint_id,match_mode,reason,enabled,
+              expires_at,created_by,created_by_username,updated_by,
+              updated_by_username
+            ) VALUES (
+              'fingerprint',NULL,$2,
+              $3,$4,true,$5,$6,$7,$6,$7
+            )
+            ON CONFLICT DO NOTHING
+            RETURNING id,fingerprint_id AS value
+          `;
+        const inserted = await client.query<{ id: string; value: string }>(
+          insertSql,
           [
             kind,
             normalizedValue,

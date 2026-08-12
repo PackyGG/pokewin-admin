@@ -333,6 +333,20 @@ test("blocklist VPN evidence is derived from a count, never a literal true", () 
   assert.match(lateral, /count\(\*\)\s*>\s*0 AS detected|bool_or\(/);
 });
 
+test("fingerprint blocklist inserts never pass visitor IDs through a CIDR cast", () => {
+  const source = readFileSync(
+    new URL("../src/identifier-blocklist-routes.ts", import.meta.url),
+    "utf8",
+  );
+  const fingerprintInsert = source.slice(
+    source.indexOf(": `\n            INSERT INTO identifier_blocklists"),
+    source.indexOf("`;\n        const inserted"),
+  );
+  assert.ok(fingerprintInsert.length > 0, "expected a separate fingerprint insert");
+  assert.match(fingerprintInsert, /'fingerprint',NULL,\$2/);
+  assert.doesNotMatch(fingerprintInsert, /::cidr/);
+});
+
 test("MaxMind risk banding is shared, never re-implemented", () => {
   assert.equal(maxMindRiskPoints(90), 55);
   assert.equal(maxMindRiskPoints(85), 55);
