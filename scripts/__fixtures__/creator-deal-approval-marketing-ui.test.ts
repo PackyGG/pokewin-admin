@@ -53,25 +53,31 @@ test("new creator deal chooses fill, multiplier, or P&L and never creates before
   assert.doesNotMatch(fields, /Creator-run leaderboards/);
 });
 
-test("creator detail exposes active-tab-only reward programs and complete logs", () => {
+test("creator detail separates reward programs from an active-tab-only audit page", () => {
   const page = read(`${detail}/page.tsx`);
   const tabs = read(`${detail}/_components/creator-tab-bar.tsx`);
-  const query = read(`${detail}/_queries/creator-rewards-data.ts`);
-  const view = read(`${detail}/_components/rewards-tab.tsx`);
+  const rewardsQuery = read(`${detail}/_queries/creator-rewards-data.ts`);
+  const rewardsView = read(`${detail}/_components/rewards-tab.tsx`);
+  const auditQuery = read(`${detail}/_queries/creator-audit-data.ts`);
+  const auditView = read(`${detail}/_components/audit-tab.tsx`);
 
   assert.match(page, /"rewards"/);
-  assert.match(page, /tab === "rewards" && \(\s*<CreatorRewardsTab/);
+  assert.match(page, /"alts",\s*"audit"/);
+  assert.match(page, /tab === "rewards" && <CreatorRewardsTab/);
+  assert.match(page, /tab === "audit" && \(\s*<CreatorAuditTab/);
   assert.match(tabs, /key: "rewards", label: "Rewards"/);
-  assert.match(query, /creator_reward_programs\.creator_user_id, creatorUserId/);
-  assert.match(query, /groupBy\(creator_reward_claims\.program_id, creator_reward_claims\.status\)/);
-  assert.match(query, /creator_deal_approval_requests\.creator_user_id/);
-  assert.match(query, /creator_deal_approval_events\.request_id/);
-  assert.match(query, /auditActorVisibilityPredicate/);
+  assert.match(tabs, /key: "alts", label: "Alt Accounts"[\s\S]*key: "audit", label: "Audit"/);
+  assert.match(rewardsQuery, /creator_reward_programs\.creator_user_id, creatorUserId/);
+  assert.match(rewardsQuery, /groupBy\(creator_reward_claims\.program_id, creator_reward_claims\.status\)/);
+  assert.doesNotMatch(rewardsView, /Deal approval requests|Program and approval log/);
+  assert.match(auditQuery, /creator_deal_approval_requests\.creator_user_id/);
+  assert.match(auditQuery, /creator_deal_approval_events\.request_id/);
+  assert.match(auditQuery, /auditActorVisibilityPredicate/);
   assert.match(page, /canViewProtectedActors=\{canViewProtectedAuditActivity\(session\)\}/);
-  assert.match(view, /Delivery attempts/);
-  assert.match(view, /Provision attempts/);
-  assert.match(view, /botNotifyError/);
-  assert.match(view, /ledgerTxId/);
+  assert.match(auditView, /Delivery attempts/);
+  assert.match(auditView, /Provision attempts/);
+  assert.match(rewardsView, /botNotifyError/);
+  assert.match(rewardsView, /ledgerTxId/);
 });
 
 test("Creator Hub terms route publishes immutable numbered versions", () => {

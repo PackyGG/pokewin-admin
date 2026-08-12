@@ -12,7 +12,7 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
     read("drizzle/admin/migrations/20260812_creator_pnl_deal_approval.sql"),
     read("src/lib/creator-deal-approvals.ts"),
     read("src/lib/db-schema/admin/schema.ts"),
-    read("src/app/(creator-hub)/creator-hub/creators/[id]/_queries/creator-rewards-data.ts"),
+    read("src/app/(creator-hub)/creator-hub/creators/[id]/_queries/creator-audit-data.ts"),
     read("src/lib/backend-api/index.ts"),
     read("src/lib/creator-agreement-terms.ts"),
     read("src/app/api/v1/discord/creator-deal-approvals/jobs/claim/route.ts"),

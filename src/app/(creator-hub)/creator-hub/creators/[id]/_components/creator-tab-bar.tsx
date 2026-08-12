@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 import {
   BarChart3,
+  ClipboardList,
   Crown,
   IdCard,
   ShieldAlert,
@@ -17,7 +18,7 @@ import { Spinner } from "@/components/ux";
 /**
  * Creator detail tab bar.
  *
- * Tab set: Overview · Creator · Sessions · Risk · Alt Accounts.
+ * Tab set: Overview · Creator · Sessions · Risk · Rewards · Alt Accounts · Audit.
  *
  * All tabs drive the active tab via `?tab=`: the page reads it and mounts
  * ONLY that tab's component lazily in a keyed Suspense boundary, so a
@@ -56,6 +57,7 @@ const NAV_TABS = [
   "risk",
   "rewards",
   "alts",
+  "audit",
 ] as const;
 
 /**
@@ -73,6 +75,7 @@ const TABS: CreatorTab[] = [
   { key: "risk", label: "Risk", icon: ShieldAlert },
   { key: "rewards", label: "Rewards", icon: Crown },
   { key: "alts", label: "Alt Accounts", icon: Users },
+  { key: "audit", label: "Audit", icon: ClipboardList },
 ];
 
 export function CreatorTabBar() {

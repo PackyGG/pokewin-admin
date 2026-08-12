@@ -18,6 +18,7 @@ import { RiskTab } from "./_components/risk-tab";
 import { CreatorTabSkeleton } from "./_components/creator-tab-skeleton";
 import { AltAccountsTab } from "./_components/alt-accounts-tab";
 import { CreatorRewardsTab } from "./_components/rewards-tab";
+import { CreatorAuditTab } from "./_components/audit-tab";
 
 export const metadata = { title: "Creator · Creator Hub" };
 
@@ -37,6 +38,7 @@ const NAV_TABS = [
   "risk",
   "rewards",
   "alts",
+  "audit",
 ] as const;
 type NavTab = (typeof NAV_TABS)[number];
 
@@ -69,8 +71,8 @@ function parseSessionsPage(value: string | undefined): number {
  *   1. Top banner (identity bar): pfp, username, creator code chip(s), email
  *      with hide/show toggle, a button per linked social, and the bot-owned
  *      Discord link when one exists.
- *   2. Tab bar: Overview (default) + Creator / Sessions / Risk / Alt Accounts
- *      (all navigable via `?tab=`).
+ *   2. Tab bar: Overview (default) + Creator / Sessions / Risk / Rewards /
+ *      Alt Accounts / Audit (all navigable via `?tab=`).
  *   3. The active tab's content.
  *
  * ACCESS: `canAccessCreatorHub` (the layout enforces it; this page adds the
@@ -157,13 +159,14 @@ export default async function CreatorHubCreatorDetailPage({
         )}
         {tab === "sessions" && <SessionsTab userId={id} page={sessionsPage} />}
         {tab === "risk" && <RiskTab userId={id} />}
-        {tab === "rewards" && (
-          <CreatorRewardsTab
+        {tab === "rewards" && <CreatorRewardsTab userId={id} />}
+        {tab === "alts" && <AltAccountsTab userId={id} />}
+        {tab === "audit" && (
+          <CreatorAuditTab
             userId={id}
             canViewProtectedActors={canViewProtectedAuditActivity(session)}
           />
         )}
-        {tab === "alts" && <AltAccountsTab userId={id} />}
       </Suspense>
     </div>
   );
