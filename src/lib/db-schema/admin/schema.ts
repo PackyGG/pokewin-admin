@@ -1770,6 +1770,38 @@ export const antifraud_reviews = pgTable("antifraud_reviews", {
 	index("antifraud_reviews_username_trgm_idx").using("gin", table.target_username.asc().nullsLast().op("gin_trgm_ops")),
 ]);
 
+export const reward_abuse_reviews = pgTable("reward_abuse_reviews", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	target_user_id: text().notNull(),
+	target_username: text(),
+	detector: text().default('rain_farming').notNull(),
+	detector_version: text().notNull(),
+	status: text().default('pending').notNull(),
+	score: integer().notNull(),
+	severity: text().notNull(),
+	window_started_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	window_ended_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	metrics: jsonb().notNull(),
+	reasons: text().array().default(sql`'{}'::text[]`).notNull(),
+	first_detected_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	last_detected_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	reviewed_by: uuid(),
+	review_reason: text(),
+	reviewed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	rain_lock_applied: boolean().default(false).notNull(),
+	discord_alerted_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	uniqueIndex("reward_abuse_reviews_pending_user_detector_uniq").using("btree", table.target_user_id.asc().nullsLast().op("text_ops"), table.detector.asc().nullsLast().op("text_ops")).where(sql`status = 'pending'`),
+	index("reward_abuse_reviews_status_score_idx").using("btree", table.status.asc().nullsLast().op("text_ops"), table.score.desc().nullsFirst().op("int4_ops"), table.last_detected_at.desc().nullsFirst().op("timestamptz_ops"), table.id.desc().nullsFirst().op("uuid_ops")),
+	index("reward_abuse_reviews_user_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops"), table.last_detected_at.desc().nullsFirst().op("timestamptz_ops")),
+	foreignKey({ columns: [table.reviewed_by], foreignColumns: [admin_users.id], name: "reward_abuse_reviews_reviewed_by_fkey" }).onDelete("set null"),
+	check("reward_abuse_reviews_status_check", sql`status = ANY (ARRAY['pending'::text, 'confirmed'::text, 'dismissed'::text])`),
+	check("reward_abuse_reviews_severity_check", sql`severity = ANY (ARRAY['medium'::text, 'high'::text, 'critical'::text])`),
+	check("reward_abuse_reviews_score_check", sql`score BETWEEN 0 AND 100`),
+]);
+
 export const antifraud_review_notes = pgTable("antifraud_review_notes", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	review_id: uuid().notNull(),

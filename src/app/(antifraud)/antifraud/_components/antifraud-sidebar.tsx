@@ -11,6 +11,7 @@ import {
   Fingerprint,
   LayoutDashboard,
   MailWarning,
+  Gift,
   MapPinned,
   Network,
   RadioTower,
@@ -93,6 +94,7 @@ const MAIN_NAV: NavItem[] = [
     icon: Banknote,
   },
   { label: "KYC reviews", href: "/antifraud/kyc", icon: Fingerprint },
+  { label: "Reward abuse", href: "/antifraud/reward-abuse", icon: Gift },
 ];
 
 const BLACKLIST_NAV: NavItem[] = [

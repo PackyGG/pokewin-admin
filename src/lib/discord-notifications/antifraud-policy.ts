@@ -4,6 +4,7 @@ export const DISCORD_BOUNDARY_MARKERS = {
 } as const;
 
 export const APPROVED_DISCORD_CATEGORIES = {
+  monitor: "1536918856558448654",
   accounts: "1532207307683795026",
   transactions: "1532207461077876766",
   kyc: "1532297417339174922",
@@ -31,6 +32,7 @@ export function isSilentDiscordCategory(categoryId: string | null): boolean {
 }
 
 export const PLANNED_DISCORD_CHANNELS = {
+  monitor: ["rewards"],
   accounts: [
     "auto-banned",
     "banned-accounts",

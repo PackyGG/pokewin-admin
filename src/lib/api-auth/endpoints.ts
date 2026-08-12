@@ -536,4 +536,10 @@ export const INTERNAL_ENDPOINTS: readonly InternalEndpoint[] = [
       "Keep-warm cron: pings PostgreSQL and refreshes the hottest cached aggregates.",
     auth: "cron secret",
   },
+  {
+    method: "GET",
+    path: "/api/cron/reward-abuse-detection",
+    summary: "Runs the hourly rain reward-abuse detector and batches new reviews into one Discord alert.",
+    auth: "cron secret",
+  },
 ];
