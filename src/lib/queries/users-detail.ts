@@ -36,23 +36,33 @@ function toMillis(value: string | Date | null): number {
  * metadata flag we fall back to the balance delta to infer direction.
  */
 async function getUserTips(userId: string) {
-  const [rows, prizeRows] = await Promise.all([
-    queryMainRows<
-      {
-        id: string;
-        amount: string;
-        balance_before: string;
-        balance_after: string;
-        metadata: unknown;
-        created_at: Date | string;
-        sent: boolean;
-        direction_count: string;
-        direction_total: string | null;
-        counterparty_id: string | null;
-        counterparty_name: string | null;
-      }[]
-    >(
-      `WITH classified AS (
+  type TipRow = {
+    id: string;
+    amount: string;
+    balance_before: string;
+    balance_after: string;
+    metadata: unknown;
+    created_at: Date | string;
+    sent: boolean;
+    direction_count: string;
+    direction_total: string | null;
+    counterparty_id: string | null;
+    counterparty_name: string | null;
+  };
+  type PrizeRow = {
+    id: string;
+    type: string;
+    amount: string;
+    created_at: Date | string;
+    metadata: unknown;
+    type_count: string;
+    type_total: string | null;
+  };
+
+  const [result] = await queryMainRows<
+    { tip_rows: TipRow[]; prize_rows: PrizeRow[] }[]
+  >(
+    `WITH classified AS (
            SELECT lt.id, lt.amount, lt.balance_before, lt.balance_after,
                   lt.metadata, lt.created_at,
                   CASE
@@ -67,7 +77,7 @@ async function getUserTips(userId: string) {
              FROM ledger_transactions lt
             WHERE lt.user_id = $1
               AND lt.type = 'creator_tip'::ledger_transaction_type
-         ), ranked AS (
+         ), tip_ranked AS (
            SELECT c.*,
                   COUNT(*) OVER (PARTITION BY c.sent) AS direction_count,
                   SUM(c.amount::numeric) OVER (PARTITION BY c.sent) AS direction_total,
@@ -75,33 +85,7 @@ async function getUserTips(userId: string) {
                     PARTITION BY c.sent ORDER BY c.created_at DESC
                   ) AS row_num
              FROM classified c
-         )
-         SELECT r.id, r.amount::text, r.balance_before::text,
-                r.balance_after::text, r.metadata, r.created_at, r.sent,
-                r.direction_count::text, r.direction_total::text,
-                r.counterparty_id,
-                COALESCE(u.username, u.email, u.id) AS counterparty_name
-           FROM ranked r
-           LEFT JOIN "user" u ON u.id = r.counterparty_id
-          WHERE r.row_num <= $2
-          ORDER BY r.created_at DESC`,
-      userId,
-      TIP_RECENT_LIMIT,
-    ),
-    queryMainRows<
-      {
-        id: string;
-        type: string;
-        amount: string;
-        created_at: Date | string;
-        metadata: unknown;
-        type_count: string;
-        type_total: string | null;
-      }[]
-    >(
-      `SELECT id, type, amount::text, created_at, metadata,
-                type_count::text, type_total::text
-           FROM (
+         ), prize_ranked AS (
              SELECT id, type::text AS type, amount, created_at, metadata,
                     COUNT(*) OVER (PARTITION BY type) AS type_count,
                     SUM(amount::numeric) OVER (PARTITION BY type) AS type_total,
@@ -115,13 +99,31 @@ async function getUserTips(userId: string) {
                   'affiliate_leaderboard_prize'::ledger_transaction_type,
                   'race_prize'::ledger_transaction_type
                 )
-           ) ranked
-          WHERE row_num <= $2
-          ORDER BY created_at DESC`,
-      userId,
-      TIP_RECENT_LIMIT,
-    ),
-  ]);
+         )
+         SELECT
+           (SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY r.created_at DESC), '[]'::jsonb)
+              FROM (
+                SELECT tr.id, tr.amount::text, tr.balance_before::text,
+                       tr.balance_after::text, tr.metadata, tr.created_at,
+                       tr.sent, tr.direction_count::text,
+                       tr.direction_total::text, tr.counterparty_id,
+                       COALESCE(u.username, u.email, u.id) AS counterparty_name
+                  FROM tip_ranked tr
+                  LEFT JOIN "user" u ON u.id = tr.counterparty_id
+                 WHERE tr.row_num <= $2
+              ) r) AS tip_rows,
+           (SELECT COALESCE(jsonb_agg(to_jsonb(p) ORDER BY p.created_at DESC), '[]'::jsonb)
+              FROM (
+                SELECT id, type, amount::text, created_at, metadata,
+                       type_count::text, type_total::text
+                  FROM prize_ranked
+                 WHERE row_num <= $2
+              ) p) AS prize_rows`,
+    userId,
+    TIP_RECENT_LIMIT,
+  );
+  const rows = result?.tip_rows ?? [];
+  const prizeRows = result?.prize_rows ?? [];
   const aggregate = new Map(
     prizeRows.map((row) => [
       row.type,
@@ -349,8 +351,8 @@ async function enrichLeaderboardWins(
  * fields the page's critical-path header renders (username / email)
  * without pulling in the whole detail-page aggregate.
  *
- * The full `getUserDetail()` fans out to ~19 Main-DB round-trips plus the
- * canonical `calculateUserPnl` helper. Blocking first paint on all of
+ * The full `getUserDetail()` performs a consolidated detail read plus the
+ * canonical P&L and ledger helpers. Blocking first paint on all of
  * that means a SINGLE slow/failing query (P&L scan, risk-score aggregate,
  * a join hiccup) takes down the WHOLE page via the segment error boundary.
  * The page now awaits only THIS cheap lookup on the critical path so the
@@ -443,33 +445,219 @@ type UserDetailBalanceRow = {
   wager_requirement_progress: string | null;
 };
 
+type UserDetailUserRow = typeof mainSchema.user.$inferSelect & {
+  account: {
+    providerId: string;
+    accountId: string;
+    created_at: string | null;
+  }[];
+  referrer_context: {
+    username: string | null;
+    email: string | null;
+    affiliate_code: string | null;
+  } | null;
+  signup_referral_code: string | null;
+  latest_referral_code: string | null;
+};
+
+type UserDetailCoreRow = {
+  user: UserDetailUserRow;
+  balances: UserDetailBalanceRow | null;
+  statistics: typeof mainSchema.user_statistics.$inferSelect | null;
+  feature_locks: typeof mainSchema.user_feature_locks.$inferSelect | null;
+  inventory_count: string | number | null;
+  affiliate_account: typeof mainSchema.affiliate_accounts.$inferSelect | null;
+  shipping_address: typeof mainSchema.shipping_addresses.$inferSelect | null;
+  vault: typeof mainSchema.vaults.$inferSelect | null;
+  mutes: (typeof mainSchema.user_mutes.$inferSelect)[];
+  card_withdrawals: (typeof mainSchema.card_withdrawal_requests.$inferSelect)[];
+  active_seed: typeof mainSchema.active_seeds.$inferSelect | null;
+  deposit_addresses: (typeof mainSchema.deposit_addresses.$inferSelect)[];
+  deposit_count: string | number | null;
+  deposit_total: string | null;
+  fiat_deposit_total: string | null;
+  withdrawal_count: string | number | null;
+  owned_codes: { code: string; created_at: Date | string }[];
+  total_referred: string | number | null;
+  total_wager_volume_usd: string | null;
+  fingerprint_signal: {
+    suspected_alt: boolean | null;
+    linked_count: string | number | null;
+    capture_count: number | null;
+    captured_at: Date | string | null;
+    best_confidence: number | null;
+    visitor_id: string | null;
+    distinct_visitor_ids: number | null;
+    signup_capture_count: number | null;
+    login_capture_count: number | null;
+    last_login_at: Date | string | null;
+    last_login_ip: string | null;
+    last_login_visitor_id: string | null;
+  };
+  signup_ip_shared_count: string | number | null;
+};
+
 /**
- * Fetch the rendered balance fields and the two wager-debt fields together.
- * The shared capability probe keeps dev/prod schema drift safe and is also
- * reused by getUserWagerProgress during the same request.
+ * Fetch the small, index-backed detail records in one database round-trip.
+ *
+ * This used to be sixteen independent `queryMainRows` calls started at once.
+ * The production mirror pool intentionally has very little capacity, so that
+ * fan-out was actually a long queue of connection acquisitions. Under normal
+ * admin traffic the final items regularly missed the page's 15s aggregate
+ * budget even though each individual lookup was fast. PostgreSQL can execute
+ * these scalar, user-scoped subqueries on one connection without changing any
+ * of their result semantics.
+ *
+ * Expensive ledger/P&L scans remain separate so they can be observed and
+ * degraded independently. The optional battle-limits table also remains a
+ * separate best-effort lookup because dev databases may lag that migration.
  */
-async function getUserDetailBalances(
-  id: string,
-): Promise<UserDetailBalanceRow | null> {
+async function getUserDetailCore(id: string): Promise<UserDetailCoreRow | null> {
   const hasWagerColumns = await hasWagerProgressColumns();
-  const wagerColumns = hasWagerColumns
-    ? `wager_requirement_remaining::text AS wager_requirement_remaining,
-       wager_requirement_progress::text AS wager_requirement_progress`
-    : `NULL::text AS wager_requirement_remaining,
-       NULL::text AS wager_requirement_progress`;
-  const rows = await queryMainRows<UserDetailBalanceRow[]>(
-    `SELECT available_balance::text, locked_balance::text,
-            total_wagered::text, total_won::text, unlock_at,
-            ${wagerColumns}
-       FROM balances WHERE user_id = $1 LIMIT 1`,
+  const wagerFields = hasWagerColumns
+    ? `'wager_requirement_remaining', b.wager_requirement_remaining::text,
+       'wager_requirement_progress', b.wager_requirement_progress::text`
+    : `'wager_requirement_remaining', NULL::text,
+       'wager_requirement_progress', NULL::text`;
+
+  const [row] = await queryMainRows<UserDetailCoreRow[]>(
+    `WITH codes AS (
+       SELECT UPPER(code) AS upper_code
+         FROM affiliate_codes
+        WHERE user_id = $1
+     ), my_fp AS (
+       SELECT visitor_id, suspected_alt_triggered, confidence, created_at,
+              event_type, ip
+         FROM fingerprints
+        WHERE user_id = $1
+     ), deposit_agg AS (
+       SELECT COUNT(*) AS deposit_count,
+              SUM(amount::numeric)::text AS deposit_total,
+              (SUM(amount::numeric) FILTER (
+                WHERE crypto_asset IS NULL
+              ))::text AS fiat_deposit_total
+         FROM ledger_transactions
+        WHERE user_id = $1
+          AND type = 'deposit'::ledger_transaction_type
+          AND status = 'completed'::ledger_transaction_status
+     )
+     SELECT
+       to_jsonb(u) || jsonb_build_object(
+         'referrer_context', (
+           SELECT jsonb_build_object(
+                    'username', r.username,
+                    'email', r.email,
+                    'affiliate_code', r.affiliate_code
+                  )
+             FROM "user" r
+            WHERE r.id = u.referred_by
+            LIMIT 1
+         ),
+         'signup_referral_code', (
+           SELECT acu.code
+             FROM affiliate_code_usages acu
+            WHERE acu.referred_user_id = u.id
+              AND acu.usage_type::text = 'signup'
+            ORDER BY acu.created_at DESC
+            LIMIT 1
+         ),
+         'latest_referral_code', (
+           SELECT acu.code
+             FROM affiliate_code_usages acu
+            WHERE acu.referred_user_id = u.id
+            ORDER BY acu.created_at DESC
+            LIMIT 1
+         ),
+         'account', (
+           SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                    'providerId', a."providerId",
+                    'accountId', a."accountId",
+                    'created_at', a.created_at
+                  )), '[]'::jsonb)
+             FROM account a
+            WHERE a."userId" = u.id
+         )
+       ) AS user,
+       (
+         SELECT to_jsonb(b) || jsonb_build_object(
+                  'available_balance', b.available_balance::text,
+                  'locked_balance', b.locked_balance::text,
+                  'total_wagered', b.total_wagered::text,
+                  'total_won', b.total_won::text,
+                  ${wagerFields}
+                )
+           FROM balances b WHERE b.user_id = u.id LIMIT 1
+       ) AS balances,
+       (SELECT to_jsonb(s) FROM user_statistics s WHERE s.user_id = u.id LIMIT 1) AS statistics,
+       (SELECT to_jsonb(fl) FROM user_feature_locks fl WHERE fl.user_id = u.id LIMIT 1) AS feature_locks,
+       (SELECT COUNT(*) FROM user_inventory ui
+         WHERE ui.user_id = u.id AND ui.sold_at IS NULL AND ui.exchanged_at IS NULL) AS inventory_count,
+       (SELECT to_jsonb(aa) FROM affiliate_accounts aa WHERE aa.user_id = u.id LIMIT 1) AS affiliate_account,
+       (SELECT to_jsonb(sa) FROM shipping_addresses sa WHERE sa.user_id = u.id LIMIT 1) AS shipping_address,
+       (SELECT to_jsonb(v) FROM vaults v WHERE v.user_id = u.id LIMIT 1) AS vault,
+       (SELECT COALESCE(jsonb_agg(to_jsonb(m) ORDER BY m.created_at DESC), '[]'::jsonb)
+          FROM (SELECT * FROM user_mutes WHERE user_id = u.id ORDER BY created_at DESC LIMIT 10) m) AS mutes,
+       (SELECT COALESCE(jsonb_agg(to_jsonb(cw) ORDER BY cw.requested_at DESC), '[]'::jsonb)
+          FROM (SELECT * FROM card_withdrawal_requests WHERE user_id = u.id ORDER BY requested_at DESC LIMIT 10) cw) AS card_withdrawals,
+       (SELECT to_jsonb(s) FROM active_seeds s WHERE s.user_id = u.id LIMIT 1) AS active_seed,
+       (SELECT COALESCE(jsonb_agg(to_jsonb(da) ORDER BY da.created_at DESC), '[]'::jsonb)
+          FROM (SELECT * FROM deposit_addresses WHERE user_id = u.id ORDER BY created_at DESC LIMIT 50) da) AS deposit_addresses,
+       da.deposit_count,
+       da.deposit_total,
+       da.fiat_deposit_total,
+       (SELECT COUNT(*) FROM card_withdrawal_requests cw
+         WHERE cw.user_id = u.id
+           AND cw.status = ANY($2::card_withdrawal_status[])) AS withdrawal_count,
+       (SELECT COALESCE(jsonb_agg(jsonb_build_object('code', ac.code, 'created_at', ac.created_at)
+                                  ORDER BY ac.created_at ASC), '[]'::jsonb)
+          FROM affiliate_codes ac WHERE ac.user_id = u.id) AS owned_codes,
+       (SELECT COUNT(DISTINCT acu.referred_user_id)
+          FROM affiliate_code_usages acu
+         WHERE UPPER(acu.code) IN (SELECT upper_code FROM codes)) AS total_referred,
+       (SELECT COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text
+          FROM affiliate_code_usages acu
+         WHERE UPPER(acu.code) IN (SELECT upper_code FROM codes)
+           AND acu.usage_type::text = 'wager') AS total_wager_volume_usd,
+       (SELECT jsonb_build_object(
+          'suspected_alt', COALESCE(bool_or(fp.suspected_alt_triggered), false),
+          'capture_count', COUNT(*)::int,
+          'captured_at', MAX(fp.created_at),
+          'best_confidence', MAX(fp.confidence),
+          'visitor_id', (array_agg(fp.visitor_id ORDER BY fp.created_at DESC))[1],
+          'distinct_visitor_ids', COUNT(DISTINCT fp.visitor_id)::int,
+          'signup_capture_count', COUNT(*) FILTER (WHERE fp.event_type::text = 'signup')::int,
+          'login_capture_count', COUNT(*) FILTER (WHERE fp.event_type::text = 'login')::int,
+          'last_login_at', MAX(fp.created_at) FILTER (WHERE fp.event_type::text = 'login'),
+          'last_login_ip', (array_agg(fp.ip::text ORDER BY fp.created_at DESC)
+                             FILTER (WHERE fp.event_type::text = 'login'))[1],
+          'last_login_visitor_id', (array_agg(fp.visitor_id ORDER BY fp.created_at DESC)
+                                     FILTER (WHERE fp.event_type::text = 'login'))[1],
+          'linked_count', (
+            SELECT COUNT(DISTINCT f.user_id)
+              FROM fingerprints f
+             WHERE f.visitor_id IN (SELECT visitor_id FROM my_fp)
+               AND f.user_id IS NOT NULL
+               AND f.user_id != u.id
+          )
+        ) FROM my_fp fp) AS fingerprint_signal,
+       (SELECT GREATEST(COUNT(*) - 1, 0)
+          FROM "user" other
+         WHERE other.signup_ip IS NOT NULL
+           AND other.signup_ip = u.signup_ip) AS signup_ip_shared_count
+      FROM "user" u
+      CROSS JOIN deposit_agg da
+     WHERE u.id = $1
+     LIMIT 1`,
     id,
+    ["completed", "shipped"],
   );
-  return rows[0] ?? null;
+
+  return row ?? null;
 }
 
 export async function getUserDetail(id: string) {
-  // Everything is independent — one Promise.all instead of two serialized ones
-  // cuts the worst-case latency roughly in half on hot user-detail loads.
+  // The remaining independent scans run together. Small record lookups are
+  // consolidated by getUserDetailCore so this does not flood the read pool.
   let wagerBreakdown: { type: string; _sum: { amount: unknown } }[] = [];
 
   // Wager-breakdown groupBy — the requested type list is intersected against
@@ -561,231 +749,23 @@ export async function getUserDetail(id: string) {
   // aggregate ran in the same Promise.all without a .catch and would
   // surface to the page error boundary.
   const userPnlPromise = calculateUserPnl(id);
-  const balancesPromise = getUserDetailBalances(id);
-
-  // Device-fingerprint alt-account signal (fingerprints table — device
-  // fingerprinting on signup/login, index-backed on user_id + visitor_id;
-  // see idx_fingerprints_user_id / idx_fingerprints_visitor_id). Two parts:
-  //   - suspectedAlt mirrors the platform's OWN heuristic
-  //     (fingerprints.suspected_alt_triggered) for this user.
-  //   - linkedDeviceAccountCount counts OTHER accounts that share ANY of
-  //     this user's device visitor_ids — a broader, purely-derived overlap
-  //     signal that can be non-zero even when the platform flag never
-  //     fired. `my_fp` empty (no fingerprint rows yet — the feature is new,
-  //     table is empty on prod as of 2026-07-22) degrades both to
-  //     false/0 via COALESCE / the empty-set IN, not an error.
-  // Best-effort: a failure degrades to "no signal" rather than blocking the
-  // whole fan-out.
-  // Other accounts that signed up from the SAME IP. Best-effort, and
-  // deliberately a count rather than a flag — see UserDetail.signupIpSharedCount.
-  // `user.signup_ip` is NOT indexed (verified against prod), so this is a
-  // sequential scan over ~16.5k rows; cheap today, wants an index in the
-  // backend repo before the table grows much further.
-  // Keyed on the user ID, not on signup_ip, so it can run inside the same
-  // parallel fan-out — resolving the IP first would cost a sequential
-  // round-trip. GREATEST(...,0) keeps a NULL signup_ip at 0 rather than -1.
-  const signupIpSharedPromise = queryMainRows<{ others: number | null }[]>(
-    `
-      SELECT GREATEST(COUNT(*) - 1, 0)::int AS others
-        FROM "user"
-       WHERE signup_ip IS NOT NULL
-         AND signup_ip = (SELECT signup_ip FROM "user" WHERE id = $1)
-    `,
-    id,
-  )
-    .then((rows) => Number(rows[0]?.others ?? 0))
-    .catch((e) => {
-      logError("users.detail.sharedSignupIp", "query failed", e);
-      return 0;
-    });
-
-  const fingerprintSignalPromise = queryMainRows<
-    {
-      suspected_alt: boolean | null;
-      linked_count: string | number | null;
-      capture_count: number | null;
-      captured_at: Date | string | null;
-      best_confidence: number | null;
-      visitor_id: string | null;
-      distinct_visitor_ids: number | null;
-      signup_capture_count: number | null;
-      login_capture_count: number | null;
-      last_login_at: Date | string | null;
-      last_login_ip: string | null;
-      last_login_visitor_id: string | null;
-    }[]
-  >(
-    `
-      WITH my_fp AS (
-        SELECT visitor_id, suspected_alt_triggered, confidence, created_at,
-          event_type, ip
-        FROM fingerprints
-        WHERE user_id = $1
-      )
-      SELECT
-        COALESCE(bool_or(suspected_alt_triggered), false) AS suspected_alt,
-        COUNT(*)::int AS capture_count,
-        MAX(created_at) AS captured_at,
-        MAX(confidence) AS best_confidence,
-        -- The MOST RECENT visitor_id, not an arbitrary one: a user can have
-        -- several (new device, cleared storage), and the newest is the one
-        -- that matters when reviewing the account now.
-        (array_agg(visitor_id ORDER BY created_at DESC))[1] AS visitor_id,
-        COUNT(DISTINCT visitor_id)::int AS distinct_visitor_ids,
-        COUNT(*) FILTER (WHERE event_type::text = 'signup')::int AS signup_capture_count,
-        COUNT(*) FILTER (WHERE event_type::text = 'login')::int AS login_capture_count,
-        MAX(created_at) FILTER (WHERE event_type::text = 'login') AS last_login_at,
-        (array_agg(ip::text ORDER BY created_at DESC)
-          FILTER (WHERE event_type::text = 'login'))[1] AS last_login_ip,
-        (array_agg(visitor_id ORDER BY created_at DESC)
-          FILTER (WHERE event_type::text = 'login'))[1] AS last_login_visitor_id,
-        (
-          SELECT COUNT(DISTINCT f.user_id)
-          FROM fingerprints f
-          WHERE f.visitor_id IN (SELECT visitor_id FROM my_fp)
-            AND f.user_id IS NOT NULL
-            AND f.user_id != $1
-        ) AS linked_count
-      FROM my_fp
-      `,
-    id,
-  )
-    .then((rows) => ({
-      suspectedAlt: rows[0]?.suspected_alt ?? false,
-      linkedDeviceAccountCount: Number(rows[0]?.linked_count ?? 0),
-      // Capture facts — these drive the ALWAYS-visible device chip, so
-      // "never captured" is a state the admin can see rather than infer
-      // from the absence of a flag. Aggregates over an empty my_fp yield
-      // 0 / NULL (one row is still returned), never an error.
-      deviceCaptureCount: Number(rows[0]?.capture_count ?? 0),
-      deviceCapturedAt: rows[0]?.captured_at
-        ? new Date(rows[0].captured_at).toISOString()
-        : null,
-      deviceConfidence: rows[0]?.best_confidence ?? null,
-      deviceVisitorId: rows[0]?.visitor_id ?? null,
-      deviceVisitorIdCount: Number(rows[0]?.distinct_visitor_ids ?? 0),
-      deviceSignupCaptureCount: Number(rows[0]?.signup_capture_count ?? 0),
-      deviceLoginCaptureCount: Number(rows[0]?.login_capture_count ?? 0),
-      deviceLastLoginAt: rows[0]?.last_login_at
-        ? new Date(rows[0].last_login_at).toISOString()
-        : null,
-      deviceLastLoginIp: rows[0]?.last_login_ip ?? null,
-      deviceLastLoginVisitorId: rows[0]?.last_login_visitor_id ?? null,
-    }))
-    .catch((e) => {
-      logError("users.detail.fingerprint", "query failed", e);
-      return {
-        suspectedAlt: false,
-        linkedDeviceAccountCount: 0,
-        deviceCaptureCount: 0,
-        deviceCapturedAt: null,
-        deviceConfidence: null,
-        deviceVisitorId: null,
-        deviceVisitorIdCount: 0,
-        deviceSignupCaptureCount: 0,
-        deviceLoginCaptureCount: 0,
-        deviceLastLoginAt: null,
-        deviceLastLoginIp: null,
-        deviceLastLoginVisitorId: null,
-      };
-    });
+  const corePromise = getUserDetailCore(id);
 
   const [
-    user,
-    balances,
-    statistics,
-    featureLocks,
+    core,
     battleLimits,
-    inventoryCount,
-    affiliateAccount,
-    shippingAddress,
-    vault,
-    mutes,
-    cardWithdrawals,
-    activeSeed,
-    depositAddresses,
-    depositAgg,
-    withdrawalCount,
     userPnl,
     wagerBreakdownResolved,
-    ownedCodeRows,
     ownedCodeReferralCountRows,
     tips,
-    liveAffiliateRows,
-    fingerprintSignal,
-    signupIpSharedCount,
   ] = await Promise.all([
-    queryMainRows<
-      (typeof mainSchema.user.$inferSelect & {
-        account: {
-          providerId: string;
-          accountId: string;
-          created_at: string | null;
-        }[];
-        referrer_context: {
-          username: string | null;
-          email: string | null;
-          affiliate_code: string | null;
-        } | null;
-        signup_referral_code: string | null;
-        latest_referral_code: string | null;
-      })[]
-    >(
-      `SELECT u.*,
-              (
-                SELECT jsonb_build_object(
-                  'username', r.username,
-                  'email', r.email,
-                  'affiliate_code', r.affiliate_code
-                )
-                  FROM "user" r
-                 WHERE r.id = u.referred_by
-                 LIMIT 1
-              ) AS referrer_context,
-              (
-                SELECT acu.code
-                  FROM affiliate_code_usages acu
-                 WHERE acu.referred_user_id = u.id
-                   AND acu.usage_type::text = 'signup'
-                 ORDER BY acu.created_at DESC
-                 LIMIT 1
-              ) AS signup_referral_code,
-              (
-                SELECT acu.code
-                  FROM affiliate_code_usages acu
-                 WHERE acu.referred_user_id = u.id
-                 ORDER BY acu.created_at DESC
-                 LIMIT 1
-              ) AS latest_referral_code,
-              COALESCE(
-                jsonb_agg(jsonb_build_object(
-                  'providerId', a."providerId",
-                  'accountId', a."accountId",
-                  'created_at', a.created_at
-                )) FILTER (WHERE a.id IS NOT NULL),
-                '[]'::jsonb
-              ) AS account
-         FROM "user" u
-         LEFT JOIN account a ON a."userId" = u.id
-        WHERE u.id = $1
-        GROUP BY u.id`,
-      id,
-    ).then((rows) => rows[0] ?? null),
-    balancesPromise,
-    queryMainRows<(typeof mainSchema.user_statistics.$inferSelect)[]>(
-      `SELECT * FROM user_statistics WHERE user_id = $1 LIMIT 1`,
-      id,
-    ).then((rows) => rows[0] ?? null),
-    queryMainRows<(typeof mainSchema.user_feature_locks.$inferSelect)[]>(
-      `SELECT * FROM user_feature_locks WHERE user_id = $1 LIMIT 1`,
-      id,
-    ).then((rows) => rows[0] ?? null),
+    corePromise,
     // user_battle_limits now EXISTS on live prod (verified read-only via
     // to_regclass, 2026-07-01), so the historical missing-table throw
     // this .catch was written for no longer fires there. The .catch is KEPT
     // as defence-in-depth: the same generated client also serves the
     // dev-toggled DB (which can lag prod's migration state), and a bare
-    // rejection here would take down the WHOLE 19-promise aggregate and
+    // rejection here would take down the whole detail aggregate and
     // render the amber error instead of the page. On prod a null now means
     // "no per-user override row" (site_config defaults apply) — the TRUE
     // answer — returned by the query itself, not the catch.
@@ -795,89 +775,8 @@ export async function getUserDetail(id: string) {
     )
       .then((rows) => rows[0] ?? null)
       .catch(() => null),
-    queryMainRows<{ count: string }[]>(
-      `SELECT COUNT(*)::text AS count FROM user_inventory
-        WHERE user_id = $1 AND sold_at IS NULL AND exchanged_at IS NULL`,
-      id,
-    ).then((rows) => Number(rows[0]?.count ?? 0)),
-    queryMainRows<(typeof mainSchema.affiliate_accounts.$inferSelect)[]>(
-      `SELECT * FROM affiliate_accounts WHERE user_id = $1 LIMIT 1`,
-      id,
-    ).then((rows) => rows[0] ?? null),
-    queryMainRows<(typeof mainSchema.shipping_addresses.$inferSelect)[]>(
-      `SELECT * FROM shipping_addresses WHERE user_id = $1 LIMIT 1`,
-      id,
-    ).then((rows) => rows[0] ?? null),
-    queryMainRows<(typeof mainSchema.vaults.$inferSelect)[]>(
-      `SELECT * FROM vaults WHERE user_id = $1 LIMIT 1`,
-      id,
-    ).then((rows) => rows[0] ?? null),
-    queryMainRows<(typeof mainSchema.user_mutes.$inferSelect)[]>(
-      `SELECT * FROM user_mutes WHERE user_id = $1
-        ORDER BY created_at DESC LIMIT $2`,
-      id,
-      10,
-    ),
-    queryMainRows<(typeof mainSchema.card_withdrawal_requests.$inferSelect)[]>(
-      `SELECT * FROM card_withdrawal_requests WHERE user_id = $1
-        ORDER BY requested_at DESC LIMIT $2`,
-      id,
-      10,
-    ),
-    queryMainRows<(typeof mainSchema.active_seeds.$inferSelect)[]>(
-      `SELECT * FROM active_seeds WHERE user_id = $1 LIMIT 1`,
-      id,
-    ).then((rows) => rows[0] ?? null),
-    queryMainRows<(typeof mainSchema.deposit_addresses.$inferSelect)[]>(
-      `SELECT * FROM deposit_addresses
-        WHERE user_id = $1
-        ORDER BY created_at DESC
-        LIMIT $2`,
-      id,
-      50,
-    ),
-    // Event counts surfaced at the top of the detail page header. Counts
-    // are defined to mirror the existing "total withdrawn" aggregate in
-    // balances so the header and the Balances card agree on what counts
-    // as a completed deposit / withdrawal. Combined count + sum into one
-    // aggregate call so we hit the deposit ledger filter exactly once
-    // instead of twice — same plan, half the round-trips.
-    queryMainRows<
-      { count: string; total: string | null; fiat_total: string | null }[]
-    >(
-      `SELECT COUNT(*)::text AS count,
-              SUM(amount::numeric)::text AS total,
-              SUM(amount::numeric) FILTER (
-                WHERE crypto_asset IS NULL
-              )::text AS fiat_total
-         FROM ledger_transactions
-        WHERE user_id = $1
-          AND type = 'deposit'::ledger_transaction_type
-          AND status = 'completed'::ledger_transaction_status`,
-      id,
-    ).then(([row]) => ({
-      _count: { _all: Number(row?.count ?? 0) },
-      _sum: { amount: row?.total ?? null },
-      fiatAmount: row?.fiat_total ?? null,
-    })),
-    queryMainRows<{ count: string }[]>(
-      `SELECT COUNT(*)::text AS count FROM card_withdrawal_requests
-        WHERE user_id = $1 AND status = ANY($2::card_withdrawal_status[])`,
-      id,
-      ["completed", "shipped"],
-    ).then((rows) => Number(rows[0]?.count ?? 0)),
     userPnlPromise,
     wagerBreakdownPromise,
-    // Every code this user owns (rows in affiliate_codes). No dependency
-    // on any other query result — keyed on the id param — so it runs in
-    // the main batch instead of a serial tail. orderBy created_at ASC:
-    // the LAST row is the newest, used as the affiliate-code fallback
-    // below (replaces the dropped findFirst ... orderBy desc limit 1).
-    queryMainRows<{ code: string; created_at: Date | string }[]>(
-      `SELECT code, created_at FROM affiliate_codes
-        WHERE user_id = $1 ORDER BY created_at ASC`,
-      id,
-    ),
     // Per-owned-code referral counts for the "Codes they own" list — DISTINCT
     // referred_user_id per code, same case-fold (UPPER(code)) and
     // no-usage_type-restriction semantics as getCodeReferrals/getCodeAnalytics
@@ -898,55 +797,59 @@ export async function getUserDetail(id: string) {
     // metadata.direction). Runs in parallel; resolves counterparty names
     // for the shown rows internally.
     getUserTips(id),
-    // LIVE affiliate aggregates — sourced from the canonical
-    // affiliate_code_usages table the leaderboard reads (see
-    // creators-leaderboards.ts:142-161). The denormalized
-    // affiliate_accounts row can be stale / missing for code-owners
-    // whose totals haven't been backfilled, so the Affiliate Stats
-    // tiles on /users/[id] read live for the click/wager numbers.
-    // Payout fields stay on affiliateAccount (cash-out state lives
-    // there authoritatively). Matches the leaderboard's exact
-    // semantics: UPPER(code) match, usage_type::text='wager',
-    // referred_user_id counted DISTINCT. Lifetime (no window) to
-    // match what the user-page currently shows. Single round-trip,
-    // .catch keeps page from breaking on enum/schema drift.
-    queryMainRows<
-      {
-        total_referred: string | number | null;
-        total_wager_volume_usd: string | null;
-      }[]
-    >(
-      `
-      WITH codes AS (
-        SELECT UPPER(code) AS uc FROM affiliate_codes WHERE user_id = $1
-      )
-      SELECT
-        (SELECT COUNT(DISTINCT acu.referred_user_id)
-           FROM affiliate_code_usages acu
-           WHERE UPPER(acu.code) IN (SELECT uc FROM codes)) AS total_referred,
-        (SELECT COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text
-           FROM affiliate_code_usages acu
-           WHERE UPPER(acu.code) IN (SELECT uc FROM codes)
-             AND acu.usage_type::text = 'wager') AS total_wager_volume_usd
-      `,
-      id,
-    ).catch((e) => {
-      logError("users.detail.affiliateAggregate", "query failed", e);
-      return [] as Array<{
-        total_referred: string | number | null;
-        total_wager_volume_usd: string | null;
-      }>;
-    }),
-    fingerprintSignalPromise,
-    signupIpSharedPromise,
   ]);
-
-  const depositCount = depositAgg._count._all;
-  const depositTotalAgg = depositAgg;
 
   wagerBreakdown = wagerBreakdownResolved as typeof wagerBreakdown;
 
-  if (!user) return null;
+  if (!core) return null;
+
+  const {
+    user,
+    balances,
+    statistics,
+    feature_locks: featureLocks,
+    affiliate_account: affiliateAccount,
+    shipping_address: shippingAddress,
+    vault,
+    mutes,
+    card_withdrawals: cardWithdrawals,
+    active_seed: activeSeed,
+    deposit_addresses: depositAddresses,
+    owned_codes: ownedCodeRows,
+  } = core;
+  const inventoryCount = Number(core.inventory_count ?? 0);
+  const depositCount = Number(core.deposit_count ?? 0);
+  const withdrawalCount = Number(core.withdrawal_count ?? 0);
+  const depositAgg = {
+    _sum: { amount: core.deposit_total },
+    fiatAmount: core.fiat_deposit_total,
+  };
+  const liveAffiliateRows = [
+    {
+      total_referred: core.total_referred,
+      total_wager_volume_usd: core.total_wager_volume_usd,
+    },
+  ];
+  const fp = core.fingerprint_signal;
+  const fingerprintSignal = {
+    suspectedAlt: fp?.suspected_alt ?? false,
+    linkedDeviceAccountCount: Number(fp?.linked_count ?? 0),
+    deviceCaptureCount: Number(fp?.capture_count ?? 0),
+    deviceCapturedAt: fp?.captured_at
+      ? new Date(fp.captured_at).toISOString()
+      : null,
+    deviceConfidence: fp?.best_confidence ?? null,
+    deviceVisitorId: fp?.visitor_id ?? null,
+    deviceVisitorIdCount: Number(fp?.distinct_visitor_ids ?? 0),
+    deviceSignupCaptureCount: Number(fp?.signup_capture_count ?? 0),
+    deviceLoginCaptureCount: Number(fp?.login_capture_count ?? 0),
+    deviceLastLoginAt: fp?.last_login_at
+      ? new Date(fp.last_login_at).toISOString()
+      : null,
+    deviceLastLoginIp: fp?.last_login_ip ?? null,
+    deviceLastLoginVisitorId: fp?.last_login_visitor_id ?? null,
+  };
+  const signupIpSharedCount = Number(core.signup_ip_shared_count ?? 0);
 
   // WITHDRAWAL SUPPRESSION for blacklisted (excluded_users) users. A
   // blacklisted user (e.g. kartos) is hidden wholesale from analytics/PnL
@@ -1355,7 +1258,7 @@ export async function getUserDetail(id: string) {
       withdrawals: isBlacklisted ? 0 : withdrawalCount,
       avgDeposit:
         depositCount > 0
-          ? toNumber(depositTotalAgg._sum.amount ?? 0) / depositCount
+          ? toNumber(depositAgg._sum.amount ?? 0) / depositCount
           : 0,
     },
   };

@@ -159,7 +159,6 @@ export default async function UserDetailPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const session = await requirePageAccess("/users");
-  const viewerCanSeeUltraLossback = await canUseUltraLossbackFresh(session);
   const { id: routeKey } = await params;
   // Route-key → user id resolution is the ONLY thing awaited before the
   // Suspense boundary below, so an UNGUARDED throw here (pool starvation /
@@ -211,19 +210,6 @@ export default async function UserDetailPage({
   // whole heavy body still streams behind its own Suspense boundary below,
   // so a slow/failed aggregate degrades that band instead of the page.
 
-  // Permissions for the union-capability checks. For admins this is a
-  // constant (no query); for non-admins it's a single cache()'d admin-DB
-  // read that `requirePageAccess("/users")` above ALREADY resolved for this
-  // request, so reading it here is free (memoized) — NOT one of the heavy
-  // Main-DB queries that crash the page. Resolved on the critical path so
-  // the tag panel keeps its real manage-capability (a CRM role with
-  // __can_manage_user_tags must stay able to edit tags), and passed down to
-  // the streamed body so its capability gating uses the same value.
-  const permissions =
-    session.role === "admin"
-      ? null
-      : await getUserPermissions(session.userId);
-
   // Back button is rendered here and passed as a plain React ELEMENT
   // (serializable node — NOT a function prop) down through the streamed
   // body into the hero. It needs nothing async, so it stays on the
@@ -262,12 +248,11 @@ export default async function UserDetailPage({
       <Suspense fallback={<UserDetailBodySkeleton />}>
         <UserDetailBody
           id={id}
+          viewerSession={session}
           sessionRole={session.role}
           sessionUserId={session.userId}
           canManageTestingBattleOutcome={canManageTestingBattleOutcome}
           canViewProtectedActors={canViewProtectedAuditActivity(session)}
-          viewerCanSeeUltraLossback={viewerCanSeeUltraLossback}
-          permissions={permissions}
           initialTab={initialTab}
           backSlot={backSlot}
         />
@@ -287,25 +272,20 @@ export default async function UserDetailPage({
 // ───────────────────────────────────────────────────────────────────
 async function UserDetailBody({
   id,
+  viewerSession,
   sessionRole,
   sessionUserId,
   canManageTestingBattleOutcome,
   canViewProtectedActors,
-  viewerCanSeeUltraLossback,
-  permissions,
   initialTab,
   backSlot,
 }: {
   id: string;
+  viewerSession: Parameters<typeof canUseUltraLossbackFresh>[0];
   sessionRole: string;
   sessionUserId: string;
   canManageTestingBattleOutcome: boolean;
   canViewProtectedActors: boolean;
-  viewerCanSeeUltraLossback: boolean;
-  // Union permission keys for non-admin viewers (null for admins), resolved
-  // on the critical path and threaded down so capability gating matches the
-  // tag panel's and avoids a second (cache()'d, but clearer-as-prop) read.
-  permissions: string[] | null;
   initialTab: TabKey;
   // Pre-rendered React element (serializable node, NOT a function prop)
   // resolved on the critical path in the page above: the compact back-to-
@@ -386,8 +366,56 @@ async function UserDetailBody({
   };
   type UserTxPage = Awaited<ReturnType<typeof getUserTransactions>>;
 
+  // Everything in UserViewModern hangs off this aggregate. Resolve the page
+  // spine before starting optional P&L, activity, and active-tab reads so
+  // those jobs cannot occupy the small MAIN mirror pool ahead of it. If it
+  // fails, no downstream work is useful, so degrade immediately and visibly.
+  const detailResult = await safeQueryOrNull(
+    () => getUserDetailCached(id),
+    "users.detail.detail",
+    USER_DETAIL_QUERY_TIMEOUT_MS,
+  );
+  const data = detailResult.data;
+  if (!data) {
+    const timedOut = detailResult.error?.startsWith("Query exceeded") ?? false;
+    return (
+      <InlineError
+        title={
+          timedOut
+            ? "User details are taking too long to load"
+            : "User details failed to load"
+        }
+        hint={
+          timedOut
+            ? "The core account details exceeded their time budget against the main DB. Retry to re-run them."
+            : "The core account details failed against the main DB. Retry to re-run them."
+        }
+      />
+    );
+  }
+
   // ── KICKED, NOT AWAITED — full-result band promises ────────────────
   //
+  // Security-sensitive capabilities scope later reads, but must not get
+  // ahead of core detail. Both fail closed: an ADMIN error hides privileged
+  // controls/data without blanking the account page.
+  const [ultraLossbackResult, permissionsResult] = await Promise.all([
+    safeQuery(
+      () => canUseUltraLossbackFresh(viewerSession),
+      false,
+      "users.detail.ultraLossbackGate",
+    ),
+    sessionRole === "admin"
+      ? Promise.resolve({ data: null, error: null, kind: null } as const)
+      : safeQuery(
+          () => getUserPermissions(sessionUserId),
+          [],
+          "users.detail.permissions",
+        ),
+  ]);
+  const viewerCanSeeUltraLossback = ultraLossbackResult.data;
+  const permissions = permissionsResult.data;
+
   // Every band promise below resolves to a WHOLE SafeQueryResult
   // ({ data, error }) — nothing unwraps `.then(r => r.data)` anymore, so
   // the client bands can distinguish real data / genuine empty / VISIBLE
@@ -401,26 +429,32 @@ async function UserDetailBody({
   // ?tab=account therefore never pays the gaming worth-sweep, and a 60s
   // AutoRefresh tick re-runs only the visible tab's bounded reads.
 
-  // Owner gate — kicked FIRST so the adjustments kick below can chain on
-  // it without waiting for the heavy body gate. Fail-closed false; also
-  // awaited in the body gate (same promise instance, no double read).
-  const viewerIsOwnerPromise = safeQuery(
-    () => isAdjustmentVisibilityOwner(sessionUserId),
-    false,
-    "users.detail.mothaGate",
-  );
+  // Only Overview renders owner-filtered financial activity. Other tabs do
+  // not need this ADMIN lookup, so use a local fail-closed value there.
+  const wantsOwnerVisibility = initialTab === "overview";
+  const viewerIsOwnerPromise = wantsOwnerVisibility
+    ? safeQuery(
+        () => isAdjustmentVisibilityOwner(sessionUserId),
+        false,
+        "users.detail.mothaGate",
+      )
+    : Promise.resolve({ data: false, error: null, kind: null } as const);
 
-  // Always kicked (tab-independent): the P&L breakdown feeds the hero-
-  // adjacent Overview panels AND the Account tab's windowed strips.
+  // Only Overview and Account render the P&L breakdown. Keep the prop shape
+  // stable for the client shell on other tabs without running its heavy scan.
   // 60s-cached cross-request, timeout-bounded.
-  const pnlResultPromise = safeQuery(
-    () => getUserPnlBreakdownCached(id),
-    EMPTY_PNL,
-    "users.detail.pnl",
-    USER_DETAIL_QUERY_TIMEOUT_MS,
-  );
+  const wantsPnl = initialTab === "overview" || initialTab === "account";
+  const pnlResultPromise = wantsPnl
+    ? safeQuery(
+        () => getUserPnlBreakdownCached(id),
+        EMPTY_PNL,
+        "users.detail.pnl",
+        USER_DETAIL_QUERY_TIMEOUT_MS,
+      )
+    : Promise.resolve({ data: EMPTY_PNL, error: null, kind: null } as const);
 
-  const wantsGamingTx = initialTab === "overview" || initialTab === "gaming";
+  // Overview never renders the gaming feed; it has a separate financial feed.
+  const wantsGamingTx = initialTab === "gaming";
   // Overview's "Deposits & Withdrawals" feed. The standalone Finances tab was
   // removed (folded away), so this is now Overview-only.
   const wantsFinancialTx = initialTab === "overview";
@@ -554,15 +588,16 @@ async function UserDetailBody({
           USER_DETAIL_QUERY_TIMEOUT_MS,
         )
       : null;
-  // Wager-requirement PROGRESS from the backend-written `balances` columns.
-  // ALWAYS kicked (not tab-gated): the hero shows a "Wager Left" KPI on every
-  // user view, and the Account tab renders the full per-source breakdown —
-  // both share this one promise. Timeout-wrapped → muted/null on slow/missing.
-  const wagerProgressPromise = safeQueryOrNull(
-    () => getUserWagerProgress(id),
-    "users.detail.wagerProgress",
-    USER_DETAIL_QUERY_TIMEOUT_MS,
-  ).then((r) => r.data);
+  // Consumed only by Overview's transaction drill-down and Account's full
+  // breakdown. The hero KPI is already supplied by the detail aggregate.
+  const wagerProgressPromise =
+    initialTab === "overview" || initialTab === "account"
+      ? safeQueryOrNull(
+          () => getUserWagerProgress(id),
+          "users.detail.wagerProgress",
+          USER_DETAIL_QUERY_TIMEOUT_MS,
+        ).then((r) => r.data)
+      : null;
 
   const testingBattleOutcomePromise = canManageTestingBattleOutcome
     ? safeQuery(
@@ -574,31 +609,17 @@ async function UserDetailBody({
 
   // ── AWAITED BODY GATE ──────────────────────────────────────────────
   //
-  // Only what EVERYTHING in UserViewModern needs before any band can
-  // render: the detail aggregate (the page's spine — identity, balances,
-  // capabilities), the cheap admin-DB creator history (hero wasCreator
-  // badge), and the two motha gate flags (previously a serial tail of
-  // UNWRAPPED awaits at the end of this function — the last reads that
-  // could still throw the whole body to the segment error boundary; now
-  // parallel + fail-closed false).
+  // Core detail is already resolved above. This second gate contains the
+  // narrow fresh-balance overlay plus small hero metadata/capability reads.
+  // Every leg is independently wrapped, so one failed section falls back
+  // without rejecting the streamed body.
   const [
-    detailResult,
     freshBalancesResult,
     creatorHistoryResult,
     mothaCanEditResult,
     viewerIsOwnerResult,
     userTagsResult,
   ] = await Promise.all([
-    // getUserDetail is THE heavy aggregate (~19 Main-DB round-trips + the
-    // canonical calculateUserPnl helper). Timeout-bounded and
-    // null-on-failure → the body renders a visible full-band error (the
-    // header already painted). Cached cross-request (25s) so the
-    // AutoRefresh tick + retry resolve from the warmed entry.
-    safeQueryOrNull(
-      () => getUserDetailCached(id),
-      "users.detail.detail",
-      USER_DETAIL_QUERY_TIMEOUT_MS,
-    ),
     // Narrow, uncached consistency read against MAIN's primary. If it fails,
     // the page falls back to the cached aggregate instead of losing the user
     // detail surface.
@@ -624,43 +645,11 @@ async function UserDetailBody({
       "users.detail.mothaGate",
     ),
     viewerIsOwnerPromise,
-    // VIP tags (admin-CRM metadata) backing the tag manager inside the
-    // hero. Moved off the page's critical path to here so its admin-DB
-    // read runs in parallel with the heavy body gate (always faster than
-    // getUserDetail) and never extends the shell's first paint. safeQuery-
-    // wrapped: a transient admin-DB hiccup renders the empty-state row
-    // rather than taking down the streamed band.
+    // VIP tags (admin-CRM metadata) backing the hero tag manager. A transient
+    // ADMIN DB hiccup renders the empty-state row instead of taking down the
+    // streamed body.
     safeQuery(() => getUserTags(id), [], "users.detail.tags"),
   ]);
-
-  const data = detailResult.data;
-
-  // getUserDetail returns null only for a truly unknown user — but
-  // existence was already confirmed on the critical path by
-  // resolveUserIdFromRouteKey, so a null here means the aggregate read
-  // failed/timed out. ACCEPTED LIMITATION (stated per the
-  // remake plan): a null detail cannot partially render — everything in
-  // UserViewModern hangs off `data.user` — so this stays a full-band
-  // visible error with retry. After the Phase-1 query fixes this branch
-  // is reachable only on a transient timeout/outage, not on every load.
-  if (!data) {
-    const timedOut =
-      detailResult.error?.startsWith("Query exceeded") ?? false;
-    return (
-      <InlineError
-        title={
-          timedOut
-            ? "User details are taking too long to load"
-            : "User details failed to load"
-        }
-        hint={
-          timedOut
-            ? "The balances, P&L and activity aggregate exceeded its time budget against the main DB. The header above is unaffected — retry to re-run it."
-            : "The balances, P&L and activity aggregate failed against the main DB. The header above is unaffected — retry to re-run it."
-        }
-      />
-    );
-  }
 
   const creatorHistory = creatorHistoryResult.data;
 

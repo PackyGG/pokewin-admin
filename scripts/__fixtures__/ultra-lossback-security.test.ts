@@ -78,7 +78,10 @@ test("the popup exposes the private tab only through the server-derived prop", (
   const page = read("src/app/(admin)/users/[id]/page.tsx");
   assert.match(dialog, /canUseUltraLossback && \([\s\S]{0,120}TabsTrigger value="ultra"/);
   assert.match(dialog, /!isUltraLossback && \([\s\S]{0,100}StepUpField/);
-  assert.match(page, /await canUseUltraLossbackFresh\(session\)/);
+  assert.match(
+    page,
+    /safeQuery\([\s\S]*?canUseUltraLossbackFresh\(viewerSession\)[\s\S]*?false,[\s\S]*?"users\.detail\.ultraLossbackGate"/,
+  );
   assert.match(page, /viewerCanSeeUltraLossback=\{viewerCanSeeUltraLossback\}/);
 });
 

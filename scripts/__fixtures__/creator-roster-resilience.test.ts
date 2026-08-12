@@ -94,17 +94,21 @@ test("idempotent backend reads retry bounded transient failures", () => {
   assert.match(client, /method === "GET"/);
 });
 
-test("MAIN pool acquire budget outlives its statement budget", () => {
+test("MAIN mirror acquisition fails before UI fallbacks while primary keeps its longer budget", () => {
   const db = read("src/lib/db.ts");
 
-  const acquire = Number(
-    db.match(/connectionTimeoutMillis:\s*([\d_]+)/)?.[1].replaceAll("_", ""),
+  const acquireBudgets = db.match(
+    /connectionTimeoutMillis:\s*isReadMirror\s*\?\s*([\d_]+)\s*:\s*([\d_]+)/,
   );
+  const mirrorAcquire = Number(acquireBudgets?.[1].replaceAll("_", ""));
+  const primaryAcquire = Number(acquireBudgets?.[2].replaceAll("_", ""));
   const statement = Number(
     db.match(/statement_timeout:\s*([\d_]+)/)?.[1].replaceAll("_", ""),
   );
 
-  assert.ok(Number.isFinite(acquire));
+  assert.ok(Number.isFinite(mirrorAcquire));
+  assert.ok(Number.isFinite(primaryAcquire));
   assert.ok(Number.isFinite(statement));
-  assert.ok(acquire > statement);
+  assert.ok(mirrorAcquire < 15_000);
+  assert.ok(primaryAcquire > statement);
 });

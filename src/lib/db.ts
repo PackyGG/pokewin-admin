@@ -63,10 +63,13 @@ function createPool(
     max: isReadMirror ? 2 : 3,
     maxUses: isReadMirror ? 1 : Infinity,
     idleTimeoutMillis: isReadMirror ? 1_000 : 10_000,
-    // A queued read must be allowed to outlive the longest statement already
-    // occupying a slot. The old 10s acquire budget guaranteed false pool
-    // failures while valid 30s statements were still running.
-    connectionTimeoutMillis: 35_000,
+    // Mirror reads are wrapped by 15s UI fallbacks on the busiest pages. Do
+    // not leave their pool waiters alive for another 20s after the caller has
+    // already degraded: during mirror connection loss/capacity exhaustion,
+    // those orphaned waiters occupy the two pool slots and turn refreshes into
+    // a connection stampede. Primary operations retain the longer budget;
+    // only read-only mirror acquisition fails fast here.
+    connectionTimeoutMillis: isReadMirror ? 10_000 : 35_000,
     // App-level Promise timeouts cannot cancel PostgreSQL work. This server-side
     // backstop releases the pool slot if a pathological query runs away.
     statement_timeout: 30_000,
