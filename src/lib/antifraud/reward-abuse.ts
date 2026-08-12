@@ -346,7 +346,6 @@ export async function runRainAbuseDetection(): Promise<{
       dedupeKey: `rain-abuse-batch:${batch[0].id}:${batch[batch.length - 1].id}`,
       embed: {
         title: "🌧️ Rain reward-abuse reviews ready",
-        description: "Potential Rain farming was detected for review.",
         color: critical > 0 ? 0xef4444 : high > 0 ? 0xf97316 : 0xf59e0b,
         url: dashboardUrl,
         fields: [
