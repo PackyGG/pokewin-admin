@@ -30,8 +30,6 @@ export function StartReviewButton({
       className="h-9 min-w-28 px-3 text-sm"
       disabled={isPending}
       aria-label={`${label} for ${subject}`}
-      onFocus={() => router.prefetch(href)}
-      onPointerEnter={() => router.prefetch(href)}
       onClick={() => {
         // Opening the workspace must not wait for the claim transaction,
         // its audit note, and cache revalidation. Both requests can safely

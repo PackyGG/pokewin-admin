@@ -51,12 +51,32 @@ test("opening a review navigates immediately and does not wait on queue data", (
   const claimWait = button.indexOf("await startReview");
   assert.ok(navigation >= 0, "navigation must start immediately");
   assert.ok(claimWait > navigation, "navigation must not wait for the claim");
-  assert.match(button, /router\.prefetch\(href\)/);
+  assert.doesNotMatch(
+    button,
+    /router\.prefetch\(href\)/,
+    "hovering one of many cases must not consume database capacity",
+  );
+  assert.match(
+    page,
+    /href=\{buildHref\(\{ review: review\.id \}, current\)\}[\s\S]{0,100}prefetch=\{false\}/,
+  );
 
   const queueBoundary = page.indexOf('<Suspense key={filterKey}');
   const dialogBoundary = page.indexOf('key={selectedReviewId}');
   assert.ok(queueBoundary >= 0 && dialogBoundary > queueBoundary);
   assert.match(page, /queueData={queueData}/);
+  const detailStart = page.indexOf("<ReviewCaseWorkspace");
+  const queueNavigationWait = page.indexOf(
+    "async function ReviewQueueNavigation",
+  );
+  assert.ok(
+    detailStart >= 0 && queueNavigationWait > detailStart,
+    "case detail must render without awaiting queue navigation data",
+  );
+  assert.match(
+    page,
+    /navigation=\{[\s\S]*?<Suspense fallback=\{<ReviewCaseNavigation \/>\}>/,
+  );
   assert.match(
     page,
     /fallback=\{[\s\S]*?<ReviewCaseDialog closeHref=\{closeHref\}>[\s\S]*?<CaseDialogSkeleton \/>/,

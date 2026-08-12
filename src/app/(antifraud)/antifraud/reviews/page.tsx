@@ -45,7 +45,10 @@ import {
   ReviewStatusBadge,
 } from "../_components/badges";
 import { OpenCaseDialog } from "./_components/open-case-dialog";
-import { ReviewCaseDialog } from "./_components/review-case-dialog";
+import {
+  ReviewCaseDialog,
+  ReviewCaseNavigation,
+} from "./_components/review-case-dialog";
 import { ReviewCaseWorkspace } from "./_components/review-case-workspace";
 import { ReviewSignalBadge } from "./_components/review-signal-badge";
 import { StartReviewButton } from "./_components/start-review-button";
@@ -589,6 +592,7 @@ function CaseRow({
               <HostLink
                 href={buildHref({ review: review.id }, current)}
                 scroll={false}
+                prefetch={false}
                 className="inline-flex h-9 min-w-28 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label={`Open review for ${review.targetUsername ?? review.targetUserId}`}
               >
@@ -603,7 +607,7 @@ function CaseRow({
   );
 }
 
-async function ReviewDialogFromQueue({
+function ReviewDialogFromQueue({
   reviewId,
   queueData,
   current,
@@ -616,21 +620,25 @@ async function ReviewDialogFromQueue({
   viewerId: string;
   canManage: boolean;
 }) {
-  const { data } = await queueData;
-  const reviews = data.page.items;
-  const index = reviews.findIndex((review) => review.id === reviewId);
-  const previous = index > 0 ? reviews[index - 1] : undefined;
-  const next = index >= 0 ? reviews[index + 1] : undefined;
   const closeHref = buildHref({ review: undefined }, current);
 
+  // The queue can take its full timeout when counts or list enrichment are
+  // slow. It is only needed for previous/next navigation, so never put it in
+  // front of the case-detail request. Both reads now start independently and
+  // the workspace can stream as soon as its own bounded queries finish.
   return (
     <ReviewCaseDialog
       key={reviewId}
       closeHref={closeHref}
-      previousHref={
-        previous ? buildHref({ review: previous.id }, current) : undefined
+      navigation={
+        <Suspense fallback={<ReviewCaseNavigation />}>
+          <ReviewQueueNavigation
+            reviewId={reviewId}
+            queueData={queueData}
+            current={current}
+          />
+        </Suspense>
       }
-      nextHref={next ? buildHref({ review: next.id }, current) : undefined}
     >
       <Suspense key={reviewId} fallback={<CaseDialogSkeleton />}>
         <ReviewCaseWorkspace
@@ -640,6 +648,31 @@ async function ReviewDialogFromQueue({
         />
       </Suspense>
     </ReviewCaseDialog>
+  );
+}
+
+async function ReviewQueueNavigation({
+  reviewId,
+  queueData,
+  current,
+}: {
+  reviewId: string;
+  queueData: Promise<ReviewQueueData>;
+  current: SearchParams;
+}) {
+  const { data } = await queueData;
+  const reviews = data.page.items;
+  const index = reviews.findIndex((review) => review.id === reviewId);
+  const previous = index > 0 ? reviews[index - 1] : undefined;
+  const next = index >= 0 ? reviews[index + 1] : undefined;
+
+  return (
+    <ReviewCaseNavigation
+      previousHref={
+        previous ? buildHref({ review: previous.id }, current) : undefined
+      }
+      nextHref={next ? buildHref({ review: next.id }, current) : undefined}
+    />
   );
 }
 

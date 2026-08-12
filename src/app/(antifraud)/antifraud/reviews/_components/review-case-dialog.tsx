@@ -38,11 +38,13 @@ export function ReviewCaseDialog({
   closeHref,
   previousHref,
   nextHref,
+  navigation,
   children,
 }: {
   closeHref: string;
   previousHref?: string;
   nextHref?: string;
+  navigation?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -120,34 +122,12 @@ export function ReviewCaseDialog({
         <DialogHeader className="shrink-0 border-b bg-background px-4 py-2 pr-14 sm:px-5">
           <div className="flex items-center justify-between gap-4">
             <DialogTitle className="text-sm">Account review</DialogTitle>
-            <div className="flex shrink-0 items-center gap-1">
-              <Button
-                size="icon-sm"
-                variant="outline"
-                disabled={!previousHref}
-                aria-label="Previous case"
-                render={
-                  previousHref ? (
-                    <HostLink href={previousHref} scroll={false} />
-                  ) : undefined
-                }
-              >
-                <ChevronLeft className="size-4" />
-              </Button>
-              <Button
-                size="icon-sm"
-                variant="outline"
-                disabled={!nextHref}
-                aria-label="Next case"
-                render={
-                  nextHref ? (
-                    <HostLink href={nextHref} scroll={false} />
-                  ) : undefined
-                }
-              >
-                <ChevronRight className="size-4" />
-              </Button>
-            </div>
+            {navigation ?? (
+              <ReviewCaseNavigation
+                previousHref={previousHref}
+                nextHref={nextHref}
+              />
+            )}
           </div>
         </DialogHeader>
         <ReviewCaseDismissalContext.Provider
@@ -159,5 +139,44 @@ export function ReviewCaseDialog({
         </ReviewCaseDismissalContext.Provider>
       </DialogContent>
     </Dialog>
+  );
+}
+
+export function ReviewCaseNavigation({
+  previousHref,
+  nextHref,
+}: {
+  previousHref?: string;
+  nextHref?: string;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <Button
+        size="icon-sm"
+        variant="outline"
+        disabled={!previousHref}
+        aria-label="Previous case"
+        render={
+          previousHref ? (
+            <HostLink href={previousHref} scroll={false} />
+          ) : undefined
+        }
+      >
+        <ChevronLeft className="size-4" />
+      </Button>
+      <Button
+        size="icon-sm"
+        variant="outline"
+        disabled={!nextHref}
+        aria-label="Next case"
+        render={
+          nextHref ? (
+            <HostLink href={nextHref} scroll={false} />
+          ) : undefined
+        }
+      >
+        <ChevronRight className="size-4" />
+      </Button>
+    </div>
   );
 }
