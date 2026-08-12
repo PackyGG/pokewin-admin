@@ -1911,6 +1911,7 @@ export class FiatRiskService {
   async refresh(input: {
     status?: FiatAssessmentStatus;
     search?: string;
+    intentId?: string;
     excludedUserIds?: string[];
     limit?: number;
   }): Promise<{ ids: string[] }> {
@@ -1922,6 +1923,10 @@ export class FiatRiskService {
     if (input.excludedUserIds?.length) {
       values.push(input.excludedUserIds);
       conditions.push(`fdi.user_id<>ALL($${values.length}::text[])`);
+    }
+    if (input.intentId) {
+      values.push(input.intentId);
+      conditions.push(`fdi.id::text=$${values.length}`);
     }
     if (input.status === "paid_unreconciled") {
       conditions.push(
@@ -2319,6 +2324,16 @@ export class FiatRiskService {
       client.release();
     }
     return { ids: intents.map((intent) => intent.id) };
+  }
+
+  /**
+   * Produces the durable assessment used to release a single review alert.
+   * Exact matching matters here: the fuzzy dashboard search is a user-facing
+   * convenience and must never classify a different payment by accident.
+   */
+  async refreshIntent(intentId: string): Promise<boolean> {
+    const result = await this.refresh({ intentId, limit: 1 });
+    return result.ids.includes(intentId);
   }
 
   async loadTimeline(input: {

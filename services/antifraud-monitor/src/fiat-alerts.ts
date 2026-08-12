@@ -20,8 +20,11 @@ const HIGH_RISK_CURSOR_STREAM = "fiat-high-risk";
 const FAILED_WEBHOOK_CURSOR_STREAM = "fiat-failed-webhooks";
 const BATCH_SIZE = 100;
 const DELIVERY_BATCH_SIZE = 8;
-const CREDIT_REVIEW_SETTLEMENT_SECONDS = 10;
 const UTC = "AT TIME ZONE 'UTC'";
+
+export type FiatReviewRiskClassifier = {
+  refreshIntent(intentId: string): Promise<boolean>;
+};
 
 export const FIAT_PROBLEM_CODES = [
   "high_risk",
@@ -841,6 +844,7 @@ export class FiatProblemAlerts {
     private readonly config: Config,
     private readonly db: Databases,
     private readonly log: FastifyBaseLogger,
+    private readonly reviewRiskClassifier?: FiatReviewRiskClassifier,
   ) {}
 
   async ensureCursor(): Promise<void> {
@@ -858,11 +862,65 @@ export class FiatProblemAlerts {
   }
 
   async process(): Promise<void> {
-    await this.captureHighRiskAssessments();
     await this.capture();
+    await this.classifyPendingReviews();
+    await this.captureHighRiskAssessments();
     await this.queueConfirmedEmailDomainAutoBans();
     await this.syncDeliveries();
+    await this.suppressClassifiedReviewDeliveries();
     await this.deliver();
+  }
+
+  private async classifyPendingReviews(): Promise<void> {
+    if (!this.reviewRiskClassifier) return;
+    const pending = await this.db.antifraud.query<{ intent_id: string }>(
+      `
+        SELECT split_part(alert.source_id, ':', 1) AS intent_id
+        FROM fiat_problem_alert_outbox AS alert
+        WHERE alert.problem_code = 'review'
+          AND alert.discord_delivered_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM fiat_problem_alert_deliveries delivery
+            WHERE delivery.source_kind = alert.source_kind
+              AND delivery.source_id = alert.source_id
+              AND delivery.destination = 'fiat_operations'
+              AND (
+                delivery.delivered_at IS NOT NULL
+                OR delivery.suppressed_at IS NOT NULL
+              )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM fiat_deposit_assessments assessment
+            WHERE assessment.deposit_intent_id::text =
+              split_part(alert.source_id, ':', 1)
+              AND assessment.status = 'review'
+              AND assessment.source_updated_at >= alert.occurred_at
+          )
+        ORDER BY alert.occurred_at, alert.source_id
+        LIMIT ${DELIVERY_BATCH_SIZE}
+      `,
+    );
+
+    for (const { intent_id: intentId } of pending.rows) {
+      try {
+        const classified = await this.reviewRiskClassifier.refreshIntent(intentId);
+        if (!classified) {
+          this.log.error(
+            { intentId },
+            "Fiat review risk classification found no matching deposit",
+          );
+        }
+      } catch (error) {
+        // Keep the delivery pending and retry next tick. Sending a normal card
+        // without its risk result would recreate the race this gate prevents.
+        this.log.error(
+          { err: error, intentId },
+          "Fiat review risk classification failed",
+        );
+      }
+    }
   }
 
   private async queueConfirmedEmailDomainAutoBans(): Promise<void> {
@@ -1087,6 +1145,70 @@ export class FiatProblemAlerts {
     );
   }
 
+  private async suppressClassifiedReviewDeliveries(): Promise<void> {
+    const suppressed = await this.db.antifraud.query<{
+      source_kind: FiatProblem["source_kind"];
+      source_id: string;
+    }>(
+      `
+        UPDATE fiat_problem_alert_deliveries AS delivery
+        SET
+          suppressed_at = COALESCE(delivery.suppressed_at, now()),
+          suppression_reason = CASE
+            WHEN EXISTS (
+              SELECT 1
+              FROM fiat_deposit_identity_checks identity_check
+              WHERE identity_check.intent_id =
+                split_part(alert.source_id, ':', 1)
+                AND identity_check.verdict = 'contain'
+            ) THEN 'identity_containment'
+            WHEN EXISTS (
+              SELECT 1
+              FROM fiat_deposit_assessments assessment
+              WHERE assessment.deposit_intent_id::text =
+                split_part(alert.source_id, ':', 1)
+                AND assessment.source_updated_at >= alert.occurred_at
+                AND assessment.verdict = 'bad'
+            ) THEN 'high_risk_assessment'
+            ELSE 'deposit_status_changed'
+          END,
+          last_error = NULL,
+          updated_at = now()
+        FROM fiat_problem_alert_outbox AS alert
+        WHERE delivery.source_kind = alert.source_kind
+          AND delivery.source_id = alert.source_id
+          AND delivery.destination = 'fiat_operations'
+          AND delivery.delivered_at IS NULL
+          AND delivery.suppressed_at IS NULL
+          AND alert.problem_code = 'review'
+          AND (
+            EXISTS (
+              SELECT 1
+              FROM fiat_deposit_assessments assessment
+              WHERE assessment.deposit_intent_id::text =
+                split_part(alert.source_id, ':', 1)
+                AND assessment.source_updated_at >= alert.occurred_at
+                AND (
+                  assessment.status <> 'review'
+                  OR assessment.verdict = 'bad'
+                )
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM fiat_deposit_identity_checks identity_check
+              WHERE identity_check.intent_id =
+                split_part(alert.source_id, ':', 1)
+                AND identity_check.verdict = 'contain'
+            )
+          )
+        RETURNING delivery.source_kind, delivery.source_id
+      `,
+    );
+    for (const delivery of suppressed.rows) {
+      await this.refreshLegacyDeliveryState(delivery);
+    }
+  }
+
   private async deliver(): Promise<void> {
     const pending = await this.db.antifraud.query<PendingFiatAlert>(
       `
@@ -1104,26 +1226,29 @@ export class FiatProblemAlerts {
         JOIN fiat_problem_alert_outbox AS alert
           USING (source_kind, source_id)
         WHERE delivery.delivered_at IS NULL
+          AND delivery.suppressed_at IS NULL
           AND delivery.next_attempt_at <= now()
           AND alert.next_attempt_at <= now()
-          -- Risk and identity classification run before this delivery phase.
-          -- Keep two real production monitor cycles as a short reconciliation
-          -- window, then suppress the normal #deposits card whenever either
-          -- worker classified the same intent as high risk. The previous
-          -- 60-second buffer made an otherwise healthy notification feel
-          -- broken while adding no stronger consistency guarantee.
+          -- A review card is eligible on evidence, never elapsed time. This
+          -- prevents it racing the high-risk/containment cards while releasing
+          -- an ordinary review immediately after both checks finish.
           AND (
             alert.problem_code <> 'review'
             OR (
-              alert.created_at <= now() - make_interval(
-                secs => ${CREDIT_REVIEW_SETTLEMENT_SECONDS}
-              )
-              AND NOT EXISTS (
+              EXISTS (
                 SELECT 1
                 FROM fiat_deposit_assessments assessment
                 WHERE assessment.deposit_intent_id::text =
                   split_part(alert.source_id, ':', 1)
-                  AND assessment.verdict = 'bad'
+                  AND assessment.status = 'review'
+                  AND assessment.source_updated_at >= alert.occurred_at
+                  AND assessment.verdict <> 'bad'
+              )
+              AND EXISTS (
+                SELECT 1
+                FROM fiat_deposit_identity_checks identity_check
+                WHERE identity_check.intent_id =
+                  split_part(alert.source_id, ':', 1)
               )
               AND NOT EXISTS (
                 SELECT 1
@@ -1193,19 +1318,23 @@ export class FiatProblemAlerts {
   }
 
   private async refreshLegacyDeliveryState(
-    problem: PendingFiatAlert,
+    problem: Pick<PendingFiatAlert, "source_kind" | "source_id">,
   ): Promise<void> {
     await this.db.antifraud.query(
       `
         WITH delivery_state AS (
           SELECT
-            count(*) FILTER (WHERE delivered_at IS NULL) AS pending_count,
+            count(*) FILTER (
+              WHERE delivered_at IS NULL AND suppressed_at IS NULL
+            ) AS pending_count,
             COALESCE(sum(attempt_count), 0)::integer AS attempt_count,
             min(next_attempt_at) FILTER (
-              WHERE delivered_at IS NULL
+              WHERE delivered_at IS NULL AND suppressed_at IS NULL
             ) AS next_attempt_at,
             string_agg(last_error, '; ' ORDER BY destination) FILTER (
-              WHERE delivered_at IS NULL AND last_error IS NOT NULL
+              WHERE delivered_at IS NULL
+                AND suppressed_at IS NULL
+                AND last_error IS NOT NULL
             ) AS last_error
           FROM fiat_problem_alert_deliveries
           WHERE source_kind = $1 AND source_id = $2

@@ -261,6 +261,7 @@ const engine = new MonitorEngine(
   app.log,
   (userId) => networkRisk.enqueueAccount(userId).then(() => undefined),
   fiatAccessControl,
+  fiatRisk,
 );
 let shuttingDown = false;
 let maxmindReportTimer: NodeJS.Timeout | null = null;

@@ -28,6 +28,7 @@ import {
 import { FiatEmailDomainGuard } from "./fiat-email-domains.js";
 import { captureIdentifierBlocklistMatches } from "./identifier-blocklists.js";
 import { FiatProblemAlerts } from "./fiat-alerts.js";
+import type { FiatReviewRiskClassifier } from "./fiat-alerts.js";
 import { WhopHistoryAutoBans } from "./whop-history-auto-bans.js";
 import { WhopPaymentReconciler } from "./whop-payment-reconciliation.js";
 import { FiatDepositIdentityChecks } from "./fiat-deposit-identity.js";
@@ -472,13 +473,19 @@ export class MonitorEngine {
     private readonly log: FastifyBaseLogger,
     private readonly onSignupAssessed?: (userId: string) => Promise<void>,
     private readonly fiatAccessControl?: FiatDepositAccessControl,
+    fiatReviewRiskClassifier?: FiatReviewRiskClassifier,
   ) {
     this.discord = new DiscordAlerts(config, log);
     this.enrichment = new EnrichmentService(config, (issue) =>
       sendProviderAccessIssue(config, log, issue)
     );
     this.fiatEmailDomains = new FiatEmailDomainGuard(db, log);
-    this.fiatAlerts = new FiatProblemAlerts(config, db, log);
+    this.fiatAlerts = new FiatProblemAlerts(
+      config,
+      db,
+      log,
+      fiatReviewRiskClassifier,
+    );
     this.whopHistoryAutoBans = new WhopHistoryAutoBans(db, log);
     this.whopPaymentReconciler = new WhopPaymentReconciler(
       config,

@@ -436,8 +436,10 @@ test("legacy high-risk destinations collapse into one routed event", async () =>
   assert.ok(
     pendingQueries.every(
       (query) =>
-        query.includes("secs => 10")
-        && query.includes("assessment.verdict = 'bad'")
+        !query.includes("make_interval")
+        && query.includes("assessment.source_updated_at >= alert.occurred_at")
+        && query.includes("assessment.verdict <> 'bad'")
+        && query.includes("delivery.suppressed_at IS NULL")
         && query.includes("identity_check.verdict = 'contain'"),
     ),
   );
@@ -467,6 +469,67 @@ test("legacy high-risk destinations collapse into one routed event", async () =>
   );
 });
 
+test("review delivery is driven by durable classification readiness", async () => {
+  const queries: string[] = [];
+  const classified: string[] = [];
+  const errors: string[] = [];
+  const antifraud = {
+    query: async (text: string) => {
+      queries.push(text);
+      if (text.includes("SELECT split_part(alert.source_id")) {
+        return {
+          rows: [{ intent_id: "intent-ready" }, { intent_id: "intent-retry" }],
+        };
+      }
+      if (text.includes("RETURNING delivery.source_kind")) {
+        return {
+          rows: [{ source_kind: "deposit_intent", source_id: "intent-risk:review" }],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+  const alerts = new FiatProblemAlerts(
+    {} as Config,
+    { antifraud, source: {} } as never,
+    {
+      error(_context: unknown, message: string) {
+        errors.push(message);
+      },
+    } as never,
+    {
+      async refreshIntent(intentId) {
+        classified.push(intentId);
+        if (intentId === "intent-retry") throw new Error("temporary source error");
+        return true;
+      },
+    },
+  );
+  const seams = alerts as unknown as {
+    classifyPendingReviews(): Promise<void>;
+    suppressClassifiedReviewDeliveries(): Promise<void>;
+  };
+
+  await seams.classifyPendingReviews();
+  await seams.suppressClassifiedReviewDeliveries();
+
+  assert.deepEqual(classified, ["intent-ready", "intent-retry"]);
+  assert.deepEqual(errors, ["Fiat review risk classification failed"]);
+  assert.ok(queries.some((query) =>
+    query.includes("assessment.source_updated_at >= alert.occurred_at")
+    && query.includes("delivery.suppressed_at IS NOT NULL")
+  ));
+  assert.ok(queries.some((query) =>
+    query.includes("SET\n          suppressed_at")
+    && query.includes("deposit_status_changed")
+    && query.includes("RETURNING delivery.source_kind")
+  ));
+  assert.ok(queries.some((query) =>
+    query.includes("WITH delivery_state AS")
+    && query.includes("suppressed_at IS NULL")
+  ));
+});
+
 test("fiat alert ingestion is mirror-only, durable, and retryable", async () => {
   const source = await readFile(
     new URL("../src/fiat-alerts.ts", import.meta.url),
@@ -479,6 +542,13 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   const splitMigration = await readFile(
     new URL(
       "../migrations/022_split_high_risk_fiat_destination.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const readinessMigration = await readFile(
+    new URL(
+      "../migrations/077_fiat_review_delivery_readiness.sql",
       import.meta.url,
     ),
     "utf8",
@@ -509,6 +579,11 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
     /ON CONFLICT \(source_kind, source_id, destination\) DO NOTHING/,
   );
   assert.match(source, /delivery\.delivered_at IS NULL/);
+  assert.match(source, /delivery\.suppressed_at IS NULL/);
+  assert.match(source, /classifyPendingReviews/);
+  assert.match(source, /refreshIntent/);
+  assert.match(source, /assessment\.source_updated_at >= alert\.occurred_at/);
+  assert.doesNotMatch(source, /CREDIT_REVIEW_SETTLEMENT_SECONDS/);
   assert.match(source, /next_attempt_at/);
   assert.match(source, /antifraud\.fiat_risk/);
   assert.match(source, /antifraud\.fiat_operations/);
@@ -543,6 +618,12 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
     /ON CONFLICT \(source_kind, source_id, destination\) DO NOTHING/,
   );
   assert.match(splitMigration, /WHERE alert\.problem_code = 'high_risk'/);
+  assert.match(readinessMigration, /ADD COLUMN IF NOT EXISTS suppressed_at/);
+  assert.match(readinessMigration, /suppression_reason/);
+  assert.match(
+    readinessMigration,
+    /WHERE delivered_at IS NULL AND suppressed_at IS NULL/,
+  );
 
   const calls: Array<{ text: string; values: unknown[] }> = [];
   const pool = {
