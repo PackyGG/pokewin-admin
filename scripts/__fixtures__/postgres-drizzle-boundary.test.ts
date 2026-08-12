@@ -1,19 +1,14 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { test } from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
+import { repositoryFiles } from "./repository-files";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 function trackedFiles(): string[] {
-  return execFileSync("git", ["ls-files"], {
-    cwd: root,
-    encoding: "utf8",
-  })
-    .split(/\r?\n/)
-    .filter(Boolean);
+  return repositoryFiles({ root });
 }
 
 function isHistoricalArtifact(file: string): boolean {
@@ -47,22 +42,14 @@ function filesContaining(
   { ignoreCase = false }: { ignoreCase?: boolean } = {},
 ): string[] {
   if (files.length === 0) return [];
-  const allowed = new Set(files);
-  try {
-    const args = ["grep", "-Il", "-E"];
-    if (ignoreCase) args.push("-i");
-    args.push(pattern);
-    return execFileSync("git", args, {
-      cwd: root,
-      encoding: "utf8",
-    })
-      .split(/\r?\n/)
-      .filter((file) => allowed.has(file));
-  } catch (error) {
-    const status = (error as { status?: number }).status;
-    if (status === 1) return [];
-    throw error;
-  }
+  const javascriptPattern = pattern.replaceAll(
+    "[^[:alnum:]_]",
+    "[^A-Za-z0-9_]",
+  );
+  const expression = new RegExp(javascriptPattern, ignoreCase ? "i" : undefined);
+  return files.filter((file) =>
+    expression.test(readFileSync(path.join(root, file), "utf8")),
+  );
 }
 
 test("tracked runtime and config contain no retired ClickHouse backend", () => {

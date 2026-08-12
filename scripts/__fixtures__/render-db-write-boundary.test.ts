@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { repositoryFiles } from "./repository-files";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const WRITE_HELPER =
@@ -24,20 +24,11 @@ type Violation = {
 };
 
 function trackedRenderModules(): string[] {
-  return execFileSync(
-    "git",
-    [
-      "ls-files",
-      "--cached",
-      "--others",
-      "--exclude-standard",
-      "src/app/**/page.tsx",
-      "src/app/**/layout.tsx",
-    ],
-    { cwd: root, encoding: "utf8" },
-  )
-    .split(/\r?\n/)
-    .filter((file) => file && existsSync(path.join(root, file)));
+  return repositoryFiles({
+    root,
+    includeUntracked: true,
+    pathspecs: ["src/app/**/page.tsx", "src/app/**/layout.tsx"],
+  });
 }
 
 function isInsideAfterCallback(node: ts.Node): boolean {

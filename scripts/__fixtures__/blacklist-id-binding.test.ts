@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { repositoryFiles } from "./repository-files";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -67,14 +67,14 @@ test("the blacklist is only pointed at text user-id columns", () => {
   const allowed = new Set(["u.id", "id", "acu.affiliate_user_id", "lt.user_id"]);
   const columns = new Set<string>();
 
-  const hits = execFileSync(
-    "git",
-    ["grep", "-hoE", 'blacklistNotInSql\\(\\s*"[^"]+"', "--", "src"],
-    { cwd: root, encoding: "utf8" },
-  );
-  for (const line of hits.split(/\r?\n/)) {
-    const match = /"([^"]+)"/.exec(line);
-    if (match) columns.add(match[1]);
+  for (const file of repositoryFiles({
+    root,
+    pathspecs: ["src/**/*.ts", "src/**/*.tsx"],
+  })) {
+    const body = readFileSync(path.join(root, file), "utf8");
+    for (const match of body.matchAll(/blacklistNotInSql\(\s*"([^"]+)"/g)) {
+      columns.add(match[1]);
+    }
   }
 
   assert.ok(columns.size > 0, "expected to find blacklistNotInSql call sites");

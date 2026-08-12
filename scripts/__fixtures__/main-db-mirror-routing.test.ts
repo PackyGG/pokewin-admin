@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import ts from "typescript";
+import { repositoryFiles } from "./repository-files";
 
 const repoRoot = process.cwd();
 const readResolvers = new Set([
@@ -14,23 +15,11 @@ const readResolvers = new Set([
 ]);
 
 function trackedRuntimeFiles(): string[] {
-  return execFileSync(
-    "git",
-    [
-      "ls-files",
-      "--cached",
-      "--others",
-      "--exclude-standard",
-      "src/**/*.ts",
-      "src/**/*.tsx",
-    ],
-    {
-      cwd: repoRoot,
-      encoding: "utf8",
-    },
-  )
-    .split(/\r?\n/)
-    .filter((file) => file && fs.existsSync(path.join(repoRoot, file)));
+  return repositoryFiles({
+    root: repoRoot,
+    includeUntracked: true,
+    pathspecs: ["src/**/*.ts", "src/**/*.tsx"],
+  });
 }
 
 test("mirror DB configuration fails closed and forces read-only sessions", () => {
@@ -227,12 +216,10 @@ test("mirror index tooling can scope production DDL to Antifraud", () => {
 });
 
 test("query modules cannot request the writable MAIN client", () => {
-  const files = execFileSync("git", ["ls-files", "src/lib/queries/**/*.ts"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  })
-    .split(/\r?\n/)
-    .filter(Boolean);
+  const files = repositoryFiles({
+    root: repoRoot,
+    pathspecs: ["src/lib/queries/**/*.ts"],
+  });
 
   for (const file of files) {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");

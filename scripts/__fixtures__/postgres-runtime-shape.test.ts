@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { repositoryFiles } from "./repository-files";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const RAW_QUERY_CALLEES = new Set(["execute", "queryRows", "queryMainRows"]);
@@ -19,12 +19,10 @@ type Violation = {
 };
 
 function trackedSourceFiles(): string[] {
-  return execFileSync("git", ["ls-files", "src/**/*.ts", "src/**/*.tsx"], {
-    cwd: root,
-    encoding: "utf8",
-  })
-    .split(/\r?\n/)
-    .filter((file) => file && existsSync(path.join(root, file)));
+  return repositoryFiles({
+    root,
+    pathspecs: ["src/**/*.ts", "src/**/*.tsx"],
+  });
 }
 
 function calleeName(node: ts.CallExpression): string | null {
