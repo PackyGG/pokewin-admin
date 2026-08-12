@@ -62,9 +62,10 @@ function optionalUsd(cents: string | null): number | null {
 /**
  * MAIN intents and their Whop webhook history are the source of truth for this
  * overview. A checkout can create more than one provider payment, so the feed
- * is deliberately one row per provider payment attempt. Intents without a
- * payment event remain visible as a single row while they are being created.
- * Risk assessments are enrichment and must never decide visibility.
+ * is deliberately one row per resolved provider payment attempt. Unfinished
+ * lifecycle states such as created, checkout_ready, open, and pending are not
+ * useful payment outcomes and stay out of this history. Risk assessments are
+ * enrichment and must never decide visibility.
  */
 export async function listFiatDeposits(input: {
   page: number;
@@ -105,11 +106,7 @@ export async function listFiatDeposits(input: {
         ) AS payment_id
       FROM payment_webhook_events pwe
       WHERE pwe.provider = 'whop'
-        AND pwe.event_type IN (
-          'payment.created',
-          'payment.failed',
-          'payment.succeeded'
-        )
+        AND pwe.event_type IN ('payment.failed', 'payment.succeeded')
         AND COALESCE(
           NULLIF(pwe.payload #>> '{data,id}', ''),
           NULLIF(pwe.provider_resource_id, '')
@@ -146,15 +143,11 @@ export async function listFiatDeposits(input: {
         country_code,
         signup_ip,
         payment_id,
-        CASE event_type
-          WHEN 'payment.failed' THEN 'failed'
-          WHEN 'payment.succeeded' THEN 'completed'
-          ELSE COALESCE(NULLIF(payload #>> '{data,status}', ''), 'pending')
+        CASE WHEN event_type = 'payment.failed'
+          THEN 'failed' ELSE 'completed'
         END AS status,
-        CASE event_type
-          WHEN 'payment.failed' THEN 'failed'
-          WHEN 'payment.succeeded' THEN 'paid'
-          ELSE NULLIF(payload #>> '{data,status}', '')
+        CASE WHEN event_type = 'payment.failed'
+          THEN 'failed' ELSE 'paid'
         END AS provider_payment_status,
         CASE WHEN event_type = 'payment.failed' THEN COALESCE(
           NULLIF(payload #>> '{data,failure_message}', ''),
@@ -207,6 +200,19 @@ export async function listFiatDeposits(input: {
       WHERE NOT EXISTS (
         SELECT 1 FROM attempts WHERE attempts.id = i.id
       )
+        AND (
+          i.paid_at IS NOT NULL
+          OR i.status IN (
+            'completed',
+            'failed',
+            'canceled',
+            'partially_refunded',
+            'refunded',
+            'disputed'
+          )
+          OR COALESCE(i.provider_payment_status, '')
+            ~* '(paid|succeeded|completed|failed|declined|denied|canceled|cancelled|refunded|disputed)'
+        )
     )
   `;
 

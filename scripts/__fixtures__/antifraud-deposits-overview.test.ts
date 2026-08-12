@@ -35,21 +35,23 @@ test("Fraud Overview exposes a read-only Fiat deposits page", () => {
   assert.match(hosts, /"deposits"/);
 });
 
-test("Fiat deposit visibility includes every Whop attempt and new intents", () => {
+test("Fiat deposit visibility includes resolved Whop attempts only", () => {
   const query = read("src/lib/antifraud/fiat-deposits-overview.ts");
 
-  assert.match(query, /payment\.created/);
   assert.match(query, /payment\.failed/);
   assert.match(query, /payment\.succeeded/);
+  assert.doesNotMatch(query, /'payment\.created'/);
   assert.match(query, /SELECT DISTINCT ON \(id, payment_id\)/);
   assert.match(query, /attempts\.id::text \|\| ':payment:' \|\| attempts\.payment_id/);
   assert.match(query, /i\.id::text \|\| ':intent'/);
   assert.match(query, /WHERE NOT EXISTS \([\s\S]*FROM attempts/);
   assert.match(query, /FROM fiat_deposit_intents i/);
-  assert.match(query, /Risk assessments are enrichment/);
+  assert.match(query, /Risk assessments[\s\S]{0,10}enrichment/);
   assert.match(query, /payment_webhook_events/);
   assert.match(query, /audit_events/);
   assert.match(query, /failure_message/);
   assert.match(query, /rowId: row\.row_id/);
+  assert.match(query, /i\.status IN \([\s\S]*'completed'[\s\S]*'disputed'/);
+  assert.doesNotMatch(query, /i\.status IN \([\s\S]*'checkout_ready'/);
   assert.doesNotMatch(query, /fiat_deposit_assessments/);
 });
