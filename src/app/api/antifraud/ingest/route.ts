@@ -480,7 +480,6 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
     } else {
       console.error(
         `[antifraud-ingest] skipping invalid ${signal.kind} containment signal`,
-        { externalId: signal.id || null, userId: signal.userId ?? null },
       );
       lockSkipped = true;
     }
