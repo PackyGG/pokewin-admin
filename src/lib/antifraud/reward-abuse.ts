@@ -7,7 +7,7 @@ import { getProdReadDrizzleDb } from "@/lib/db";
 import { enqueueDiscordEvent } from "@/lib/discord-notifications/router";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 
-export const RAIN_ABUSE_DETECTOR_VERSION = "rain-v1.2";
+export const RAIN_ABUSE_DETECTOR_VERSION = "rain-v1.3";
 export const REWARD_ABUSE_PAGE_SIZE = 40;
 
 export type RewardAbuseStatus = "pending" | "confirmed" | "dismissed";
@@ -124,6 +124,15 @@ export function scoreRainAbuse(metrics: RainAbuseMetrics): {
   ) {
     score += 20;
     reasons.push("Pack-heavy play is mostly funded from the general bonus balance");
+  }
+  if (
+    metrics.withdrawn30dUsd >= 10 &&
+    metrics.withdrawn30dUsd > metrics.deposits30dUsd
+  ) {
+    score += 20;
+    reasons.push(
+      `${metrics.withdrawn30dUsd.toFixed(2)} USD withdrawn with less deposited in 30 days`,
+    );
   }
   if (metrics.rainTipsUsd >= metrics.rainUsd * 0.5) score -= 15;
   if (metrics.deposits30dUsd >= metrics.netRainUsd) score -= 25;
@@ -347,14 +356,17 @@ export async function runRainAbuseDetection(): Promise<{
       metrics.packGames >= 3 &&
       metrics.packGameRatio >= 0.8 &&
       metrics.bonusFundedPackRatio >= 0.6;
+    const rewardFundedWithdrawal =
+      metrics.withdrawn30dUsd >= 10 &&
+      metrics.withdrawn30dUsd > metrics.deposits30dUsd;
     // Frequency alone is not abuse. Rain is wager-weighted, so a legitimate
     // active player can enter often and earn more. Require meaningful net
-    // extraction, minimal deposits, and either little paid play or the
-    // paid-pack/general-bonus behavior the detector is intended to review.
+    // extraction, minimal deposits, and either little paid play, paid-pack /
+    // general-bonus behavior, or meaningful cash-out without matching funding.
     if (
       metrics.netRainUsd < 2 ||
       !lowRecentDeposits ||
-      (!lowRealPlay && !paidPackPattern) ||
+      (!lowRealPlay && !paidPackPattern && !rewardFundedWithdrawal) ||
       scored.score < 60
     ) continue;
     qualified += 1;

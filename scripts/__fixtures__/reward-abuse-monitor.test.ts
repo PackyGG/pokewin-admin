@@ -60,3 +60,10 @@ test("reward evidence includes recent and lifetime completed withdrawals", async
   assert.match(detector, /request\.status::text IN \('completed', 'shipped'\)/);
   assert.match(detector, /balance\.total_withdrawn/);
 });
+
+test("reward-funded withdrawals qualify even when rewards were recycled through play", async () => {
+  const detector = await readFile(detectorPath, "utf8");
+  assert.match(detector, /const rewardFundedWithdrawal/);
+  assert.match(detector, /withdrawn30dUsd >= 10/);
+  assert.match(detector, /!lowRealPlay && !paidPackPattern && !rewardFundedWithdrawal/);
+});
