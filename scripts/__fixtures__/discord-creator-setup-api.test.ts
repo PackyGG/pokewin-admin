@@ -327,6 +327,51 @@ test("creator last-deals API uses complete leaderboard frames and actual support
   assert.match(endpoints, /latest one or two started leaderboard deal frames/);
 });
 
+test("creator conversion API uses the active frame, strict weighted wager, and canonical deal economics", async () => {
+  const [route, service, economics, endpoints] = await Promise.all([
+    read("src/app/api/v1/discord/creator-setups/conversion/route.ts"),
+    read("src/lib/discord-creator-last-deals.ts"),
+    read("src/lib/deal-economics.ts"),
+    read("src/lib/api-auth/endpoints.ts"),
+  ]);
+
+  const conversion = service.slice(
+    service.indexOf("export async function getCreatorCurrentConversion"),
+    service.indexOf("export async function getCreatorCurrentDealPnl"),
+  );
+  assert.match(route, /export const runtime = "nodejs"/);
+  assert.match(route, /export const dynamic = "force-dynamic"/);
+  assert.match(route, /export const maxDuration = 60/);
+  assert.match(route, /scopes: \["discord:creator:setup"\]/);
+  assert.match(route, /rejectWrongGuild/);
+  assert.match(route, /getCreatorCurrentConversion\(parsed\.data\)/);
+  assert.match(conversion, /requireLinkedSetupActor\(input, \{\s*allowDashboardOperator: true/);
+  assert.match(conversion, /input\.actorDiscordUserId !== setup\.creator_discord_user_id/);
+  assert.match(conversion, /isDiscordDashboardOperator\(input\.actorDiscordUserId\)/);
+  assert.match(conversion, /setup_actor_forbidden/);
+  assert.match(conversion, /approval_status, "approved"/);
+  assert.match(conversion, /cancelled_at/);
+  assert.match(conversion, /usage\.usage_type::text IN \('deposit', 'wager'\)/);
+  assert.match(conversion, /SUM\(usage\.weighted_wager_amount_usd::numeric\)/);
+  assert.doesNotMatch(
+    conversion,
+    /SUM\(COALESCE\(usage\.weighted_wager_amount_usd,\s*usage\.wager_amount_usd\)/,
+  );
+  assert.doesNotMatch(conversion, /usage\.wager_amount_usd/);
+  assert.match(conversion, /usage\.created_at >= \$4::timestamptz/);
+  assert.match(conversion, /usage\.created_at < \$5::timestamptz/);
+  assert.match(conversion, /referred\.role::text NOT IN \('admin', 'support', 'creator'\)/);
+  assert.match(conversion, /getExcludedUserIds\(\)/);
+  assert.match(conversion, /INTERVAL '7 days'/);
+  assert.match(conversion, /const economics = computeDealCost\(/);
+  assert.match(conversion, /computeCreatorDealConversion\(/);
+  assert.match(conversion, /dealId: frame\.id/);
+  assert.match(conversion, /status: "active"/);
+  assert.match(conversion, /deal: null/);
+  assert.match(economics, /export const HOUSE_EDGE = 0\.075/);
+  assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/conversion/);
+});
+
 test("creator activity notifications are independently controlled, durable, and creator-guild pinned", async () => {
   const [service, signupService, readSettings, updateSettings, claim, ack, signupAck,
     migration, signupMigration, controlsMigration, endpoints] =

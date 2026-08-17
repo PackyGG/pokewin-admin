@@ -1,5 +1,13 @@
 import type { CreatorDealResponse } from "@/lib/backend-api";
 
+type CreatorDealCostTerms = Pick<
+  CreatorDealResponse,
+  | "total_withdraw_cap_usd"
+  | "max_tip_per_stream_usd"
+  | "max_sponsorship_per_stream_usd"
+  | "fills_allowed"
+>;
+
 /**
  * Canonical creator-deal economics — the SINGLE source of truth for how a
  * deal costs the house and how much wager it needs to break even. Every
@@ -86,7 +94,7 @@ export function leaderboardHouseCost(
  *
  *   full withdraw cap + (tip/stream + sponsor/stream) × fills_allowed
  */
-export function weeklyDealTermCost(deal: CreatorDealResponse): number {
+export function weeklyDealTermCost(deal: CreatorDealCostTerms): number {
   const cap = toFiniteNumber(deal.total_withdraw_cap_usd);
   const tip = toFiniteNumber(deal.max_tip_per_stream_usd);
   const sponsor = toFiniteNumber(deal.max_sponsorship_per_stream_usd);
@@ -131,6 +139,27 @@ export type DealCost = {
   expectedWager: number;
 };
 
+export type CreatorDealConversion = {
+  generatedValue: number;
+  expectedWager: number;
+  conversionRatio: number | null;
+};
+
+/** Pure current-deal performance math; callers round money only for display. */
+export function computeCreatorDealConversion(
+  weightedWagerUsd: string | number | null | undefined,
+  dealSpendUsd: string | number | null | undefined,
+): CreatorDealConversion {
+  const weightedWager = Math.max(0, toFiniteNumber(weightedWagerUsd));
+  const dealSpend = Math.max(0, toFiniteNumber(dealSpendUsd));
+  const generatedValue = weightedWager * HOUSE_EDGE;
+  return {
+    generatedValue,
+    expectedWager: HOUSE_EDGE > 0 ? dealSpend / HOUSE_EDGE : 0,
+    conversionRatio: dealSpend > 0 ? generatedValue / dealSpend : null,
+  };
+}
+
 /**
  * Canonical deal cost for a leaderboard frame, per the owner's rule.
  *
@@ -140,7 +169,7 @@ export type DealCost = {
  * @param lbPrizeUsd the frame's leaderboard total prize (net of `lbRefundUsd`).
  */
 export function computeDealCost(args: {
-  weeklyDeals: CreatorDealResponse[];
+  weeklyDeals: CreatorDealCostTerms[];
   lbPrizeUsd: string | number | null | undefined;
   lbRefundUsd?: string | number | null | undefined;
   lbHouseSharePct?: string | number | null | undefined;

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import {
@@ -9,6 +9,7 @@ import {
 } from "@/lib/db-schema/admin/schema";
 import {
   affiliate_codes,
+  affiliate_leaderboards,
   creator_deals,
 } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
@@ -17,6 +18,8 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   DEFAULT_LB_HOUSE_SHARE_PCT,
+  computeCreatorDealConversion,
+  computeDealCost,
   normalizeLeaderboardHouseSharePct,
 } from "@/lib/deal-economics";
 import {
@@ -98,6 +101,26 @@ export type CreatorLastDeals = {
   }>;
 };
 
+export type CreatorCurrentConversion = {
+  generatedAt: string;
+  creator: CreatorLastDeals["creator"];
+  deal: null | {
+    dealId: string;
+    status: "active";
+    startedAt: string;
+    endedAt: string;
+    users: number;
+    signups: number;
+    firstTimeDepositors: number;
+    depositsUsd: number;
+    weightedWagerUsd: number;
+    dealSpendUsd: number;
+    expectedWagerUsd: number;
+    generatedValueUsd: number;
+    conversionRatio: number | null;
+  };
+};
+
 export type CreatorCurrentDealPnl = {
   generatedAt: string;
   creator: CreatorLastDeals["creator"];
@@ -132,6 +155,7 @@ type DealRow = {
   status: LastDealStatus;
   week_start_utc: string;
   week_end_utc: string;
+  fills_allowed: number;
   per_fill_amount_usd: string;
   conversion_rate_bps: number;
   max_tip_per_stream_usd: string;
@@ -155,6 +179,14 @@ type DealMetricsRow = {
   converted_payout_usd: string;
   tips_usd: string;
   sponsored_battles_usd: string;
+};
+
+type ConversionMetricsRow = {
+  users: string;
+  signups: string;
+  first_time_depositors: string;
+  deposits_usd: string;
+  weighted_wager_usd: string;
 };
 
 const money = (value: unknown): number =>
@@ -548,6 +580,225 @@ export async function getCreatorLastDeals(input: {
     generatedAt: new Date().toISOString(),
     creator: { userId: creator.id, username: creator.username },
     deals: dealResults,
+  };
+}
+
+/** Creator/admin conversion view for the currently active leaderboard deal frame. */
+export async function getCreatorCurrentConversion(input: {
+  guildId: string;
+  categoryId: string;
+  channelId: string;
+  actorDiscordUserId: string;
+}): Promise<CreatorCurrentConversion> {
+  const setup = await requireLinkedSetupActor(input, {
+    allowDashboardOperator: true,
+  });
+  if (
+    input.actorDiscordUserId !== setup.creator_discord_user_id
+    && !isDiscordDashboardOperator(input.actorDiscordUserId)
+  ) {
+    throw new CreatorSetupError(
+      403,
+      "setup_actor_forbidden",
+      "Only this creator or an authorized dashboard operator can view deal conversion.",
+    );
+  }
+
+  const db = getProdReadDrizzleDb();
+  const now = new Date().toISOString();
+  const [creator, ownedCodes, excludedUserIds, activeFrames] = await Promise.all([
+    requireActiveCreator(setup.creator_user_id),
+    db
+      .select({ code: affiliate_codes.code })
+      .from(affiliate_codes)
+      .where(eq(affiliate_codes.user_id, setup.creator_user_id)),
+    getExcludedUserIds(),
+    db
+      .select({
+        id: affiliate_leaderboards.id,
+        affiliateCodes: affiliate_leaderboards.affiliate_codes,
+        startedAt: affiliate_leaderboards.start_date,
+        endedAt: affiliate_leaderboards.end_date,
+        totalPrizeUsd:
+          sql<string>`(${affiliate_leaderboards.creator_prize_usd} + ${affiliate_leaderboards.site_bonus_usd})::text`,
+        refundAmountUsd: affiliate_leaderboards.refund_amount_usd,
+      })
+      .from(affiliate_leaderboards)
+      .where(and(
+        eq(affiliate_leaderboards.creator_user_id, setup.creator_user_id),
+        eq(affiliate_leaderboards.approval_status, "approved"),
+        isNull(affiliate_leaderboards.cancelled_at),
+        lte(affiliate_leaderboards.start_date, now),
+        gt(affiliate_leaderboards.end_date, now),
+      ))
+      .orderBy(desc(affiliate_leaderboards.start_date))
+      .limit(1),
+  ]);
+  const frame = activeFrames[0] ?? null;
+  const generatedAt = new Date().toISOString();
+  const creatorResult = { userId: creator.id, username: creator.username };
+  if (!frame) {
+    return {
+      generatedAt,
+      creator: creatorResult,
+      deal: null,
+    };
+  }
+
+  const codes = Array.from(new Set(
+    (frame.affiliateCodes.length > 0
+      ? frame.affiliateCodes
+      : ownedCodes.map((row) => row.code))
+      .map((code) => code.trim().toUpperCase())
+      .filter(Boolean),
+  ));
+  const [sponsorshipRows, approvalRows, weeklyDeals, metricRows] =
+    await Promise.all([
+      adminDrizzle
+        .select({
+          sponsoredPercentage:
+            admin_leaderboard_sponsorship.sponsored_percentage,
+        })
+        .from(admin_leaderboard_sponsorship)
+        .where(eq(admin_leaderboard_sponsorship.leaderboard_id, frame.id))
+        .limit(1),
+      adminDrizzle
+        .select({ requestId: creator_deal_approval_requests.id })
+        .from(creator_deal_approval_requests)
+        .where(eq(creator_deal_approval_requests.leaderboard_id, frame.id))
+        .orderBy(desc(creator_deal_approval_requests.created_at))
+        .limit(1),
+      db
+        .select({
+          id: creator_deals.id,
+          status: creator_deals.status,
+          week_start_utc: creator_deals.week_start_utc,
+          week_end_utc: creator_deals.week_end_utc,
+          fills_allowed: creator_deals.fills_allowed,
+          per_fill_amount_usd: creator_deals.per_fill_amount_usd,
+          conversion_rate_bps: creator_deals.conversion_rate_bps,
+          max_tip_per_stream_usd: creator_deals.max_tip_per_stream_usd,
+          max_tip_per_user_usd: creator_deals.max_tip_per_user_usd,
+          max_sponsored_battle_usd: creator_deals.max_sponsored_battle_usd,
+          max_sponsorship_per_stream_usd:
+            creator_deals.max_sponsorship_per_stream_usd,
+          total_withdraw_cap_usd: creator_deals.total_withdraw_cap_usd,
+          terms: creator_deals.terms,
+        })
+        .from(creator_deals)
+        .where(sql`${creator_deals.user_id} = ${setup.creator_user_id}
+          AND ${creator_deals.week_start_utc} < ${frame.endedAt}
+          AND ${creator_deals.week_end_utc} > ${frame.startedAt}`),
+      queryCreatorAnalytics<ConversionMetricsRow>(`
+        WITH activity AS (
+          SELECT
+            COUNT(DISTINCT usage.referred_user_id) FILTER (
+              WHERE usage.usage_type::text IN ('deposit', 'wager')
+            )::text AS users,
+            COUNT(DISTINCT usage.referred_user_id) FILTER (
+              WHERE usage.usage_type::text = 'signup'
+            )::text AS signups,
+            COUNT(DISTINCT usage.referred_user_id) FILTER (
+              WHERE usage.usage_type::text = 'deposit'
+            )::text AS first_time_depositors,
+            COALESCE(SUM(usage.weighted_wager_amount_usd::numeric) FILTER (
+              WHERE usage.usage_type::text = 'wager'
+            ), 0)::text AS weighted_wager_usd
+          FROM affiliate_code_usages AS usage
+          JOIN "user" AS referred ON referred.id = usage.referred_user_id
+          WHERE usage.affiliate_user_id = $1
+            AND UPPER(usage.code) = ANY($2::text[])
+            AND usage.status::text = 'completed'
+            AND usage.referred_user_id <> usage.affiliate_user_id
+            AND usage.created_at >= $4::timestamptz
+            AND usage.created_at < $5::timestamptz
+            AND referred.role::text NOT IN ('admin', 'support', 'creator')
+            AND usage.referred_user_id <> ALL($3::text[])
+        ), deposits AS (
+          SELECT COALESCE(SUM(deposit.amount::numeric), 0)::text AS deposits_usd
+          FROM ledger_transactions AS deposit
+          JOIN "user" AS referred ON referred.id = deposit.user_id
+          JOIN LATERAL (
+            SELECT usage.affiliate_user_id AS creator_user_id
+            FROM affiliate_code_usages AS usage
+            JOIN affiliate_codes AS owned_code
+              ON owned_code.user_id = usage.affiliate_user_id
+             AND UPPER(owned_code.code) = UPPER(usage.code)
+            WHERE usage.referred_user_id = deposit.user_id
+              AND usage.referred_user_id <> usage.affiliate_user_id
+              AND usage.status::text = 'completed'
+              AND UPPER(usage.code) = ANY($2::text[])
+              AND usage.created_at <= deposit.created_at
+              AND usage.created_at >= deposit.created_at - INTERVAL '7 days'
+            ORDER BY usage.created_at DESC, usage.id DESC
+            LIMIT 1
+          ) AS attribution ON attribution.creator_user_id = $1
+          WHERE deposit.type = 'deposit'
+            AND deposit.status = 'completed'
+            AND deposit.amount::numeric > 0
+            AND deposit.created_at >= $4::timestamptz
+            AND deposit.created_at < $5::timestamptz
+            AND referred.role::text NOT IN ('admin', 'support', 'creator')
+            AND deposit.user_id <> ALL($3::text[])
+        )
+        SELECT
+          activity.users,
+          activity.signups,
+          activity.first_time_depositors,
+          activity.weighted_wager_usd,
+          deposits.deposits_usd
+        FROM activity CROSS JOIN deposits
+      `, [
+        setup.creator_user_id,
+        codes,
+        excludedUserIds,
+        new Date(frame.startedAt).toISOString(),
+        new Date(frame.endedAt).toISOString(),
+      ]),
+    ]);
+
+  const approvalRequestId = approvalRows[0]?.requestId ?? null;
+  const matchingDeals = weeklyDeals
+    .filter((deal) => {
+      if (approvalRequestId == null) return deal.status !== "terminated";
+      if (deal.terms == null || typeof deal.terms !== "object") return false;
+      return (deal.terms as Record<string, unknown>)
+        .creator_approval_request_id === approvalRequestId;
+    })
+    .sort((a, b) => a.week_start_utc.localeCompare(b.week_start_utc));
+  const houseSharePct = normalizeLeaderboardHouseSharePct(
+    sponsorshipRows[0]?.sponsoredPercentage,
+    DEFAULT_LB_HOUSE_SHARE_PCT,
+  );
+  const economics = computeDealCost({
+    weeklyDeals: matchingDeals,
+    lbPrizeUsd: frame.totalPrizeUsd,
+    lbRefundUsd: frame.refundAmountUsd,
+    lbHouseSharePct: houseSharePct,
+  });
+  const metrics = metricRows[0];
+  const conversion = computeCreatorDealConversion(
+    metrics?.weighted_wager_usd ?? 0,
+    economics.dealCost,
+  );
+  return {
+    generatedAt,
+    creator: creatorResult,
+    deal: {
+      dealId: frame.id,
+      status: "active",
+      startedAt: new Date(frame.startedAt).toISOString(),
+      endedAt: new Date(frame.endedAt).toISOString(),
+      users: Number(metrics?.users ?? 0),
+      signups: Number(metrics?.signups ?? 0),
+      firstTimeDepositors: Number(metrics?.first_time_depositors ?? 0),
+      depositsUsd: money(metrics?.deposits_usd ?? 0),
+      weightedWagerUsd: money(metrics?.weighted_wager_usd ?? 0),
+      dealSpendUsd: money(economics.dealCost),
+      expectedWagerUsd: money(conversion.expectedWager),
+      generatedValueUsd: money(conversion.generatedValue),
+      conversionRatio: conversion.conversionRatio,
+    },
   };
 }
 

@@ -114,6 +114,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-setups/conversion",
+    summary:
+      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Creator or dashboard-admin read of the linked creator's active leaderboard deal frame. Returns distinct active users, signups, FTDs, attributed deposits, strictly weighted wager, canonical deal spend, 7.5%-generated value, break-even wager, and conversion ratio.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/creator-setups/stream-events",
     summary: "Body { after }. Returns creator stream lifecycle transitions mapped to their Discord sections for private admin-log delivery, including ending balance and the exact converted-to-real-balance amount (including zero).",
     scopes: ["discord:creator:setup"],

@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  HOUSE_EDGE,
+  computeCreatorDealConversion,
   computeDealCost,
   leaderboardHouseCost,
   normalizeLeaderboardHouseSharePct,
@@ -73,6 +75,20 @@ test("deal profitability uses the same stored leaderboard percentage", () => {
   assert.equal(cost.leaderboardUsd, 300);
   assert.equal(cost.dealCost, 300);
   assert.equal(cost.expectedWager, 4_000);
+});
+
+test("creator conversion uses unrounded canonical 7.5% economics", () => {
+  assert.equal(HOUSE_EDGE, 0.075);
+  assert.deepEqual(computeCreatorDealConversion(2_000, 100), {
+    generatedValue: 150,
+    expectedWager: 100 / 0.075,
+    conversionRatio: 1.5,
+  });
+  assert.deepEqual(computeCreatorDealConversion(2_000, 0), {
+    generatedValue: 150,
+    expectedWager: 0,
+    conversionRatio: null,
+  });
 });
 
 test("all canonical leaderboard reporting surfaces pass stored percentages", () => {
