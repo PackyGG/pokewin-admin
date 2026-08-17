@@ -28,8 +28,17 @@ export function safeTokenEqual(actual: string, expected: string): boolean {
  * this function. The onRequest hook in server.ts authenticates it against the
  * per-environment FIAT_ELIGIBILITY_* API keys and returns before the bearer
  * check (server.ts, the `pathname === FIAT_ELIGIBILITY_PATH` branch).
+ *
+ * `POST /v1/chain/get_info` is the game backend's EOS routing call. It is a
+ * write only in that it advances the caller-named user's rule sequence; it
+ * creates nothing and reveals nothing beyond the chain-info payload a real EOS
+ * node returns. The backend holds the read token, so requiring the admin token
+ * here would mean handing every game server full administrative access.
  */
-const READ_TOKEN_WRITES: ReadonlySet<string> = new Set(["POST /v1/ws/tickets"]);
+const READ_TOKEN_WRITES: ReadonlySet<string> = new Set([
+  "POST /v1/ws/tickets",
+  "POST /v1/chain/get_info",
+]);
 
 const SAFE_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"]);
 

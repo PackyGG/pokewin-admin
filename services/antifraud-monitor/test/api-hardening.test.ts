@@ -538,9 +538,10 @@ const READ_TOKEN_WRITE_EXCEPTIONS = new Map<string, string>([
       "never reaches serviceRequestAuthorized",
   ],
   [
-    "POST /v1/testing/eos-random-block",
-    "deliberately unauthenticated testing endpoint that only reads public EOS " +
-      "chain data and remains globally rate limited",
+    "POST /v1/chain/get_info",
+    "the game backend's EOS routing call; advances the named user's rule " +
+      "sequence but returns only a chain-info payload, and the backend holds " +
+      "the read token",
   ],
 ]);
 
@@ -570,9 +571,6 @@ test("every registered write route rejects the read token", async () => {
     if (/\.post\(\s*FIAT_ELIGIBILITY_PATH/.test(source)) {
       routes.add("POST /v1/fiat-eligibility/check");
     }
-    if (/\.post\(\s*EOS_RANDOM_BLOCK_PATH/.test(source)) {
-      routes.add("POST /v1/testing/eos-random-block");
-    }
   }
 
   // Guard against the scan silently matching nothing.
@@ -583,7 +581,6 @@ test("every registered write route rejects the read token", async () => {
   assert.ok(routes.has("POST /v1/rules"));
   assert.ok(routes.has("PUT /v1/scoring/:key"));
   assert.ok(routes.has("POST /v1/fiat-eligibility/check"));
-  assert.ok(routes.has("POST /v1/testing/eos-random-block"));
   assert.ok(routes.has("POST /v1/ws/tickets"));
 
   const config = {

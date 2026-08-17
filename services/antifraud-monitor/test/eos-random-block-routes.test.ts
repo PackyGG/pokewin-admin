@@ -36,10 +36,16 @@ const chainInfo = {
   head_block_time: "2026-08-07T21:29:43.000",
 };
 
-test("EOS random-block path is unauthenticated only for POST", () => {
+test("only the userID-free chain routes are unauthenticated", () => {
+  // Every route that can name a user — and therefore reach the database or a
+  // rule sequence — must fall through to the bearer check.
   assert.equal(
     isUnauthenticatedEosRandomBlockRequest("POST", EOS_RANDOM_BLOCK_PATH),
-    true,
+    false,
+  );
+  assert.equal(
+    isUnauthenticatedEosRandomBlockRequest("POST", EOS_CHAIN_INFO_PATH),
+    false,
   );
   assert.equal(
     isUnauthenticatedEosRandomBlockRequest("GET", EOS_RANDOM_BLOCK_PATH),
@@ -55,10 +61,6 @@ test("EOS random-block path is unauthenticated only for POST", () => {
   );
   assert.equal(
     isUnauthenticatedEosRandomBlockRequest("GET", EOS_CHAIN_INFO_PATH),
-    true,
-  );
-  assert.equal(
-    isUnauthenticatedEosRandomBlockRequest("POST", EOS_CHAIN_INFO_PATH),
     true,
   );
   assert.equal(
@@ -147,7 +149,7 @@ test("EOS service races providers and fetches a fresh five-block window per requ
   assert.deepEqual(freshResult, result);
 });
 
-test("EOS random-block route accepts battle identity and returns only the block hash when simulation is disabled", async () => {
+test("the testing route is gone entirely, not merely gated", async () => {
   const source: EosRandomBlockSource = {
     async select() {
       return {
@@ -171,20 +173,7 @@ test("EOS random-block route accepts battle identity and returns only the block 
     },
   });
 
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    ...chainInfo,
-    last_irreversible_block_num: blocks[3]!.blockNumber,
-    last_irreversible_block_id: blocks[3]!.blockHash,
-    last_irreversible_block_time: blocks[3]!.blockTimestamp,
-    blockHash: blocks[3]!.blockHash,
-    selected: {
-      blockNumber: blocks[3]!.blockNumber,
-      blockId: blocks[3]!.blockHash,
-      timestamp: blocks[3]!.blockTimestamp,
-      provider: "https://eos.example",
-    },
-  });
+  assert.equal(response.statusCode, 404);
   await app.close();
 });
 
@@ -349,92 +338,6 @@ test("EOS-compatible battle request can resolve the active battle from only user
   await app.close();
 });
 
-test("EOS random-block route returns one selected and four alternate endings", async () => {
-  const source: EosRandomBlockSource = {
-    async select() {
-      return {
-        provider: "https://eos.example",
-        chainInfo,
-        selectedIndex: 1,
-        selectedBlock: blocks[1]!,
-        candidates: blocks,
-      };
-    },
-  };
-  const outcomes: BattleOutcomeSource = {
-    async simulate(userID, battleID, candidates) {
-      assert.equal(userID, "test-user-123");
-      assert.equal(battleID, "11111111-1111-4111-8111-111111111111");
-      assert.deepEqual(candidates, blocks);
-      return {
-        battleId: "11111111-1111-4111-8111-111111111111",
-        mode: "normal",
-        crazyMode: false,
-        currency: "real",
-        creatorUserID: "test-user-123",
-        outcomes: candidates.map((candidate) => ({
-          blockNumber: candidate.blockNumber,
-          winningTeam: 1,
-          creatorTeam: 1,
-          creatorWonBattle: true,
-          creatorCost: 10,
-          creatorProfitLoss: 5,
-        })),
-      };
-    },
-  };
-  const app = Fastify({ logger: false });
-  await registerEosRandomBlockRoutes(app, source, outcomes);
-
-  const response = await app.inject({
-    method: "POST",
-    url: EOS_RANDOM_BLOCK_PATH,
-    payload: {
-      userID: "test-user-123",
-      battleID: "11111111-1111-4111-8111-111111111111",
-    },
-  });
-
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    ...chainInfo,
-    last_irreversible_block_num: blocks[1]!.blockNumber,
-    last_irreversible_block_id: blocks[1]!.blockHash,
-    last_irreversible_block_time: blocks[1]!.blockTimestamp,
-    selectedBlockNumber: blocks[1]!.blockNumber,
-    battleId: "11111111-1111-4111-8111-111111111111",
-    mode: "normal",
-    crazyMode: false,
-    currency: "real",
-    creatorUserID: "test-user-123",
-    otherPossibleEndings: blocks
-      .filter((candidate) => candidate.blockNumber !== blocks[1]!.blockNumber)
-      .map((candidate) => ({
-        blockNumber: candidate.blockNumber,
-        blockId: candidate.blockHash,
-        timestamp: candidate.blockTimestamp,
-        provider: "https://eos.example",
-        winningTeam: 1,
-        creatorTeam: 1,
-        creatorWonBattle: true,
-        creatorCost: 10,
-        creatorProfitLoss: 5,
-      })),
-    selected: {
-      blockNumber: blocks[1]!.blockNumber,
-      blockId: blocks[1]!.blockHash,
-      timestamp: blocks[1]!.blockTimestamp,
-      provider: "https://eos.example",
-      winningTeam: 1,
-      creatorTeam: 1,
-      creatorWonBattle: true,
-      creatorCost: 10,
-      creatorProfitLoss: 5,
-    },
-  });
-  await app.close();
-});
-
 test("chain info block id follows the outcome selected by only-loses mode", async () => {
   const source: EosRandomBlockSource = {
     async select() {
@@ -479,7 +382,7 @@ test("chain info block id follows the outcome selected by only-loses mode", asyn
 
   const response = await app.inject({
     method: "POST",
-    url: EOS_RANDOM_BLOCK_PATH,
+    url: EOS_CHAIN_INFO_PATH,
     payload: {
       userID: "test-user-123",
       battleID: "11111111-1111-4111-8111-111111111111",
@@ -488,19 +391,16 @@ test("chain info block id follows the outcome selected by only-loses mode", asyn
   const body = response.json();
 
   assert.equal(response.statusCode, 200);
-  assert.equal(body.selectedBlockNumber, blocks[4]!.blockNumber);
   assert.equal(body.last_irreversible_block_num, blocks[4]!.blockNumber);
   assert.equal(body.last_irreversible_block_id, blocks[4]!.blockHash);
-  assert.equal(body.selected.blockId, blocks[4]!.blockHash);
-  assert.equal(body.selected.creatorProfitLoss, -10);
+  // The steered block is all the caller may learn. Nothing about the battle,
+  // the alternate endings, or the creator's profit may ride along.
+  assert.equal(body.selected, undefined);
+  assert.equal(body.selectedBlockNumber, undefined);
+  assert.equal(body.otherPossibleEndings, undefined);
   assert.equal(body.outcomes, undefined);
-  assert.equal(body.otherPossibleEndings.length, 4);
-  assert.deepEqual(
-    body.otherPossibleEndings.map((ending: { blockNumber: number }) =>
-      ending.blockNumber
-    ),
-    blocks.slice(0, 4).map((block) => block.blockNumber),
-  );
+  assert.equal(body.creatorUserID, undefined);
+  assert.equal(body.battleId, undefined);
   await app.close();
 });
 
@@ -681,7 +581,7 @@ test("EOS user sequence config routes list, reset, and delete rules", async () =
   await app.close();
 });
 
-test("EOS random-block route rejects invalid input and hides provider errors", async () => {
+test("rejected requests reveal neither the schema nor provider errors", async () => {
   const source: EosRandomBlockSource = {
     async select() {
       throw new Error("provider details must not escape");
@@ -690,17 +590,42 @@ test("EOS random-block route rejects invalid input and hides provider errors", a
   const app = Fastify({ logger: false });
   await registerEosRandomBlockRoutes(app, source);
 
-  const invalid = await app.inject({
-    method: "POST",
-    url: EOS_RANDOM_BLOCK_PATH,
-    payload: { userID: "", battleID: "not-a-uuid", extra: true },
-  });
-  assert.equal(invalid.statusCode, 400);
-  assert.equal(invalid.json().error, "invalid_request");
+  // A 400 must not narrate what the body should have looked like: echoing the
+  // validator's own wording ("expected string, received undefined",
+  // "Invalid UUID", "Unrecognized key") hands a caller the request shape.
+  for (
+    const payload of [
+      { battleID: "11111111-1111-4111-8111-111111111111" },
+      { userID: "", battleID: "not-a-uuid" },
+      { userID: "test-user-123", extra: true },
+    ]
+  ) {
+    const invalid = await app.inject({
+      method: "POST",
+      url: EOS_CHAIN_INFO_PATH,
+      payload,
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.deepEqual(invalid.json(), { error: "invalid_request" });
+    assert.doesNotMatch(invalid.body, /userID|battleID|expected|Unrecognized/i);
+  }
 
-  const unavailable = await app.inject({
+  await app.close();
+
+  // Provider failures surface as a bare 503 — the thrown message never reaches
+  // the caller. Needs an outcome source, or the request is rejected as
+  // incomplete before any provider is contacted.
+  const outcomes: BattleOutcomeSource = {
+    async simulate() {
+      throw new Error("simulate must not be reached");
+    },
+  };
+  const failing = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(failing, source, outcomes);
+
+  const unavailable = await failing.inject({
     method: "POST",
-    url: EOS_RANDOM_BLOCK_PATH,
+    url: EOS_CHAIN_INFO_PATH,
     payload: {
       userID: "test-user-123",
       battleID: "11111111-1111-4111-8111-111111111111",
@@ -709,5 +634,5 @@ test("EOS random-block route rejects invalid input and hides provider errors", a
   assert.equal(unavailable.statusCode, 503);
   assert.deepEqual(unavailable.json(), { error: "eos_unavailable" });
   assert.doesNotMatch(unavailable.body, /provider details/);
-  await app.close();
+  await failing.close();
 });

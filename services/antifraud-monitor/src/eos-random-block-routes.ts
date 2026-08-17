@@ -164,24 +164,6 @@ function chainInfoForSelectedBlock(
   };
 }
 
-function battleEnding(
-  provider: string,
-  block: EosBlockCandidate,
-  outcome: BattleCandidateOutcome,
-): Record<string, unknown> {
-  return {
-    blockNumber: block.blockNumber,
-    blockId: block.blockHash,
-    timestamp: block.blockTimestamp,
-    provider,
-    winningTeam: outcome.winningTeam,
-    creatorTeam: outcome.creatorTeam,
-    creatorWonBattle: outcome.creatorWonBattle,
-    creatorCost: outcome.creatorCost,
-    creatorProfitLoss: outcome.creatorProfitLoss,
-  };
-}
-
 async function responseJson(response: Response): Promise<unknown> {
   if (!response.ok) {
     throw new Error(`EOS provider returned HTTP ${response.status}`);
@@ -334,13 +316,24 @@ export class EosRandomBlockService implements EosRandomBlockSource {
   }
 }
 
+/**
+ * The only routes that answer without a bearer token.
+ *
+ * Both read nothing but public EOS chain data: `GET /v1/chain/get_info` returns
+ * a chain-info payload for a randomly selected recent block, and
+ * `POST /v1/chain/get_block` passes a block straight through. Neither takes a
+ * userID, so neither can reach the database or a user's battle.
+ *
+ * Deliberately NOT here:
+ *   - `POST /v1/chain/get_info`, whose body may carry a userID. That branch
+ *     reads the caller-named user's in-progress battle and consumes their
+ *     configured rule sequence, so it goes through the normal bearer check.
+ */
 export function isUnauthenticatedEosRandomBlockRequest(
   method: string,
   pathname: string | undefined,
 ): boolean {
-  return (method === "POST" && pathname === EOS_RANDOM_BLOCK_PATH)
-    || ((method === "GET" || method === "POST")
-      && pathname === EOS_CHAIN_INFO_PATH)
+  return (method === "GET" && pathname === EOS_CHAIN_INFO_PATH)
     || (method === "POST" && pathname === EOS_CHAIN_BLOCK_PATH);
 }
 
@@ -525,100 +518,10 @@ export async function registerEosRandomBlockRoutes(
     }
   });
 
-  app.post(
-    EOS_RANDOM_BLOCK_PATH,
-    { bodyLimit: 2 * 1024 },
-    async (request, reply) => {
-      const parsed = requestSchema.safeParse(request.body);
-      if (!parsed.success) {
-        return reply.code(400).send({
-          error: "invalid_request",
-          message: parsed.error.issues[0]?.message ?? "Invalid request",
-        });
-      }
-
-      try {
-        if (!battleOutcomes) {
-          const selection = await source.select();
-          request.log.info(
-            {
-              event: "eos_random_block.selected",
-              requestId: request.id,
-              userId: parsed.data.userID,
-              provider: selection.provider,
-              selectedBlockNumber: selection.selectedBlock.blockNumber,
-            },
-            "EOS random block selected",
-          );
-          return {
-            ...chainInfoForSelectedBlock(selection, selection.selectedBlock),
-            blockHash: selection.selectedBlock.blockHash,
-            selected: {
-              blockNumber: selection.selectedBlock.blockNumber,
-              blockId: selection.selectedBlock.blockHash,
-              timestamp: selection.selectedBlock.blockTimestamp,
-              provider: selection.provider,
-            },
-          };
-        }
-        const resolved = await selectForBattle(
-          parsed.data.userID,
-          parsed.data.battleID,
-        );
-        const {
-          selection,
-          battleSummary,
-          simulatedOutcomes,
-          selected,
-          selectedBlock,
-        } = resolved;
-        request.log.info(
-          {
-            event: "eos_random_block.selected",
-            requestId: request.id,
-            userId: parsed.data.userID,
-            provider: selection.provider,
-            selectedBlockNumber: selection.selectedBlock.blockNumber,
-          },
-          "EOS random block selected",
-        );
-        const outcomesByBlock = new Map(
-          simulatedOutcomes.map((outcome) => [outcome.blockNumber, outcome]),
-        );
-        const otherPossibleEndings = selection.candidates
-          .filter((candidate) => candidate.blockNumber !== selected.blockNumber)
-          .map((candidate) => {
-            const outcome = outcomesByBlock.get(candidate.blockNumber);
-            if (!outcome) {
-              throw new BattleSimulationError("battle_data_incomplete", 409);
-            }
-            return battleEnding(selection.provider, candidate, outcome);
-          });
-        return {
-          ...chainInfoForSelectedBlock(selection, selectedBlock),
-          ...battleSummary,
-          selectedBlockNumber: selected.blockNumber,
-          otherPossibleEndings,
-          selected: battleEnding(selection.provider, selectedBlock, selected),
-        };
-      } catch (error) {
-        if (error instanceof BattleSimulationError) {
-          request.log.warn(
-            {
-              event: "eos_random_block.battle_simulation_rejected",
-              reason: error.code,
-              userId: parsed.data.userID,
-            },
-            "EOS battle simulation rejected",
-          );
-          return reply.code(error.status).send({ error: error.code });
-        }
-        request.log.warn(
-          { err: error, event: "eos_random_block.providers_failed" },
-          "EOS random block selection failed",
-        );
-        return reply.code(503).send({ error: "eos_unavailable" });
-      }
-    },
-  );
+  // `POST /v1/testing/eos-random-block` used to live here. It was removed: it
+  // answered without a bearer token, yet a userID in its body made it read that
+  // user's in-progress battle out of the database and return every candidate
+  // ending — and its 400 handler echoed the raw Zod issue, handing an anonymous
+  // caller the exact request shape. The same selection is still reachable
+  // through `POST /v1/chain/get_info`, which now requires a token.
 }
