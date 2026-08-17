@@ -77,6 +77,22 @@ export type ProfileAssessment = {
   }>;
 };
 
+/**
+ * The dashboard treats `signup_policy_recommendation` as an automatic
+ * containment command only for an exact operator-managed IP/fingerprint
+ * blocklist match. Every other signup-policy event is review context, even
+ * when another high-risk policy recommends a withdrawal lock through its own
+ * dedicated containment event.
+ */
+export function isIdentifierBlocklistContainmentRecommendation(
+  assessment: Pick<ProfileAssessment, "score" | "policyMatches">,
+): boolean {
+  return assessment.score === 100 && assessment.policyMatches.some(
+    (policy) =>
+      policy === "blocklist.ip" || policy === "blocklist.fingerprint",
+  );
+}
+
 const CATEGORY_CAPS: Record<RiskCategory, number> = {
   identity: 100,
   network: 80,

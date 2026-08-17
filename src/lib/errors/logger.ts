@@ -1,5 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 
+import { safeErrorMessage } from "./safe-error-message";
+
 /**
  * Tiny dependency-free server-side logger.
  *
@@ -24,14 +26,13 @@ import * as Sentry from "@sentry/nextjs";
  * The `area` is a short dot-namespaced tag (`<feature>.<sub>`) — pick
  * the one that makes the most sense to grep for. The `message` is a
  * one-line human description. The `err` (optional) is the raw
- * throwable; we serialize the `.message` and the `digest` (if Next 15
- * attached one) but never the stack — Next already logs the stack at
- * the framework boundary and we don't want to double-print it.
+ * throwable; we serialize only its persistence-safe summary, but never the
+ * stack, framework digest, or enumerable payload.
  *
  * SECURITY: never pass user-typed input as the `message`. If the
- * upstream error includes a SQL row payload, redact it before passing
- * in. The `err` argument is fine because we only surface `.message` +
- * `.name`, not the rest of the object.
+ * upstream error includes a SQL row payload, redact it before passing in. The
+ * `err` argument is sanitized centrally and arbitrary objects are not
+ * stringified.
  */
 
 type LogLevel = "error" | "warn" | "info";
@@ -39,17 +40,22 @@ type LogLevel = "error" | "warn" | "info";
 type ErrorDetails = {
   cause?: unknown;
   code?: unknown;
-  digest?: unknown;
-  message?: unknown;
   name?: unknown;
 };
 
-function boundedLogText(value: string): string {
-  return value
-    .replace(/postgres(?:ql)?:\/\/[^\s]+/gi, "[redacted-database-url]")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 500);
+function safeLogArea(area: string): string {
+  return area
+    .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, "redacted-id")
+    .replace(/\b\d{5,}\b/g, "redacted-id")
+    .replace(/\b[0-9a-f]{16,}\b/gi, "redacted-id")
+    .replace(/[^a-z0-9_.-]+/gi, "-")
+    .slice(0, 120);
+}
+
+function safeErrorName(name: unknown): string {
+  return typeof name === "string" && /^[A-Za-z][A-Za-z_.-]*Error$/.test(name)
+    ? name.slice(0, 80)
+    : "Error";
 }
 
 /**
@@ -60,10 +66,8 @@ function boundedLogText(value: string): string {
 function summarizeError(error: Error): string {
   const seen = new Set<unknown>();
   let current: unknown = error;
-  let name = error.name || "Error";
-  let message = error.message || "Unknown error";
+  let name = safeErrorName(error.name);
   let code: string | null = null;
-  let digest: string | null = null;
 
   for (let depth = 0; depth < 8 && current != null; depth += 1) {
     if (seen.has(current) || typeof current !== "object") break;
@@ -72,10 +76,7 @@ function summarizeError(error: Error): string {
 
     try {
       if (typeof details.name === "string" && details.name) {
-        name = details.name;
-      }
-      if (typeof details.message === "string" && details.message) {
-        message = details.message;
+        name = safeErrorName(details.name);
       }
       if (
         code == null &&
@@ -84,25 +85,19 @@ function summarizeError(error: Error): string {
       ) {
         code = details.code;
       }
-      if (
-        digest == null &&
-        typeof details.digest === "string" &&
-        details.digest
-      ) {
-        digest = boundedLogText(details.digest);
-      }
       current = details.cause;
     } catch {
       break;
     }
   }
 
-  const safeMessage = /failed query:|(?:^|\s)params:/i.test(message)
-    ? "Database query failed"
-    : boundedLogText(message);
+  // Centralize throwable rendering in the persistence-safe sanitizer. Besides
+  // Drizzle SQL/params it removes URLs, credentials and identifier shapes.
+  // Reading `Error#message` directly here previously let nested pg messages
+  // bypass the stronger sanitizer used by Admin DB persistence paths.
+  const safeMessage = safeErrorMessage(error, "Unknown error");
   const codePart = code ? ` code=${code}` : "";
-  const digestPart = digest ? ` digest=${digest}` : "";
-  return `${name}: ${safeMessage}${codePart}${digestPart}`;
+  return `${name}: ${safeMessage}${codePart}`;
 }
 
 /**
@@ -113,25 +108,21 @@ function summarizeError(error: Error): string {
 function emit(level: LogLevel, area: string, message: string, err?: unknown) {
   try {
     const ts = new Date().toISOString();
-    const prefix = `[${level}:${area}]`;
+    const prefix = `[${level}:${safeLogArea(area)}]`;
     let suffix = "";
     if (err !== undefined && err !== null) {
       if (err instanceof Error) {
         suffix = ` — ${summarizeError(err)}`;
       } else if (typeof err === "string") {
-        suffix = ` — ${boundedLogText(err)}`;
+        suffix = ` — ${safeErrorMessage(err, "Unknown error")}`;
       } else {
-        // Last-resort stringify. Never spread arbitrary objects directly
-        // into the log line; one Pg error can include the entire failed
-        // SQL text + params.
-        try {
-          suffix = ` — ${JSON.stringify(err).slice(0, 500)}`;
-        } catch {
-          suffix = " — [unserialisable error]";
-        }
+        // Never stringify arbitrary objects. pg/Drizzle errors and API client
+        // failures may expose SQL, bound values, response payloads or tokens in
+        // enumerable properties even when their message is safe.
+        suffix = " — [non-Error throwable redacted]";
       }
     }
-    const line = `${ts} ${prefix} ${message}${suffix}`;
+    const line = `${ts} ${prefix} ${safeErrorMessage(message, "Log message redacted")}${suffix}`;
     // Route by level so Vercel's log UI shows the right severity icon.
     if (level === "error") console.error(line);
     else if (level === "warn") console.warn(line);
@@ -192,9 +183,10 @@ export function logQueryFailure(
   },
   err?: unknown,
 ) {
+  const safeArea = safeLogArea(area);
   emit(
     "error",
-    area,
+    safeArea,
     `query failed engine=${details.engine} duration_ms=${details.durationMs} kind=${details.kind}`,
     err,
   );
@@ -206,7 +198,7 @@ export function logQueryFailure(
   if (process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN) {
     runTelemetrySafely(() => {
       Sentry.withScope((scope) => {
-        scope.setTag("area", area.slice(0, 120));
+        scope.setTag("area", safeArea);
         scope.setTag("db.engine", details.engine);
         scope.setTag("failure.kind", details.kind);
         scope.setExtra(
@@ -215,13 +207,13 @@ export function logQueryFailure(
         );
         scope.setFingerprint([
           "postgres-query-failure",
-          area.slice(0, 120),
+          safeArea,
           details.kind,
         ]);
         Sentry.captureMessage("PostgreSQL query failed", "error");
         Sentry.metrics.count("database.query_failures", 1, {
           attributes: {
-            area: area.slice(0, 120),
+            area: safeArea,
             engine: details.engine,
             kind: details.kind,
           },

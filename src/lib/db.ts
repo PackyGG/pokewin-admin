@@ -5,6 +5,8 @@ import * as mainSchema from "./db-schema/main/schema";
 import { readDbEnv, type DbEnv } from "./db-env";
 import { acquireMainReadSlot } from "./main-read-limiter";
 import { currentQueryAbortSignal } from "./query-deadline";
+import { logError } from "./errors/logger";
+import { withTransientPostgresReadRetry } from "./postgres-read-retry";
 
 /**
  * Mirror pool size. Kept as a named constant because the read admission
@@ -123,7 +125,7 @@ function createPool(
       : {}),
   });
   pool.on("error", (error) => {
-    console.error(`[db:${env}:${access}] Pool error:`, error.message);
+    logError(`db.${env}.${access}`, "PostgreSQL pool error", error);
   });
   return isReadMirror ? withReadAdmissionControl(pool, env) : pool;
 }
@@ -214,7 +216,15 @@ export function withReadAdmissionControl(
       releasePermit();
     };
     try {
-      const client = await nativeConnect();
+      // A mirror proxy restart or a frozen serverless socket can refuse the
+      // first checkout while succeeding immediately after. Retry only the
+      // confirmed transient connection classes; capacity (53300), SQL and
+      // permission errors still fail on their first attempt.
+      const client = await withTransientPostgresReadRetry(nativeConnect, {
+        context: `db.${env}.read.connect`,
+        delayMs: 100 + Math.floor(Math.random() * 200),
+        signal,
+      });
       const nativeRelease = client.release.bind(client) as (
         ...a: unknown[]
       ) => unknown;

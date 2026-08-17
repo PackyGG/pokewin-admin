@@ -39,8 +39,10 @@ import type { LiveBus } from "./live.js";
 import { processOrderedBatch } from "./ordered-ingestion.js";
 import { drainOutbox } from "./outbox.js";
 import { PollerHealth, type PollerHealthSnapshot } from "./poller-health.js";
+import { nextPollDelayMs } from "./poll-scheduler.js";
 import {
   assessProfile,
+  isIdentifierBlocklistContainmentRecommendation,
   normalizeSignupSignals,
   type ProviderCoverage,
 } from "./profile-risk.js";
@@ -536,19 +538,16 @@ export class MonitorEngine {
     await this.freeBattleRisk.ensureCursor();
     await this.freshBehavior.ensureCursor();
     if (this.stopped) return;
+    const startedAt = Date.now();
     await this.tick();
     if (this.stopped) return;
-    this.timer = setInterval(
-      () => void this.tick(),
-      this.config.POLL_INTERVAL_MS,
-    );
-    this.timer.unref();
+    this.scheduleNextTick(startedAt);
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
     this.whopReconciliationAbort?.abort();
-    if (this.timer) clearInterval(this.timer);
+    if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     const deadline = Date.now() + this.watchdogBudgetMs();
     while (
@@ -583,6 +582,32 @@ export class MonitorEngine {
       this.config.POLL_INTERVAL_MS * TICK_WATCHDOG_INTERVALS,
       MAX_TICK_DRAIN_MS,
     );
+  }
+
+  /**
+   * Keep the poller single-flight without sacrificing throughput. `setInterval`
+   * used to enqueue a callback every second while a normal multi-phase tick
+   * took several seconds; the guard rejected those callbacks and inflated the
+   * skipped counter indefinitely. Scheduling only after completion preserves
+   * the configured start-to-start cadence for fast ticks and immediately
+   * starts the next pass when a tick exceeds that cadence.
+   */
+  private scheduleNextTick(previousStartedAt: number): void {
+    if (this.stopped) return;
+    const elapsedMs = Math.max(0, Date.now() - previousStartedAt);
+    const delayMs = nextPollDelayMs(this.config.POLL_INTERVAL_MS, elapsedMs);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.runScheduledTick();
+    }, delayMs);
+    this.timer.unref();
+  }
+
+  private async runScheduledTick(): Promise<void> {
+    if (this.stopped) return;
+    const startedAt = Date.now();
+    await this.tick();
+    this.scheduleNextTick(startedAt);
   }
 
   /** Redacts configured secrets so raw provider errors never reach the logs. */
@@ -1670,6 +1695,11 @@ export class MonitorEngine {
               assessmentVersion: assessment.version,
               actions: assessment.recommendedActions,
               policyMatches: assessment.policyMatches,
+              // The dashboard reserves this event kind for the narrow
+              // identifier-blocklist lock path. Ordinary recommendations are
+              // review context and must not enter containment validation.
+              reviewOnly:
+                !isIdentifierBlocklistContainmentRecommendation(assessment),
               automaticKyc: false,
               automaticBan:
                 assessment.recommendedActions.includes("ban"),

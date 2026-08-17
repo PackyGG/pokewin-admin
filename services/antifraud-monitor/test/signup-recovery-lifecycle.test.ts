@@ -26,6 +26,7 @@ type RecoveryState = {
   caseUserId: string | null;
   sessionUserId: string | null;
   cursorUserId: string | null;
+  recommendationPayload: Record<string, unknown> | null;
 };
 
 const signup: Signup = {
@@ -131,6 +132,15 @@ function recoveryDatabase(state: RecoveryState): Databases {
     if (sql.includes("INSERT INTO signup_assessments")) {
       state.assessmentUserId = String(values?.[0]);
     }
+    if (
+      sql.includes("'signup_policy_recommendation'")
+      && typeof values?.[5] === "string"
+    ) {
+      state.recommendationPayload = JSON.parse(values[5]) as Record<
+        string,
+        unknown
+      >;
+    }
     if (sql.includes("INSERT INTO cases(")) {
       state.caseUserId = String(values?.[0]);
       return { rows: [{ id: "case-recovered" }], rowCount: 1 };
@@ -198,6 +208,7 @@ test("a failed signup is durably scheduled, assessed on retry, and clears recove
     caseUserId: null,
     sessionUserId: null,
     cursorUserId: null,
+    recommendationPayload: null,
   };
   const db = recoveryDatabase(state);
   const config = {
@@ -285,6 +296,11 @@ test("a failed signup is durably scheduled, assessed on retry, and clears recove
   assert.equal(state.caseUserId, signup.id);
   assert.equal(state.sessionUserId, signup.id);
   assert.equal(state.failure, null, "success must delete the durable queue row");
+  assert.equal(
+    state.recommendationPayload?.reviewOnly,
+    true,
+    "ordinary signup recommendations must bypass containment validation",
+  );
   assert.ok(liveEvents.includes("signup.assessed"));
   assert.ok(liveEvents.includes("monitor.started"));
 

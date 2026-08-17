@@ -1,6 +1,7 @@
 import "server-only";
 
 import { backendApi, BackendApiError } from "@/lib/backend-api";
+import { logError, logInfo } from "@/lib/errors/logger";
 
 /**
  * Notify the game backend to invalidate its cached country-restriction data
@@ -26,17 +27,22 @@ import { backendApi, BackendApiError } from "@/lib/backend-api";
 export async function invalidateCountryRestrictionsCache(): Promise<boolean> {
   try {
     await backendApi.post("/admin/invalidate-country-restrictions-cache");
-    console.log("[invalidateCountryRestrictionsCache] backend ok");
+    logInfo("country-restrictions.invalidate", "backend cache invalidated");
     return true;
   } catch (e) {
     if (e instanceof BackendApiError) {
-      console.error(
-        `[invalidateCountryRestrictionsCache] backend error status=${e.status} code=${e.code ?? "none"} payload=${JSON.stringify(e.payload)}`,
+      logError(
+        "country-restrictions.invalidate",
+        `backend cache invalidation failed status=${e.status}`,
+        e,
       );
       return false;
     }
-    const message = e instanceof Error ? e.message : "Unknown error";
-    console.error(`[invalidateCountryRestrictionsCache] failed: ${message}`, e);
+    logError(
+      "country-restrictions.invalidate",
+      "backend cache invalidation failed",
+      e,
+    );
     return false;
   }
 }

@@ -1,7 +1,10 @@
+import { logWarn } from "@/lib/errors/logger";
+
 type TransientReadRetryOptions = {
   context: string;
   maxAttempts?: number;
   delayMs?: number;
+  signal?: AbortSignal;
 };
 
 const TRANSIENT_POSTGRES_READ_ERROR =
@@ -63,22 +66,33 @@ export async function withTransientPostgresReadRetry<T>(
   const delayMs = Math.max(0, Math.trunc(options.delayMs ?? 150));
 
   for (let attempt = 1; ; attempt += 1) {
+    options.signal?.throwIfAborted();
     try {
       return await operation();
     } catch (error) {
-      if (
-        attempt >= maxAttempts ||
-        !isTransientPostgresReadError(error)
-      ) {
+      if (attempt >= maxAttempts || !isTransientPostgresReadError(error)) {
         throw error;
       }
 
-      console.warn(
-        `[${options.context}] transient PostgreSQL read connection failure; retrying`,
-        { attempt, maxAttempts },
+      logWarn(
+        options.context,
+        `transient PostgreSQL read connection failure; retrying attempt=${attempt} max_attempts=${maxAttempts}`,
       );
       if (delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        await new Promise<void>((resolve, reject) => {
+          const finish = () => {
+            options.signal?.removeEventListener("abort", onAbort);
+            resolve();
+          };
+          const timer = setTimeout(finish, delayMs);
+          const onAbort = () => {
+            clearTimeout(timer);
+            options.signal?.removeEventListener("abort", onAbort);
+            reject(options.signal?.reason ?? new Error("Read retry aborted"));
+          };
+          options.signal?.addEventListener("abort", onAbort, { once: true });
+          if (options.signal?.aborted) onAbort();
+        });
       }
     }
   }

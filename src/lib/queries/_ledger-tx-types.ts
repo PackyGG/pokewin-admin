@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { ledger_transaction_type } from "@/lib/db-schema/main/schema";
 import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { logWarn } from "@/lib/errors/logger";
 
 /** Ledger enum values — keep queries in sync with the database schema. */
 export type LedgerTransactionType =
@@ -10,8 +11,12 @@ export type LedgerTransactionType =
 const LEDGER_TX_TYPES = new Set<string>(ledger_transaction_type.enumValues);
 
 /** Drop strings that are not in the checked-in enum snapshot after schema drift. */
-export function filterLedgerTxTypes(types: readonly string[]): LedgerTransactionType[] {
-  return types.filter((t): t is LedgerTransactionType => LEDGER_TX_TYPES.has(t));
+export function filterLedgerTxTypes(
+  types: readonly string[],
+): LedgerTransactionType[] {
+  return types.filter((t): t is LedgerTransactionType =>
+    LEDGER_TX_TYPES.has(t),
+  );
 }
 
 /**
@@ -70,9 +75,10 @@ async function getLiveLedgerTxTypes(): Promise<Set<string>> {
     if (labels.length === 0) return LEDGER_TX_TYPES;
     return new Set(labels);
   } catch (err) {
-    console.error(
-      "[_ledger-tx-types] live enum probe failed, falling back to generated set:",
-      err instanceof Error ? err.message : err,
+    logWarn(
+      "ledger-tx-types.enum-probe",
+      "live enum probe failed; using generated set",
+      err,
     );
     return LEDGER_TX_TYPES;
   }

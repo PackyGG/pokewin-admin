@@ -66,7 +66,9 @@ test("retries one transient read and returns the successful result", async () =>
       attempts += 1;
       if (attempts === 1) {
         throw new Error("Failed query", {
-          cause: Object.assign(new Error("socket reset"), { code: "ECONNRESET" }),
+          cause: Object.assign(new Error("socket reset"), {
+            code: "ECONNRESET",
+          }),
         });
       }
       return 33;
@@ -125,4 +127,24 @@ test("stops after the bounded transient retry", async () => {
     /Connection terminated unexpectedly/,
   );
   assert.equal(attempts, 2);
+});
+
+test("an aborted deadline cancels retry backoff before another checkout", async () => {
+  const controller = new AbortController();
+  let attempts = 0;
+  const pending = withTransientPostgresReadRetry(
+    async () => {
+      attempts += 1;
+      throw Object.assign(new Error("socket reset"), { code: "ECONNRESET" });
+    },
+    {
+      context: "test.abort",
+      delayMs: 10_000,
+      signal: controller.signal,
+    },
+  );
+  controller.abort(new Error("query deadline reached"));
+
+  await assert.rejects(pending, /query deadline reached/);
+  assert.equal(attempts, 1);
 });

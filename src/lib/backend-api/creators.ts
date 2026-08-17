@@ -1,6 +1,12 @@
 import "server-only";
 
+import { logWarn } from "@/lib/errors/logger";
+
 import { backendApi } from "./client";
+import {
+  parsePaginatedSuccess,
+  type PaginatedResponse,
+} from "./paginated-response";
 import {
   getCreatorApiKeyStatusFromPostgres,
   getCreatorDealFromPostgres,
@@ -79,12 +85,7 @@ export type UpdateDealInput = {
   }>;
 };
 
-type Paginated<T> = {
-  data: T[];
-  total: number;
-  offset: number;
-  limit: number;
-};
+type Paginated<T> = PaginatedResponse<T>;
 
 type Success<T> = { success: boolean; data: T };
 
@@ -203,10 +204,16 @@ export const creatorsApi = {
           `/admin/creators/${encodeURIComponent(userId)}/sessions`,
           { query },
         )
-        .then((r) => r.data);
+        .then((payload) =>
+          parsePaginatedSuccess<CreatorSessionResponse>(
+            payload,
+            "Creator session list",
+          ),
+        );
     } catch (error) {
-      console.warn(
-        `[creators-api] session list backend read failed for ${userId}; using PostgreSQL`,
+      logWarn(
+        "creators-api.sessions",
+        "backend session read failed; using PostgreSQL fallback",
         error,
       );
       return listCreatorSessionsFromPostgres(userId, query);

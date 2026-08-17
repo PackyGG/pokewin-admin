@@ -1,6 +1,7 @@
 import "server-only";
 
 import { backendApi, BackendApiError } from "@/lib/backend-api";
+import { logError, logInfo } from "@/lib/errors/logger";
 
 /**
  * Notify the game backend to reload its cached site_config.
@@ -16,15 +17,16 @@ import { backendApi, BackendApiError } from "@/lib/backend-api";
 export async function refreshSiteConfig(): Promise<void> {
   try {
     await backendApi.post("/admin/refresh-site-config");
-    console.log("[refreshSiteConfig] backend ok");
+    logInfo("site-config.refresh", "backend cache refreshed");
   } catch (e) {
     if (e instanceof BackendApiError) {
-      console.error(
-        `[refreshSiteConfig] backend error status=${e.status} code=${e.code ?? "none"} payload=${JSON.stringify(e.payload)}`,
+      logError(
+        "site-config.refresh",
+        `backend cache refresh failed status=${e.status}`,
+        e,
       );
       return;
     }
-    const message = e instanceof Error ? e.message : "Unknown error";
-    console.error(`[refreshSiteConfig] failed: ${message}`, e);
+    logError("site-config.refresh", "backend cache refresh failed", e);
   }
 }

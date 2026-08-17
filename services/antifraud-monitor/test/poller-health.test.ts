@@ -2,6 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { PollerHealth } from "../src/poller-health.js";
+import { nextPollDelayMs } from "../src/poll-scheduler.js";
+
+test("poll cadence waits only when the previous tick finished early", () => {
+  assert.equal(nextPollDelayMs(1_000, 250), 750);
+  assert.equal(nextPollDelayMs(1_000, 1_000), 0);
+  assert.equal(nextPollDelayMs(1_000, 5_800), 0);
+  assert.equal(nextPollDelayMs(1_000, -10), 1_000);
+});
 
 test("poller health reports success, backlog, and recovery", () => {
   const health = new PollerHealth();

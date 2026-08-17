@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   assessProfile,
   detectSessionHopping,
+  isIdentifierBlocklistContainmentRecommendation,
   networkClusterKeys,
   normalizeSignupSignals,
   traceRestrictedFunds,
@@ -376,6 +377,25 @@ test("evidence policies keep the catalog weight instead of pinning to 100", () =
   assert.equal(blocked.score, 100);
   assert.ok(blocked.recommendedActions.includes("lock_withdrawals"));
   assert.ok(blocked.recommendedActions.includes("notify_priority"));
+  assert.equal(isIdentifierBlocklistContainmentRecommendation(blocked), true);
+
+  // A high score can recommend the same action, but only an exact active
+  // identifier blocklist match may use the recommendation event as a lock
+  // command. Its separate behavioral containment event remains unaffected.
+  assert.equal(
+    isIdentifierBlocklistContainmentRecommendation({
+      score: 100,
+      policyMatches: ["fingerprint.automation"],
+    }),
+    false,
+  );
+  assert.equal(
+    isIdentifierBlocklistContainmentRecommendation({
+      score: 99,
+      policyMatches: ["blocklist.fingerprint"],
+    }),
+    false,
+  );
 });
 
 test("risky location keeps its points when a real VPN signal is present", () => {

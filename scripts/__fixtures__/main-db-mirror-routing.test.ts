@@ -123,6 +123,10 @@ test("serverless mirror pools preserve shared role connection headroom", () => {
     fs.readFileSync(path.join(repoRoot, "src/lib/drizzle-query.ts"), "utf8"),
     /withTransientPostgresReadRetry/,
   );
+  assert.match(
+    source,
+    /withTransientPostgresReadRetry\(nativeConnect,[\s\S]*?signal,/,
+  );
 });
 
 test("live transaction lists use revision-aware short cache namespaces", () => {

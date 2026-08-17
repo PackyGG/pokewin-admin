@@ -58,6 +58,16 @@ const REDACTIONS: readonly (readonly [RegExp, string])[] = [
   [/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[redacted-ip]"],
   // IPv6 needs 4+ hextet groups so a clock time (12:34:56) is left alone.
   [/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b/gi, "[redacted-ip]"],
+  // Numeric/snowflake identifiers do not have a globally unique shape, so
+  // redact them only when the surrounding label makes their meaning clear.
+  [
+    /\b(?:user|account|customer|creator|subject|target[_ -]?user|discord)[_ -]?(?:id|identifier)\s*[=:]\s*["']?[A-Za-z0-9_-]{3,}["']?/gi,
+    "[redacted-id]",
+  ],
+  [
+    /\b(?:failed for|(?:user|account|customer|creator|subject|pack|card|set)\s+)["']?\d{4,}["']?/gi,
+    "[redacted-id]",
+  ],
 ];
 
 /** SQLSTATEs worth naming exactly, because the triage differs per code. */
@@ -97,7 +107,7 @@ const SQLSTATE_CLASS_CATEGORY: Record<string, string | undefined> = {
   "55": "object not in prerequisite state",
   "57": "operator intervention",
   "58": "system error",
-  "P0": "PL/pgSQL error",
+  P0: "PL/pgSQL error",
   XX: "internal error",
 };
 

@@ -14,6 +14,7 @@ import { toNumber } from "@/lib/utils/decimal";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 import { checkApiSubjectRateLimit } from "@/lib/api-auth/rate-limit";
 import { computeAllEntitlements } from "@/lib/creator-vip/compute";
+import { logError } from "@/lib/errors/logger";
 
 /**
  * POST /api/v1/discord/rewards — what can this Discord-linked player claim?
@@ -285,7 +286,7 @@ export const POST = withApiKey(
     try {
       offers = await computeAllEntitlements(userId);
     } catch (err) {
-      console.error("[api/v1] creator-reward offers failed:", err);
+      logError("api.v1.discord.rewards", "creator-reward offers failed", err);
     }
 
     for (const e of offers) {

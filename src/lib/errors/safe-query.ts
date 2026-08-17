@@ -1,5 +1,6 @@
 import { withRegisteredQueryAbortSignal } from "../query-deadline-bridge";
 import { logQueryFailure } from "./logger";
+import { safeErrorMessage } from "./safe-error-message";
 
 /**
  * safeQuery — run a server-side query and degrade gracefully on
@@ -36,14 +37,10 @@ import { logQueryFailure } from "./logger";
  * same tag the corresponding TileErrorFallback would use so the log
  * line and the UI tile correspond.
  *
- * SECURITY: the `error` string returned in the result IS the raw
- * `err.message` from the query. Server pages that render this string
- * into the DOM must NOT echo it verbatim — only render the
- * `TileErrorFallback` (which shows a generic message) or a short
- * caller-controlled label. Never spread `error` into JSX content
- * without sanitization. (Server Components can't dangerouslySetInnerHTML
- * the string back to the client anyway, but copy-pasting the value into
- * an attribute or a JSON payload is the leak vector.)
+ * SECURITY: the `error` string returned in the result is sanitized through
+ * `safeErrorMessage`; Drizzle SQL, parameters, URLs and identifier shapes do
+ * not cross this boundary. Callers should still prefer generic UI copy rather
+ * than treating an operational diagnostic as end-user content.
  *
  * TIMEOUT: a plain `try/catch` only catches a query that THROWS — it does
  * NOT catch one that is merely SLOW. A genuinely slow query (e.g. an
@@ -105,13 +102,7 @@ export function isQueryTimeoutError(err: unknown): err is QueryTimeoutError {
 }
 
 function getSafeErrorMessage(err: unknown): string {
-  try {
-    return err instanceof Error && typeof err.message === "string"
-      ? err.message
-      : "Unknown query error";
-  } catch {
-    return "Unknown query error";
-  }
+  return safeErrorMessage(err, "Unknown query error");
 }
 
 /**

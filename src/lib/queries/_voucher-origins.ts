@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { voucher_origin } from "@/lib/db-schema/main/schema";
 import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { logWarn } from "@/lib/errors/logger";
 
 /** `voucher_origin` members — keep in sync with the database schema. */
 export type VoucherOrigin = (typeof voucher_origin.enumValues)[number];
@@ -49,9 +50,10 @@ async function getLiveVoucherOrigins(): Promise<Set<string>> {
     if (labels.length === 0) return VOUCHER_ORIGINS;
     return new Set(labels);
   } catch (err) {
-    console.error(
-      "[_voucher-origins] live enum probe failed, falling back to generated set:",
-      err instanceof Error ? err.message : err,
+    logWarn(
+      "voucher-origins.enum-probe",
+      "live enum probe failed; using generated set",
+      err,
     );
     return VOUCHER_ORIGINS;
   }

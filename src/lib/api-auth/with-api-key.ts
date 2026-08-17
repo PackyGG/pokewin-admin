@@ -1,5 +1,7 @@
 import "server-only";
 
+import { logError } from "@/lib/errors/logger";
+
 import { authenticateApiRequest, type ApiPrincipal } from "./authenticate";
 import type { ApiRateLimitResult } from "./rate-limit";
 import type { ApiScope } from "./scopes";
@@ -121,12 +123,20 @@ export function withApiKey<P = Record<string, never>>(
     try {
       const auth = await authenticateApiRequest(request, options.scopes);
       if (!auth.ok) {
-        return errorResponse(auth.status, auth.code, auth.message, auth.rateLimit);
+        return errorResponse(
+          auth.status,
+          auth.code,
+          auth.message,
+          auth.rateLimit,
+        );
       }
       rate = auth.rateLimit;
 
       const params = await args.params;
-      const result = await handler(request, { principal: auth.principal, params });
+      const result = await handler(request, {
+        principal: auth.principal,
+        params,
+      });
 
       // A handler may return a Response directly (streaming, custom status);
       // otherwise we serialise whatever it returned as JSON 200.
@@ -148,7 +158,7 @@ export function withApiKey<P = Record<string, never>>(
       });
     } catch (err) {
       // Server-side only. The client gets nothing but an opaque code.
-      console.error("[api/v1] unhandled handler error:", err);
+      logError("api.v1", "unhandled handler error", err);
       return errorResponse(
         500,
         "internal_error",
