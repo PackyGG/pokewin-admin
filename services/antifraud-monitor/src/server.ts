@@ -205,7 +205,10 @@ const app = Fastify({
   },
 });
 const db = createDatabases(config);
-const battleTestConfig = new PgBattleTestConfigStore(db.antifraud);
+const battleTestConfig = new PgBattleTestConfigStore(
+  db.antifraud,
+  config.BATTLE_TEST_ENVIRONMENT,
+);
 const live = new LiveBus(config.REDIS_URL, app.log, {
   // Durable publish fallback: frames Redis rejects are parked in the
   // Antifraud-DB live_outbox and republished by the bus drain loop.

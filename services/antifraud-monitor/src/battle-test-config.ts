@@ -1,5 +1,7 @@
 import type pg from "pg";
 
+export type BattleTestEnvironment = "dev" | "prod";
+
 export type BattleTestOutcomeTarget = "loss" | "win" | "any";
 export type BattleTestSelectionStrategy =
   | "random"
@@ -127,7 +129,16 @@ function mapUserRow(row: UserConfigRow): BattleTestUserConfig {
 export class PgBattleTestConfigStore implements BattleTestConfigSource {
   private cached: { value: BattleTestConfig; expiresAt: number } | null = null;
 
-  constructor(private readonly pool: pg.Pool) {}
+  /**
+   * Every user-sequence query is scoped to `environment`. It comes from the
+   * deployment's own config rather than the request, so a caller can never
+   * reach into another environment's marks — and two deployments sharing one
+   * antifraud database keep separate rows for the same userID.
+   */
+  constructor(
+    private readonly pool: pg.Pool,
+    private readonly environment: BattleTestEnvironment,
+  ) {}
 
   async get(): Promise<BattleTestConfig> {
     if (this.cached && this.cached.expiresAt > Date.now()) {
@@ -166,13 +177,17 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
   }
 
   async listUsers(): Promise<BattleTestUserConfig[]> {
-    const result = await this.pool.query<UserConfigRow>(`
-      SELECT user_id::text, username, rules, current_rule_index,
-             remaining_in_rule, persistent, enabled, updated_at, updated_by
-      FROM battle_test_user_sequences
-      ORDER BY updated_at DESC
-      LIMIT 200
-    `);
+    const result = await this.pool.query<UserConfigRow>(
+      `
+        SELECT user_id::text, username, rules, current_rule_index,
+               remaining_in_rule, persistent, enabled, updated_at, updated_by
+        FROM battle_test_user_sequences
+        WHERE environment = $1
+        ORDER BY updated_at DESC
+        LIMIT 200
+      `,
+      [this.environment],
+    );
     return result.rows.map(mapUserRow);
   }
 
@@ -191,10 +206,10 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
     const result = await this.pool.query<UserConfigRow>(
       `
         INSERT INTO battle_test_user_sequences (
-          user_id, username, rules, current_rule_index, remaining_in_rule,
-          persistent, enabled, updated_at, updated_by
-        ) VALUES ($1, $2, $3::jsonb, 0, $4, $5, $6, now(), $7)
-        ON CONFLICT (user_id) DO UPDATE SET
+          environment, user_id, username, rules, current_rule_index,
+          remaining_in_rule, persistent, enabled, updated_at, updated_by
+        ) VALUES ($8, $1, $2, $3::jsonb, 0, $4, $5, $6, now(), $7)
+        ON CONFLICT (environment, user_id) DO UPDATE SET
           username = EXCLUDED.username,
           rules = EXCLUDED.rules,
           current_rule_index = 0,
@@ -214,6 +229,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
         persistent,
         enabled,
         actor,
+        this.environment,
       ],
     );
     return mapUserRow(result.rows[0]!);
@@ -221,8 +237,8 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
 
   async deleteUser(userId: string): Promise<void> {
     await this.pool.query(
-      "DELETE FROM battle_test_user_sequences WHERE user_id = $1",
-      [userId],
+      "DELETE FROM battle_test_user_sequences WHERE environment = $1 AND user_id = $2",
+      [this.environment, userId],
     );
   }
 
@@ -237,10 +253,10 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
           SELECT user_id::text, username, rules, current_rule_index,
                  remaining_in_rule, persistent, enabled, updated_at, updated_by
           FROM battle_test_user_sequences
-          WHERE user_id = $1
+          WHERE environment = $1 AND user_id = $2
           FOR UPDATE
         `,
-        [userId],
+        [this.environment, userId],
       );
       const row = result.rows[0];
       if (!row || !row.enabled) {
@@ -253,8 +269,8 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
         await client.query(
           `UPDATE battle_test_user_sequences
            SET enabled = false, remaining_in_rule = 0
-           WHERE user_id = $1`,
-          [userId],
+           WHERE environment = $1 AND user_id = $2`,
+          [this.environment, userId],
         );
         await client.query("COMMIT");
         return null;
@@ -276,12 +292,13 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
       await client.query(
         `
           UPDATE battle_test_user_sequences
-          SET current_rule_index = $2,
-              remaining_in_rule = $3,
-              enabled = $4
-          WHERE user_id = $1
+          SET current_rule_index = $3,
+              remaining_in_rule = $4,
+              enabled = $5
+          WHERE environment = $1 AND user_id = $2
         `,
         [
+          this.environment,
           userId,
           nextIndex,
           isRuleComplete ? (nextRule?.count ?? 0) : remaining - 1,

@@ -185,6 +185,7 @@ const runtimeConfig: Config = {
   PORT: 4100,
   SOURCE_DATABASE_URL: "postgresql://source-user:source-secret@source/db",
   SOURCE_DATABASE_SSL: "disable",
+  BATTLE_TEST_ENVIRONMENT: "dev",
   FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_SSL: "disable",
   ANTIFRAUD_DATABASE_URL: "postgresql://fraud-user:fraud-secret@fraud/db",
   ANTIFRAUD_DATABASE_SSL: "disable",
