@@ -1,6 +1,6 @@
 import { randomInt } from "node:crypto";
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import {
@@ -402,7 +402,47 @@ export async function registerEosRandomBlockRoutes(
       simulatedOutcomes,
       selected,
       selectedBlock,
+      instruction,
+      userOnlyLoses,
     };
+  };
+
+  /**
+   * One line per steering decision: which window was fetched, which block came
+   * back, and what made that choice. Without it a settled battle leaves no
+   * trace of whether its block was picked at random or steered — and the
+   * consumed rule is gone from the sequence by then.
+   */
+  const logSelection = (
+    request: FastifyRequest,
+    userID: string,
+    battleID: string | undefined,
+    resolved: Awaited<ReturnType<typeof selectForBattle>>,
+  ): void => {
+    request.log.info(
+      {
+        event: "eos_random_block.selected",
+        requestId: request.id,
+        userId: userID,
+        battleId: battleID ?? resolved.battleSummary.battleId,
+        provider: resolved.selection.provider,
+        candidateBlockNumbers: resolved.selection.candidates.map(
+          (candidate) => candidate.blockNumber,
+        ),
+        randomBlockNumber: resolved.selection.selectedBlock.blockNumber,
+        selectedBlockNumber: resolved.selectedBlock.blockNumber,
+        steeredBy: resolved.instruction
+          ? "user_rule"
+          : resolved.userOnlyLoses
+            ? "global_only_loses"
+            : "random",
+        ruleTarget: resolved.instruction?.target ?? null,
+        ruleStrategy: resolved.instruction?.strategy ?? null,
+        creatorWonBattle: resolved.selected.creatorWonBattle,
+        creatorProfitLoss: resolved.selected.creatorProfitLoss,
+      },
+      "EOS block selected for battle",
+    );
   };
 
   if (testConfig) {
@@ -414,12 +454,20 @@ export async function registerEosRandomBlockRoutes(
       if (!parsed.success) {
         return reply.code(400).send({ error: "invalid_request" });
       }
-      return {
-        data: await testConfig.set(
-          parsed.data.userOnlyLoses,
-          parsed.data.actor,
-        ),
-      };
+      const saved = await testConfig.set(
+        parsed.data.userOnlyLoses,
+        parsed.data.actor,
+      );
+      request.log.info(
+        {
+          event: "eos_random_block.global_config_updated",
+          requestId: request.id,
+          actor: parsed.data.actor,
+          userOnlyLoses: saved.userOnlyLoses,
+        },
+        "EOS battle test global config updated",
+      );
+      return { data: saved };
     });
     if (testConfig.listUsers && testConfig.setUser && testConfig.deleteUser) {
       app.get(EOS_RANDOM_BLOCK_USER_CONFIG_PATH, async () => ({
@@ -435,16 +483,28 @@ export async function registerEosRandomBlockRoutes(
           if (!userId.success || !parsed.success) {
             return reply.code(400).send({ error: "invalid_request" });
           }
-          return {
-            data: await testConfig.setUser!(
-              userId.data,
-              parsed.data.username,
-              parsed.data.rules,
-              parsed.data.persistent,
-              parsed.data.enabled,
-              parsed.data.actor,
-            ),
-          };
+          const saved = await testConfig.setUser!(
+            userId.data,
+            parsed.data.username,
+            parsed.data.rules,
+            parsed.data.persistent,
+            parsed.data.enabled,
+            parsed.data.actor,
+          );
+          request.log.info(
+            {
+              event: "eos_random_block.user_sequence_updated",
+              requestId: request.id,
+              actor: parsed.data.actor,
+              userId: userId.data,
+              username: parsed.data.username,
+              enabled: parsed.data.enabled,
+              persistent: parsed.data.persistent,
+              rules: parsed.data.rules,
+            },
+            "EOS battle test user sequence updated",
+          );
+          return { data: saved };
         },
       );
       app.delete(
@@ -457,6 +517,14 @@ export async function registerEosRandomBlockRoutes(
             return reply.code(400).send({ error: "invalid_request" });
           }
           await testConfig.deleteUser!(userId.data);
+          request.log.info(
+            {
+              event: "eos_random_block.user_sequence_deleted",
+              requestId: request.id,
+              userId: userId.data,
+            },
+            "EOS battle test user sequence deleted",
+          );
           return reply.code(204).send();
         },
       );
@@ -491,14 +559,29 @@ export async function registerEosRandomBlockRoutes(
         parsed.data.userID,
         parsed.data.battleID,
       );
+      logSelection(request, parsed.data.userID, parsed.data.battleID, resolved);
       return chainInfoForSelectedBlock(
         resolved.selection,
         resolved.selectedBlock,
       );
     } catch (error) {
       if (error instanceof BattleSimulationError) {
+        request.log.warn(
+          {
+            event: "eos_random_block.battle_simulation_rejected",
+            requestId: request.id,
+            reason: error.code,
+            userId: parsed.data.userID,
+            battleId: parsed.data.battleID ?? null,
+          },
+          "EOS battle simulation rejected",
+        );
         return reply.code(error.status).send({ error: error.code });
       }
+      request.log.warn(
+        { err: error, event: "eos_random_block.providers_failed" },
+        "EOS block selection failed",
+      );
       return reply.code(503).send({ error: "eos_unavailable" });
     }
   });
