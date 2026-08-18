@@ -6,8 +6,19 @@
 -- Existing rows backfill to 'dev': config.ts refuses to start when the battle
 -- test source equals SOURCE_DATABASE_URL, so no mark written so far can ever
 -- have belonged to a production database.
+--
+-- Every statement converges from a partially-applied schema. The runner wraps
+-- each migration in a transaction, so a failure here rolls back and the file is
+-- retried on the next boot — but an object created OUTSIDE that transaction (a
+-- hand-applied ALTER) survives, and a bare ADD CONSTRAINT would then fail with
+-- 42710 on every retry and hold the service in a crash loop. Hence
+-- drop-then-add for both named constraints: the DROP matches by name whatever
+-- is there, the ADD leaves exactly the definition this file specifies.
 ALTER TABLE battle_test_user_sequences
     ADD COLUMN IF NOT EXISTS environment text NOT NULL DEFAULT 'dev';
+
+ALTER TABLE battle_test_user_sequences
+    DROP CONSTRAINT IF EXISTS battle_test_user_sequences_environment_valid;
 
 ALTER TABLE battle_test_user_sequences
     ADD CONSTRAINT battle_test_user_sequences_environment_valid
