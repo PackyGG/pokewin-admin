@@ -194,6 +194,15 @@ export type RewardItem = {
   createdAt: string;
 };
 
+export type DailyRewardUnlockConfig = {
+  id: string;
+  slug: string;
+  name: string;
+  levelRequired: number;
+  /** Fraction (0.01 = 1%). null means the backend's 1% default. */
+  dailyUnlockPercentage: number | null;
+};
+
 type RewardRow = {
   id: string;
   slug: string;
@@ -284,4 +293,41 @@ export async function getLevelUpRewards(params: {
     perPage,
     totalPages: Math.ceil(total / perPage),
   };
+}
+
+/**
+ * Read-only configuration summary for Analytics → Rewards → Daily Packs.
+ *
+ * This deliberately includes the level-0 "Level 1" daily reward, which the
+ * paginated Level Up management query excludes with `level_required > 0`.
+ */
+export async function getDailyRewardUnlockConfigs(): Promise<
+  DailyRewardUnlockConfig[]
+> {
+  const rows = await queryMainRows<
+    Array<{
+      id: string;
+      slug: string;
+      name: string;
+      level_required: number;
+      daily_unlock_percentage: string | null;
+    }>
+  >(
+    `SELECT id, slug, name, level_required,
+            daily_unlock_percentage::text AS daily_unlock_percentage
+     FROM rewards
+     WHERE type::text = 'daily'
+     ORDER BY level_required ASC, slug ASC`,
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    levelRequired: row.level_required,
+    dailyUnlockPercentage:
+      row.daily_unlock_percentage == null
+        ? null
+        : toNumber(row.daily_unlock_percentage),
+  }));
 }

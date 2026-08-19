@@ -32,6 +32,7 @@ import {
 import { ProgramCard } from "./program-card";
 import { ProgramTrendChart, type ProgramTrendPoint } from "./program-trend-chart";
 import { MONEY_OUT } from "./program-meta";
+import { DailyPackUnlockConfig } from "./daily-pack-unlock-config";
 
 /**
  * Rewards → Overview. Answers three questions in order:
@@ -99,6 +100,10 @@ export async function RewardsOverviewView({
     <div className="space-y-6">
       <FadeIn>
         <KpiStrip spend={spend} summary={summary} period={period} />
+      </FadeIn>
+
+      <FadeIn>
+        <DailyPackUnlockConfig />
       </FadeIn>
 
       <FadeIn>

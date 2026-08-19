@@ -29,6 +29,11 @@ const CROSS_SUMMARY =
   "src/lib/queries/insights-rewards/cross-category-summary.ts";
 const COST_BREAKDOWN = "src/lib/queries/insights-analytics/cost-breakdown.ts";
 const PROMO_TAB = "src/app/(admin)/rewards/promo-codes-tab.tsx";
+const REWARDS_QUERY = "src/lib/queries/rewards.ts";
+const DAILY_UNLOCK_CONFIG =
+  "src/app/(admin)/analytics/rewards/daily-pack-unlock-config.tsx";
+const REWARDS_PROGRAMS =
+  "src/app/(admin)/analytics/rewards/programs-view.tsx";
 
 /** How many statements a module hands to the mirror per compute call. */
 function queryCount(source: string): number {
@@ -153,5 +158,37 @@ test("the /rewards shell renders every tab chip while the active tab streams", (
     loading,
     new RegExp(`TabBarSkeleton count={${tabCount}}`.replace(/[{}]/g, "\\$&")),
     `loading.tsx must render ${tabCount} tab chips to match page.tsx`,
+  );
+});
+
+test("daily-pack analytics shows the complete unlock configuration independently of spend", () => {
+  const query = read(REWARDS_QUERY);
+  const config = read(DAILY_UNLOCK_CONFIG);
+  const programs = read(REWARDS_PROGRAMS);
+
+  assert.match(
+    query,
+    /FROM rewards\s+WHERE type::text = 'daily'\s+ORDER BY level_required ASC, slug ASC/,
+    "the configuration read must include every daily reward, including level 0",
+  );
+  assert.doesNotMatch(
+    query.slice(query.indexOf("getDailyRewardUnlockConfigs")),
+    /level_required > 0/,
+    "the level-0 daily pack is part of the unlock configuration",
+  );
+  assert.match(
+    config,
+    /config\.dailyUnlockPercentage \?\? 0\.01/,
+    "null must render the backend's canonical 1% default",
+  );
+  assert.match(
+    config,
+    /"analytics\.rewards\.dailyPackUnlockConfig",\s*\n\s*REWARD_QUERY_TIMEOUT_MS/,
+    "the mirror read must stay behind a bounded safe-query timeout",
+  );
+  assert.match(
+    programs,
+    /<DailyPackUnlockConfig \/>\s*\n\s*\{giveaway && giveaway\.packs\.length > 0/,
+    "configuration must remain visible when the optional spend breakdown is empty or unavailable",
   );
 });

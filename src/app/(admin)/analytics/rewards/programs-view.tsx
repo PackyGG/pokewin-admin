@@ -30,6 +30,7 @@ import { DailyPackBreakdownRow } from "../../insights/rewards/_components/daily-
 import { fromInsightsPeriod } from "../types";
 import { ProgramTrendChart } from "./program-trend-chart";
 import { PROGRAM_META, MONEY_OUT } from "./program-meta";
+import { DailyPackUnlockConfig } from "./daily-pack-unlock-config";
 
 /**
  * Rewards → Programs. One program at a time, in depth.
@@ -269,31 +270,37 @@ async function DailyPacksDetail({
     "analytics.rewards.dailyPacks",
     REWARD_QUERY_TIMEOUT_MS,
   );
-  if (error || !data || data.packs.length === 0) return null;
+  const giveaway = error ? null : data;
+  const total = giveaway?.giveawayPayout ?? 0;
 
-  const total = data.giveawayPayout;
   return (
-    <div className="rounded-2xl border bg-card p-4 sm:p-5">
-      <SectionHeading
-        icon={PackageOpen}
-        title="Cost by pack"
-        action={
-          <span className="text-xs text-muted-foreground">
-            {formatNumber(data.cards)} cards handed out ·{" "}
-            {formatCurrency(data.avgCostPerPack)} avg per open
-          </span>
-        }
-      />
-      <div className="mt-3 space-y-2">
-        {data.packs.map((pack) => (
-          <DailyPackBreakdownRow
-            key={pack.packId}
-            pack={pack}
-            share={total > 0 ? (pack.giveawayPayout / total) * 100 : 0}
+    <>
+      <DailyPackUnlockConfig />
+
+      {giveaway && giveaway.packs.length > 0 && (
+        <div className="rounded-2xl border bg-card p-4 sm:p-5">
+          <SectionHeading
+            icon={PackageOpen}
+            title="Cost by pack"
+            action={
+              <span className="text-xs text-muted-foreground">
+                {formatNumber(giveaway.cards)} cards handed out ·{" "}
+                {formatCurrency(giveaway.avgCostPerPack)} avg per open
+              </span>
+            }
           />
-        ))}
-      </div>
-    </div>
+          <div className="mt-3 space-y-2">
+            {giveaway.packs.map((pack) => (
+              <DailyPackBreakdownRow
+                key={pack.packId}
+                pack={pack}
+                share={total > 0 ? (pack.giveawayPayout / total) * 100 : 0}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
