@@ -151,7 +151,7 @@ export function isTransientDatabaseStartupError(error: unknown): boolean {
     if (
       /server_login_retry/.test(message) ||
       /database system is (?:starting up|shutting down|not yet accepting connections)/.test(message) ||
-      /connection (?:terminated|reset|refused|timed out)|socket hang up|temporary failure in name resolution/.test(message)
+      /connection (?:terminated|reset|refused|timed out)|query read timeout|socket hang up|temporary failure in name resolution/.test(message)
     ) {
       return true;
     }

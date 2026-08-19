@@ -33,6 +33,10 @@ test("database startup retries failover errors but not integrity failures", () =
   assert.equal(isTransientDatabaseStartupError({ code: "EHOSTUNREACH" }), true);
   assert.equal(isTransientDatabaseStartupError({ code: "EPIPE" }), true);
   assert.equal(
+    isTransientDatabaseStartupError(new Error("Query read timeout")),
+    true,
+  );
+  assert.equal(
     isTransientDatabaseStartupError(
       new Error("server login has been failing, cached error: connect failed (server_login_retry)"),
     ),
