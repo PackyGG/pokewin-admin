@@ -80,6 +80,65 @@ export type RaceLeaderboardEntry = {
   excluded: boolean;
 };
 
+async function getRaceClaimReviewByUser(params: {
+  userIds: string[];
+  raceType: string;
+  periodStart: string | Date;
+}): Promise<{
+  holdByUser: Map<string, RaceClaimHoldInfo>;
+  claimedAtByUser: Map<string, string>;
+}> {
+  const { userIds, raceType, periodStart } = params;
+  const holdByUser = new Map<string, RaceClaimHoldInfo>();
+  const claimedAtByUser = new Map<string, string>();
+  if (userIds.length === 0) return { holdByUser, claimedAtByUser };
+
+  const [holds, claims] = await Promise.all([
+    queryMainRows<
+      {
+        id: string;
+        user_id: string;
+        reason: string;
+        created_by: string;
+        created_at: Date | string;
+      }[]
+    >(
+      `SELECT id, user_id, reason, created_by, created_at
+         FROM race_claim_holds
+        WHERE race_type::text = $1 AND race_period_start = $2
+          AND released_at IS NULL AND user_id = ANY($3::text[])`,
+      raceType,
+      periodStart,
+      userIds,
+    ),
+    queryMainRows<{ user_id: string; claimed_at: Date | string }[]>(
+      `SELECT user_id, claimed_at FROM race_claims
+        WHERE race_type::text = $1 AND race_period_start = $2
+          AND user_id = ANY($3::text[])`,
+      raceType,
+      periodStart,
+      userIds,
+    ),
+  ]);
+
+  for (const hold of holds) {
+    holdByUser.set(hold.user_id, {
+      id: hold.id,
+      reason: hold.reason,
+      createdBy: hold.created_by,
+      createdAt: new Date(hold.created_at).toISOString(),
+    });
+  }
+  for (const claim of claims) {
+    claimedAtByUser.set(
+      claim.user_id,
+      new Date(claim.claimed_at).toISOString(),
+    );
+  }
+
+  return { holdByUser, claimedAtByUser };
+}
+
 async function getDeposited28dByUser(
   userIds: string[],
 ): Promise<Map<string, number>> {
@@ -391,53 +450,19 @@ export async function getRaceLeaderboard(params: {
   // batches run concurrently, so this does not introduce a per-user query.
   const userIds = entries.map((e) => e.user_id);
   const periodDate = periodStart ? new Date(periodStart) : null;
-  const holdByUser = new Map<string, RaceClaimHoldInfo>();
-  const claimedAtByUser = new Map<string, string>();
-  const [deposited28dByUser, holds, claims] = await Promise.all([
+  const [deposited28dByUser, claimReview] = await Promise.all([
     getDeposited28dByUser(userIds),
     periodDate && userIds.length > 0
-      ? queryMainRows<
-          {
-            id: string;
-            user_id: string;
-            reason: string;
-            created_by: string;
-            created_at: Date | string;
-          }[]
-        >(
-          `SELECT id, user_id, reason, created_by, created_at
-             FROM race_claim_holds
-            WHERE race_type::text = $1 AND race_period_start = $2
-              AND released_at IS NULL AND user_id = ANY($3::text[])`,
-          raceType,
-          periodDate,
+      ? getRaceClaimReviewByUser({
           userIds,
-        )
-      : Promise.resolve([]),
-    periodDate && userIds.length > 0
-      ? queryMainRows<{ user_id: string; claimed_at: Date | string }[]>(
-          `SELECT user_id, claimed_at FROM race_claims
-            WHERE race_type::text = $1 AND race_period_start = $2
-              AND user_id = ANY($3::text[])`,
           raceType,
-          periodDate,
-          userIds,
-        )
-      : Promise.resolve([]),
+          periodStart: periodDate,
+        })
+      : Promise.resolve({
+          holdByUser: new Map<string, RaceClaimHoldInfo>(),
+          claimedAtByUser: new Map<string, string>(),
+        }),
   ]);
-  if (periodDate && userIds.length > 0) {
-    for (const h of holds) {
-      holdByUser.set(h.user_id, {
-        id: h.id,
-        reason: h.reason,
-        createdBy: h.created_by,
-        createdAt: new Date(h.created_at).toISOString(),
-      });
-    }
-    for (const c of claims) {
-      claimedAtByUser.set(c.user_id, new Date(c.claimed_at).toISOString());
-    }
-  }
 
   return {
     data: entries.map((e, i) => {
@@ -450,8 +475,8 @@ export async function getRaceLeaderboard(params: {
         wageredUsd: toNumber(e.wagered_usd),
         deposited28dUsd: deposited28dByUser.get(e.user_id) ?? 0,
         prizeAmountUsd: tierByPosition.get(rank) ?? null,
-        hold: holdByUser.get(e.user_id) ?? null,
-        claimedAt: claimedAtByUser.get(e.user_id) ?? null,
+        hold: claimReview.holdByUser.get(e.user_id) ?? null,
+        claimedAt: claimReview.claimedAtByUser.get(e.user_id) ?? null,
         excluded: excludedSet.has(e.user_id),
       };
     }),
@@ -554,9 +579,15 @@ export async function getLiveRaceLeaderboard(params: {
 
   const tierByPosition = new Map(tiers.map((t) => [t.position, t.prize] as const));
   const excluded = new Set(excludedUserIds);
-  const deposited28dByUser = await getDeposited28dByUser(
-    rows.map((row) => row.user_id),
-  );
+  const userIds = rows.map((row) => row.user_id);
+  const [deposited28dByUser, claimReview] = await Promise.all([
+    getDeposited28dByUser(userIds),
+    // Per-user holds are deliberately allowed before a race ends so an admin
+    // can proactively block a suspicious winner. The old live-monthly branch
+    // hard-coded hold:null, which hid a successfully persisted hold as soon as
+    // the optimistic UI reconciled or the page refreshed.
+    getRaceClaimReviewByUser({ userIds, raceType, periodStart }),
+  ]);
 
   return {
     data: rows.map((r) => ({
@@ -567,9 +598,8 @@ export async function getLiveRaceLeaderboard(params: {
       wageredUsd: toNumber(r.wagered),
       deposited28dUsd: deposited28dByUser.get(r.user_id) ?? 0,
       prizeAmountUsd: tierByPosition.get(r.position) ?? null,
-      // A running race has no finalized claims/holds yet.
-      hold: null,
-      claimedAt: null,
+      hold: claimReview.holdByUser.get(r.user_id) ?? null,
+      claimedAt: claimReview.claimedAtByUser.get(r.user_id) ?? null,
       excluded: excluded.has(r.user_id),
     })),
     total,
