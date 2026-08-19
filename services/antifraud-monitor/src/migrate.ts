@@ -173,6 +173,8 @@ export async function migrate(
 
   const client = await pool.connect();
   let advisoryLockHeld = false;
+  let statementTimeoutDisabled = false;
+  let sessionStateUncertain = false;
   try {
     // Migration 083 makes statement_timeout=15000 the database-role default
     // for normal queries. Migration work is neither normal nor interruptible:
@@ -190,10 +192,27 @@ export async function migrate(
       ) {
         throw migrationStartupError("Timed out waiting for the migration lock");
       }
-      const lock = await client.query<{ locked: boolean }>(
-        "SELECT pg_try_advisory_lock($1) AS locked",
-        [841_772_991],
+      const queryTimeoutMs = Math.max(
+        1,
+        Math.min(
+          5_000,
+          options.lockDeadlineAt === undefined
+            ? 5_000
+            : options.lockDeadlineAt - Date.now(),
+        ),
       );
+      let lock: pg.QueryResult<{ locked: boolean }>;
+      try {
+        const query = {
+          text: "SELECT pg_try_advisory_lock($1) AS locked",
+          values: [841_772_991],
+          query_timeout: queryTimeoutMs,
+        } as pg.QueryConfig;
+        lock = await client.query<{ locked: boolean }>(query);
+      } catch (error) {
+        sessionStateUncertain = true;
+        throw error;
+      }
       if (lock.rows[0]?.locked) {
         advisoryLockHeld = true;
         break;
@@ -204,7 +223,17 @@ export async function migrate(
           : Math.max(0, options.lockDeadlineAt - Date.now());
       await new Promise((resolve) => setTimeout(resolve, Math.min(250, remainingMs)));
     }
-    await client.query("SET statement_timeout = 0");
+    try {
+      const query = {
+        text: "SET statement_timeout = 0",
+        query_timeout: 5_000,
+      } as pg.QueryConfig;
+      await client.query(query);
+      statementTimeoutDisabled = true;
+    } catch (error) {
+      sessionStateUncertain = true;
+      throw error;
+    }
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version text PRIMARY KEY,
@@ -275,9 +304,16 @@ export async function migrate(
     let cleanupError: Error | undefined;
     const asError = (error: unknown): Error =>
       error instanceof Error ? error : new Error(String(error));
+    if (sessionStateUncertain) {
+      client.release(true);
+    } else {
     if (advisoryLockHeld) {
       await client
-        .query("SELECT pg_advisory_unlock($1)", [841_772_991])
+        .query({
+          text: "SELECT pg_advisory_unlock($1)",
+          values: [841_772_991],
+          query_timeout: 5_000,
+        } as pg.QueryConfig)
         .catch((error: unknown) => {
           cleanupError = asError(error);
           console.error("[migrate] advisory unlock failed", {
@@ -287,9 +323,16 @@ export async function migrate(
           });
         });
     }
-    await client.query("RESET statement_timeout").catch((error: unknown) => {
-      cleanupError ??= asError(error);
-    });
+    if (statementTimeoutDisabled) {
+      await client
+        .query({
+          text: "RESET statement_timeout",
+          query_timeout: 5_000,
+        } as pg.QueryConfig)
+        .catch((error: unknown) => {
+          cleanupError ??= asError(error);
+        });
+    }
     // Both statements above are session-scoped, so a failed cleanup on a
     // still-live connection puts a client back into the shared runtime pool
     // that may hold the migration advisory lock and/or statement_timeout=0 —
@@ -297,5 +340,6 @@ export async function migrate(
     // next deploy's migrate(). Releasing WITH an error destroys the client
     // instead of reusing it; the pool just opens a fresh one.
     client.release(cleanupError);
+    }
   }
 }

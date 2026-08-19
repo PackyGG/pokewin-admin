@@ -130,19 +130,20 @@ test("migration runner serializes, rolls back failures, and records only commits
   // The blocking advisory lock must not inherit the pool's statement_timeout:
   // during a rolling deploy the waiting replica would abort with 57014 and
   // fail its boot before app.listen().
-  assert.match(migrate, /await client\.query\("SET statement_timeout = 0"\);/);
-  assert.match(migrate, /await client\.query\("RESET statement_timeout"\)/);
+  assert.match(migrate, /text: "SET statement_timeout = 0"/);
+  assert.match(migrate, /text: "RESET statement_timeout"/);
   // A dead connection must not let the cleanup throw out of `finally` and
   // replace the real migration error.
   assert.match(
     migrate,
-    /pg_advisory_unlock\(\$1\)", \[841_772_991\]\)\s*\.catch\(/,
+    /text: "SELECT pg_advisory_unlock\(\$1\)"[\s\S]*?query_timeout: 5_000/,
   );
 });
 
 test("antifraud migrations bypass the runtime pool and runtime validates role defaults", async () => {
   const server = await source("../src/server.ts");
   const db = await source("../src/db.ts");
+  const migrateSource = await source("../src/migrate.ts");
   const defaults = await source(
     "../migrations/083_antifraud_runtime_session_defaults.sql",
   );
@@ -150,7 +151,7 @@ test("antifraud migrations bypass the runtime pool and runtime validates role de
   assert.match(server, /await migrate\(migrationDb, \{/);
   assert.match(
     server,
-    /await assertMigrationDatabaseMatchesRuntime\(migrationDb, db\.antifraud\)/,
+    /await assertMigrationDatabaseMatchesRuntime\(\s*migrationDb,\s*db\.antifraud,/,
   );
   assert.match(server, /await migrationDb\.end\(\)/);
   assert.match(server, /redactDatabaseErrorMessage\(migrationStartupError\)/);
@@ -160,6 +161,13 @@ test("antifraud migrations bypass the runtime pool and runtime validates role de
   assert.match(server, /DATABASE_STARTUP_RETRY_BUDGET_MS = 120_000/);
   assert.match(server, /isTransientDatabaseStartupError\(error\)/);
   assert.match(server, /Antifraud database startup deferred during failover/);
+  assert.match(server, /Antifraud runtime startup interrupted by shutdown/);
+  assert.match(server, /databaseStartupDeadlineAt - Date\.now\(\)/);
+  assert.match(migrateSource, /query_timeout: queryTimeoutMs/);
+  assert.match(
+    migrateSource,
+    /if \(sessionStateUncertain\) \{\s*client\.release\(true\)/,
+  );
   assert.match(
     server,
     /await live\.start\(\);\s*if \(shuttingDown\) \{\s*await live\.close\(\);/,

@@ -21,6 +21,14 @@ test("database startup retries failover errors but not integrity failures", () =
   assert.equal(isTransientDatabaseStartupError({ code: "57P01" }), true);
   assert.equal(isTransientDatabaseStartupError({ code: "08006" }), true);
   assert.equal(isTransientDatabaseStartupError({ code: "08P01" }), false);
+  assert.equal(
+    isTransientDatabaseStartupError({ code: "28P01", message: "server_login_retry" }),
+    false,
+  );
+  assert.equal(
+    isTransientDatabaseStartupError({ code: "3D000", message: "server_login_retry" }),
+    false,
+  );
   assert.equal(isTransientDatabaseStartupError({ code: "EAI_AGAIN" }), true);
   assert.equal(isTransientDatabaseStartupError({ code: "EHOSTUNREACH" }), true);
   assert.equal(isTransientDatabaseStartupError({ code: "EPIPE" }), true);

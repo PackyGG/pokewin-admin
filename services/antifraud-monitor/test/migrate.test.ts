@@ -29,7 +29,12 @@ function fakePool(options: {
   let released = false;
 
   const client = {
-    query: async (text: string, values?: unknown[]) => {
+    query: async (
+      query: string | { text: string; values?: unknown[] },
+      values?: unknown[],
+    ) => {
+      const text = typeof query === "string" ? query : query.text;
+      values ??= typeof query === "string" ? undefined : query.values;
       calls.push({ text, values });
 
       if (text.includes("pg_try_advisory_lock")) {
@@ -231,7 +236,8 @@ test("the current on-disk migrations directory has no un-allowlisted duplicate p
 test("migration lock acquisition honors the startup deadline", async () => {
   let releasedWith: Error | undefined;
   const client = {
-    query: async (text: string) => {
+    query: async (query: string | { text: string }) => {
+      const text = typeof query === "string" ? query : query.text;
       if (text.includes("pg_try_advisory_lock")) {
         return { rows: [{ locked: false }], rowCount: 1 };
       }
@@ -259,7 +265,8 @@ test("migration cleanup redacts direct connection errors before logging", async 
   const originalConsoleError = console.error;
   console.error = (...values: unknown[]) => logged.push(values);
   const client = {
-    query: async (text: string) => {
+    query: async (query: string | { text: string }) => {
+      const text = typeof query === "string" ? query : query.text;
       if (text.includes("pg_try_advisory_lock")) {
         return { rows: [{ locked: true }], rowCount: 1 };
       }

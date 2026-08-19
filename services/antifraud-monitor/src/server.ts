@@ -2444,7 +2444,11 @@ try {
       break;
     }
     try {
-      await assertMigrationDatabaseMatchesRuntime(migrationDb, db.antifraud);
+      await assertMigrationDatabaseMatchesRuntime(
+        migrationDb,
+        db.antifraud,
+        Math.max(1, Math.min(10_000, databaseStartupDeadlineAt - Date.now())),
+      );
       await migrate(migrationDb, {
         lockDeadlineAt: databaseStartupDeadlineAt,
         shouldAbort: () => shuttingDown,
@@ -2587,7 +2591,15 @@ void (async () => {
 }
 
 if (!shuttingDown) {
-  await startRuntime();
+  try {
+    await startRuntime();
+  } catch (error) {
+    if (!shuttingDown) throw error;
+    app.log.info(
+      { error: redactDatabaseErrorMessage(error) },
+      "Antifraud runtime startup interrupted by shutdown",
+    );
+  }
 }
 if (shuttingDown && shutdownPromise) {
   await shutdownPromise;

@@ -129,10 +129,13 @@ export function isTransientDatabaseStartupError(error: unknown): boolean {
   // PgBouncer appends server_login_retry to cached permanent upstream errors
   // too. Inspect the entire cause chain before accepting lifecycle evidence.
   if (
-    chain.some(({ message }) =>
+    chain.some(({ code, message }) =>
+      code.startsWith("28") ||
+      code === "3D000" ||
       /password authentication failed|no pg_hba\.conf entry|certificate|self-signed|tls verification|ssl verification/.test(
         message,
-      ),
+      ) ||
+      /(?:role|database) [^ ]+ does not exist/.test(message),
     )
   ) {
     return false;
@@ -241,14 +244,21 @@ type DatabaseIdentity = {
   system_identifier: string;
 };
 
-async function databaseIdentity(pool: pg.Pool): Promise<DatabaseIdentity> {
-  const result = await pool.query<DatabaseIdentity>(`
+async function databaseIdentity(
+  pool: pg.Pool,
+  queryTimeoutMs: number,
+): Promise<DatabaseIdentity> {
+  const query = {
+    text: `
     SELECT
       current_database() AS database_name,
       current_user AS role_name,
       system_identifier::text
     FROM pg_control_system()
-  `);
+  `,
+    query_timeout: queryTimeoutMs,
+  } as pg.QueryConfig;
+  const result = await pool.query<DatabaseIdentity>(query);
   const identity = result.rows[0];
   if (!identity) throw new Error("PostgreSQL database identity probe returned no row");
   return identity;
@@ -258,10 +268,11 @@ async function databaseIdentity(pool: pg.Pool): Promise<DatabaseIdentity> {
 export async function assertMigrationDatabaseMatchesRuntime(
   migrationPool: pg.Pool,
   runtimePool: pg.Pool,
+  queryTimeoutMs = 10_000,
 ): Promise<void> {
   const [migration, runtime] = await Promise.all([
-    databaseIdentity(migrationPool),
-    databaseIdentity(runtimePool),
+    databaseIdentity(migrationPool, queryTimeoutMs),
+    databaseIdentity(runtimePool, queryTimeoutMs),
   ]);
   if (
     migration.database_name !== runtime.database_name ||
