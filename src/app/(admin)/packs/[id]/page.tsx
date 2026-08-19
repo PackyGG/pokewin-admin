@@ -1,7 +1,11 @@
 import { notFound } from "next/navigation";
 
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
-import { getUserPermissions, requirePageAccess } from "@/lib/dal";
+import {
+  getUserPermissions,
+  requirePageAccess,
+  sessionHasRole,
+} from "@/lib/dal";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { isUuid } from "@/lib/utils/ids";
 
@@ -21,6 +25,8 @@ export default async function PackDetailPage({
   const isAdmin = session.role === "admin";
   let canToggle = isAdmin;
   let canDelete = isAdmin;
+  let canEdit = isAdmin;
+  let canEditLive = isAdmin;
   if (!isAdmin) {
     const { data: permissions } = await safeQuery(
       () => getUserPermissions(session.userId),
@@ -29,6 +35,8 @@ export default async function PackDetailPage({
     );
     canToggle = hasCapability(permissions, "__can_toggle_pack_active");
     canDelete = hasCapability(permissions, "__can_delete_pack");
+    canEdit = hasCapability(permissions, "__can_update_pack");
+    canEditLive = hasCapability(permissions, "__can_edit_live_packs");
   }
 
   return (
@@ -36,6 +44,9 @@ export default async function PackDetailPage({
       packId={id}
       canToggle={canToggle}
       canDelete={canDelete}
+      canEdit={canEdit}
+      canEditLive={canEditLive}
+      isPackCreator={sessionHasRole(session, "pack_creator")}
       initialPayload={null}
     />
   );

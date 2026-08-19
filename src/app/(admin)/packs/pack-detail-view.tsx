@@ -11,6 +11,7 @@ import {
   History,
   Layers,
   Package,
+  Pencil,
   Percent,
   TrendingUp,
 } from "lucide-react";
@@ -21,7 +22,6 @@ import { CardImage } from "@/components/card-image";
 import {
   KpiTile,
   PageHero,
-  PageHeroIdentity,
   SectionHeading,
 } from "@/components/modern-panels";
 import { InlineError } from "@/components/entity-surface";
@@ -43,6 +43,7 @@ import {
   loadPackGamesPage,
   loadPackStats,
 } from "./pack-detail-cache";
+import { PackEditForm } from "./pack-edit-form";
 
 type DetailState =
   | { status: "loading" }
@@ -51,16 +52,23 @@ type DetailState =
   | { status: "error" };
 
 type ContentTab = "cards" | "games";
+type ViewMode = "overview" | "edit";
 
 export function PackDetailView({
   packId,
   canToggle,
   canDelete,
+  canEdit,
+  canEditLive,
+  isPackCreator,
   initialPayload = null,
 }: {
   packId: string;
   canToggle: boolean;
   canDelete: boolean;
+  canEdit: boolean;
+  canEditLive: boolean;
+  isPackCreator: boolean;
   /**
    * Server-prefetched full detail. When present the view paints ready
    * immediately and skips the initial client fetch (no hydrate→action
@@ -75,6 +83,7 @@ export function PackDetailView({
       : { status: "loading" },
   );
   const [tab, setTab] = React.useState<ContentTab>("cards");
+  const [viewMode, setViewMode] = React.useState<ViewMode>("overview");
   const [statsRetrying, setStatsRetrying] = React.useState(false);
 
   const load = React.useCallback(
@@ -113,6 +122,7 @@ export function PackDetailView({
 
   React.useEffect(() => {
     setTab("cards");
+    setViewMode("overview");
     // Server-prefetched payload (incl. after a pack→pack navigation that
     // re-runs the server page): paint it directly, skip the client fetch.
     if (initialPayload) {
@@ -140,10 +150,16 @@ export function PackDetailView({
   const packType = detail?.packType ?? null;
   const loading = state.status === "loading";
 
+  const showEditButton =
+    canEdit &&
+    detail != null &&
+    (!isPackCreator || !detail.active || canEditLive);
+
   const showActions =
     !loading &&
+    viewMode === "overview" &&
     detail != null &&
-    (canToggle || canDelete);
+    (showEditButton || canToggle || canDelete);
 
   // The server now prefetches only the core detail (stats === null) so the
   // page paints fast. Auto-load the heavy stats ONCE per pack here so the
@@ -204,10 +220,53 @@ export function PackDetailView({
       </div>
 
       <PageHero>
-        <PageHeroIdentity
-          action={
-            showActions && detail ? (
-              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+        <div className="rounded-xl border bg-card/40 p-4 shadow-sm sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="shrink-0 overflow-hidden rounded-xl border bg-muted/40 shadow-sm">
+              <CardImage src={imageUrl} alt={title} className="size-16 object-cover sm:size-20" />
+            </div>
+            <div className="min-w-0 flex-1">
+              {loading ? (
+                <Skeleton className="h-7 w-48" />
+              ) : (
+                <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">
+                  {title}
+                </h1>
+              )}
+              {detail?.slug ? (
+                <p className="mt-1 truncate text-sm text-muted-foreground">/{detail.slug}</p>
+              ) : null}
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {loading ? (
+                  <Skeleton className="h-5 w-16 rounded-full" />
+                ) : (
+                  <Badge
+                    variant="outline"
+                    className={
+                      active
+                        ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                        : "border-zinc-500/30 bg-zinc-500/15 text-zinc-600 dark:text-zinc-400"
+                    }
+                  >
+                    {active ? "Active" : "Inactive"}
+                  </Badge>
+                )}
+                {packType ? (
+                  <Badge variant="outline" className="capitalize">
+                    {packType}
+                  </Badge>
+                ) : null}
+              </div>
+            </div>
+
+            {showActions && detail ? (
+              <div className="flex shrink-0 flex-wrap items-center gap-2 sm:self-start">
+                {showEditButton ? (
+                  <Button size="sm" variant="outline" onClick={() => setViewMode("edit")}>
+                    <Pencil className="mr-1 size-3.5" />
+                    Edit
+                  </Button>
+                ) : null}
                 {canToggle ? (
                   <TogglePackButton
                     packId={detail.id}
@@ -223,39 +282,11 @@ export function PackDetailView({
                   />
                 ) : null}
               </div>
-            ) : undefined
-          }
-        />
-        <div className="mt-4 flex items-start gap-3 sm:gap-4">
-          <div className="shrink-0 overflow-hidden rounded-xl border bg-muted/40 shadow-sm">
-            <CardImage src={imageUrl} alt={title} className="size-16 object-cover sm:size-20" />
-          </div>
-          <div className="min-w-0 flex-1 pt-0.5">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {/* While the detail read is in flight the availability state is
-                  unknown — render a placeholder rather than defaulting the
-                  badge to "Inactive", which reads as a real (and wrong) state
-                  for every pack that is in fact active. */}
-              {loading ? (
-                <Skeleton className="h-5 w-16 rounded-full" />
-              ) : (
-                <Badge
-                  variant="outline"
-                  className={
-                    active
-                      ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                      : "border-zinc-500/30 bg-zinc-500/15 text-zinc-600 dark:text-zinc-400"
-                  }
-                >
-                  {active ? "Active" : "Inactive"}
-                </Badge>
-              )}
-              {packType ? (
-                <Badge variant="outline" className="capitalize">
-                  {packType}
-                </Badge>
-              ) : null}
-            </div>
+            ) : viewMode === "edit" ? (
+              <Button size="sm" variant="outline" onClick={() => setViewMode("overview")}>
+                Back to overview
+              </Button>
+            ) : null}
           </div>
         </div>
       </PageHero>
@@ -280,7 +311,19 @@ export function PackDetailView({
           />
         )}
 
-        {state.status === "ready" ? (
+        {viewMode === "edit" && detail ? (
+          <PackEditForm
+            key={detail.id}
+            pack={detail}
+            onCancel={() => setViewMode("overview")}
+            onSaved={() => {
+              setViewMode("overview");
+              load(true);
+            }}
+          />
+        ) : null}
+
+        {viewMode === "overview" && state.status === "ready" ? (
           <ReadyBody
             payload={state.payload}
             tab={tab}
