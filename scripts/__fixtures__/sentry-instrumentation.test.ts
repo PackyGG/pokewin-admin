@@ -92,7 +92,8 @@ test("Sentry sampling and request sanitization behavior stays bounded", () => {
       "--input-type=module",
       "--eval",
       [
-        'const m = await import("./src/lib/sentry-config.ts");',
+        'const imported = await import("./src/lib/sentry-config.ts");',
+        "const m = imported.default ?? imported;",
         "const event = m.sanitizeSentryEvent({",
         'request: { url: "https://packydash.com/users?id=secret#tab", headers: { cookie: "secret" }, cookies: { token: "secret" }, data: "secret", query_string: "id=secret", method: "GET" },',
         'user: { id: "secret" },',
