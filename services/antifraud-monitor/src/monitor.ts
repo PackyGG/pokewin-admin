@@ -940,7 +940,7 @@ export class MonitorEngine {
 
       // Bounded concurrency: a slow provider lookup on one signup must not
       // serialise the whole batch, but the fan-out stays small enough to keep
-      // the source pool (max 8) and the provider rate limits intact.
+      // the source pool (max 4) and the provider rate limits intact.
       for (let index = 0; index < signups.length; index += SIGNUP_CONCURRENCY) {
         const chunk = signups.slice(index, index + SIGNUP_CONCURRENCY);
         const result = await processOrderedBatch(

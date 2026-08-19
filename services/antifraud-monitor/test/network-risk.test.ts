@@ -226,6 +226,30 @@ test("creator network metrics use the same recency-bounded latest-snapshot CTE",
   assert.match(metrics, /\[userIds, CLUSTER_SCAN_LOOKBACK_DAYS\]/);
 });
 
+test("latest network snapshots stream deterministically from a covering index", async () => {
+  const [source, migration] = await Promise.all([
+    readFile(new URL("../src/network-risk.ts", import.meta.url), "utf8"),
+    readFile(
+      new URL(
+        "../migrations/086_network_snapshot_latest_covering_index.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ]);
+
+  assert.equal(
+    (source.match(/ORDER BY network_key, scanned_at DESC, id DESC/g) ?? [])
+      .length,
+    3,
+  );
+  assert.match(
+    migration,
+    /ON network_snapshots\(network_key, scanned_at DESC, id DESC\)/,
+  );
+  assert.match(migration, /DROP INDEX IF EXISTS network_snapshots_key_scanned_idx/);
+});
+
 test("stale network scan jobs are recovered a bounded number of times", async () => {
   const source = await readFile(
     new URL("../src/network-risk.ts", import.meta.url),

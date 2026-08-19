@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import vm from "node:vm";
 
 import { buildBackendDealPeriods } from "../../src/lib/creator-deal-periods";
 
@@ -103,10 +104,56 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
     "periods are exactly adjacent and never overlap",
   );
   assert.equal("withdraw_cap_period_days" in periods(14, 7)[0].payload, false, "UI-only period metadata is not sent to the backend");
+  const createClaim = workflow.slice(
+    workflow.indexOf("async function claimBackendCreateAttempt"),
+    workflow.indexOf("async function ensureBackendDeal"),
+  );
+  const fillProvision = workflow.slice(
+    workflow.indexOf("async function ensureBackendDeal"),
+    workflow.indexOf("function multiplierApprovalMarker"),
+  );
+  const multiplierProvision = workflow.slice(
+    workflow.indexOf("async function ensureBackendMultiplierDeal"),
+    workflow.indexOf("// ADMIN owns the commercial P&L contract"),
+  );
+  const pnlFundingProvision = workflow.slice(
+    workflow.indexOf("async function ensurePnlFunding"),
+    workflow.indexOf("async function ensureAdminPnlDeal"),
+  );
+  const pnlAdminProvision = workflow.slice(
+    workflow.indexOf("async function ensureAdminPnlDeal"),
+    workflow.indexOf("export async function advanceDueCreatorPnlDeals"),
+  );
+  assert.match(createClaim, /adminDrizzle\.transaction/);
+  assert.match(createClaim, /provisioning_lease_token::text/);
+  assert.match(createClaim, /FOR UPDATE/);
+  assert.doesNotMatch(createClaim, /creatorsApi|multiplierDealsApi/);
+  assert.doesNotMatch(fillProvision, /adminDrizzle\.transaction/);
+  assert.doesNotMatch(multiplierProvision, /adminDrizzle\.transaction/);
+  assert.doesNotMatch(pnlFundingProvision, /adminDrizzle\.transaction/);
+  assert.match(fillProvision, /canCreateMissingCreatorDealPeriods\(claimed, visiblePeriodCount\)/);
+  assert.match(fillProvision, /backend_create_attempted_at: null/);
+  assert.match(fillProvision, /provisioning_lease_token, request\.provisioning_lease_token!/);
   assert.ok(
-    workflow.indexOf("pg_advisory_xact_lock(hashtextextended") < workflow.indexOf("const listed = await listAllCreatorDeals")
-      && workflow.indexOf("const listed = await listAllCreatorDeals") < workflow.indexOf("creatorsApi.createDeal"),
-    "the per-creator lock and overlap read must happen before create",
+    fillProvision.indexOf("await renewProvisioningLease(request)") < fillProvision.indexOf("creatorsApi.createDeal"),
+    "every missing-period create must renew and validate the current worker lease",
+  );
+  assert.ok(
+    fillProvision.lastIndexOf("await renewProvisioningLease(request)") < fillProvision.indexOf("creatorsApi.terminateDeal"),
+    "an expired worker must not compensate a successor's schedule",
+  );
+  assert.ok(
+    fillProvision.indexOf("claimBackendCreateAttempt") < fillProvision.indexOf("creatorsApi.createDeal"),
+    "the durable create claim must commit before backend fill creation",
+  );
+  assert.ok(
+    multiplierProvision.indexOf("claimBackendCreateAttempt") < multiplierProvision.indexOf("multiplierDealsApi.create"),
+    "the durable create claim must commit before backend multiplier creation",
+  );
+  assert.ok(
+    pnlAdminProvision.indexOf("existingBeforeFunding") < pnlAdminProvision.indexOf("ensurePnlFunding")
+      && pnlAdminProvision.indexOf("ensurePnlFunding") < pnlAdminProvision.lastIndexOf("return adminDrizzle.transaction"),
+    "P&L funding I/O must sit between short preflight and persistence transactions",
   );
   assert.match(workflow, /source_approval_request_id: request\.id/);
   assert.match(workflow, /Math\.max\(new Date\(request\.window_start_at\)\.getTime\(\), approvedAt\.getTime\(\)\)/);
@@ -232,4 +279,45 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
   assert.match(endpoints, /\/api\/v1\/discord\/creator-deal-approvals\/respond/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-deal-approvals\/\[requestId\]\/continue/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-deal-approvals\/\[requestId\]\/decision/);
+});
+
+test("creator deal crash handoff resumes only a visible marked partial schedule", async () => {
+  const workflow = await read("src/lib/creator-deal-approvals.ts");
+  const resumeSource = workflow.match(
+    /function canCreateMissingCreatorDealPeriods\(claimed = false, visiblePeriodCount = 0\) \{[\s\S]*?\n\}/,
+  )?.[0];
+  const releaseSource = workflow.match(
+    /function canReleaseCreatorDealAttemptAfterCompensation\(terminatedPeriodCount = 0\) \{[\s\S]*?\n\}/,
+  )?.[0];
+  assert.ok(resumeSource, "the production recovery decision must remain executable and testable");
+  assert.ok(releaseSource, "the production compensation decision must remain executable and testable");
+  const canCreateMissing = vm.runInNewContext(`(${resumeSource})`) as (
+    claimed?: boolean,
+    visiblePeriodCount?: number,
+  ) => boolean;
+  const canReleaseAttempt = vm.runInNewContext(`(${releaseSource})`) as (
+    terminatedPeriodCount?: number,
+  ) => boolean;
+
+  assert.equal(canCreateMissing(true, 0), true, "the worker that durably claimed a fresh schedule may create it");
+  assert.equal(canCreateMissing(false, 1), true, "a successor may resume missing indexes after a crash left one marked period");
+  assert.equal(canCreateMissing(false, 3), true, "any non-empty marked subset is recoverable by exact period index");
+  assert.equal(canCreateMissing(false, 0), false, "an ambiguous attempt with no visible marker remains fail-closed");
+
+  const visibleIndexes = new Set([0]);
+  if (canCreateMissing(false, visibleIndexes.size)) {
+    for (const index of [0, 1, 2, 3]) {
+      if (!visibleIndexes.has(index)) visibleIndexes.add(index);
+    }
+  }
+  assert.deepEqual([...visibleIndexes], [0, 1, 2, 3]);
+
+  assert.equal(canReleaseAttempt(0), false, "an invisible ambiguous create never becomes retryable");
+  assert.equal(canReleaseAttempt(2), true, "a fully terminated visible subset may release its attempt marker");
+  const compensatedIndexes = new Set([0, 1]);
+  const terminatedCount = compensatedIndexes.size;
+  compensatedIndexes.clear();
+  assert.equal(canReleaseAttempt(terminatedCount), true);
+  assert.equal(compensatedIndexes.size, 0, "compensation leaves no known financial subset active");
+  assert.equal(canCreateMissing(true, compensatedIndexes.size), true, "the next durable owner can rebuild cleanly");
 });

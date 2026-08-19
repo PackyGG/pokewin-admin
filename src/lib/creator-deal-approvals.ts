@@ -837,98 +837,132 @@ async function listAllCreatorDeals(creatorUserId: string): Promise<CreatorDealRe
   }
 }
 
+async function claimBackendCreateAttempt(
+  request: typeof creator_deal_approval_requests.$inferSelect,
+  lockKey: string,
+): Promise<boolean> {
+  return adminDrizzle.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+    const current = await tx.execute<{
+      backend_create_attempted_at: string | null;
+      provisioning_lease_token: string | null;
+    }>(sql`
+      SELECT backend_create_attempted_at, provisioning_lease_token::text
+      FROM creator_deal_approval_requests
+      WHERE id = ${request.id}::uuid
+      FOR UPDATE
+    `);
+    const row = current.rows[0];
+    if (!row || row.provisioning_lease_token !== request.provisioning_lease_token) {
+      error(409, "provisioning_lease_lost", "Provisioning lease expired.");
+    }
+    if (row.backend_create_attempted_at) return false;
+    await tx.update(creator_deal_approval_requests).set({
+      backend_create_attempted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).where(eq(creator_deal_approval_requests.id, request.id));
+    return true;
+  });
+}
+
+function canCreateMissingCreatorDealPeriods(claimed = false, visiblePeriodCount = 0) {
+  // A visible marked period proves that this exact immutable schedule started.
+  // Its successor may safely fill only the missing indexes; the backend's
+  // overlap lock arbitrates a final in-flight create from the expired worker.
+  return claimed || visiblePeriodCount > 0;
+}
+
+function canReleaseCreatorDealAttemptAfterCompensation(terminatedPeriodCount = 0) {
+  return terminatedPeriodCount > 0;
+}
+
+async function renewProvisioningLease(
+  request: typeof creator_deal_approval_requests.$inferSelect,
+): Promise<void> {
+  const [renewed] = await adminDrizzle.update(creator_deal_approval_requests).set({
+    provisioning_leased_until: sql`now() + interval '90 seconds'`,
+  }).where(and(
+    eq(creator_deal_approval_requests.id, request.id),
+    eq(creator_deal_approval_requests.provisioning_lease_token, request.provisioning_lease_token!),
+  )).returning({ id: creator_deal_approval_requests.id });
+  if (!renewed) error(409, "provisioning_lease_lost", "Provisioning lease expired.");
+}
+
 async function ensureBackendDeal(request: typeof creator_deal_approval_requests.$inferSelect): Promise<string> {
   if (request.backend_deal_id) return request.backend_deal_id;
-  const outcome = await adminDrizzle.transaction(async (tx): Promise<
-    { ok: true; dealId: string } | { ok: false; cause: unknown }
-  > => {
-    // Serializes approval-worker attempts. The backend independently enforces
-    // this invariant under its own per-creator database lock for every caller.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`creator-deal-window:${request.creator_user_id}`}, 0))`);
-    const payload = DealPayloadSchema.parse(request.deal_payload);
-    const periods = buildBackendDealPeriods(payload);
-    const listed = await listAllCreatorDeals(request.creator_user_id);
-    const existingPeriods = periods.map((period) =>
-      listed.find((deal) =>
-        (deal.status === "scheduled" || deal.status === "active")
-        && markerDeal(deal, request.id, period.index)),
-    );
-    if (existingPeriods.every(Boolean)) {
-      return { ok: true, dealId: existingPeriods[0]!.id };
+  const payload = DealPayloadSchema.parse(request.deal_payload);
+  const periods = buildBackendDealPeriods(payload);
+  const listed = await listAllCreatorDeals(request.creator_user_id);
+  const existingPeriods = periods.map((period) =>
+    listed.find((deal) =>
+      (deal.status === "scheduled" || deal.status === "active")
+      && markerDeal(deal, request.id, period.index)),
+  );
+  if (existingPeriods.every(Boolean)) return existingPeriods[0]!.id;
+  const overlap = listed.find((deal) =>
+    (deal.status === "active" || deal.status === "scheduled")
+    && !markerDeal(deal, request.id)
+    && periods.some((period) => dealWindowsOverlap(deal, period.payload)));
+  if (overlap) {
+    error(409, "creator_deal_window_overlap", `Creator already has an ${overlap.status} deal during the proposed window.`);
+  }
+  // The claim commits before any backend request. The unique unresolved
+  // approval slot serializes Admin-originated financial proposals, while the
+  // backend independently enforces its per-creator window invariant.
+  const claimed = await claimBackendCreateAttempt(request, `creator-deal-window:${request.creator_user_id}`);
+  const visiblePeriodCount = existingPeriods.filter(Boolean).length;
+  if (!canCreateMissingCreatorDealPeriods(claimed, visiblePeriodCount)) {
+    error(409, "backend_create_unconfirmed", "The original backend create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
+  }
+  try {
+    const dealIds: string[] = [];
+    for (const period of periods) {
+      const existing = existingPeriods[period.index];
+      if (existing) {
+        dealIds.push(existing.id);
+        continue;
+      }
+      await renewProvisioningLease(request);
+      const created = await creatorsApi.createDeal(request.creator_user_id, {
+        ...period.payload,
+        terms: {
+          creator_approval_request_id: request.id,
+          creator_approval_period_index: period.index,
+          creator_approval_period_count: period.count,
+          agreement_version: request.agreement_version,
+          agreement_checksum: request.agreement_checksum,
+        },
+      } satisfies CreateDealInput);
+      dealIds.push(created.id);
     }
-    const overlap = listed.find((deal) =>
-      (deal.status === "active" || deal.status === "scheduled")
-      && !markerDeal(deal, request.id)
-      && periods.some((period) => dealWindowsOverlap(deal, period.payload)));
-    if (overlap) {
-      error(
-        409,
-        "creator_deal_window_overlap",
-        `Creator already has an ${overlap.status} deal during the proposed window.`,
-      );
+    return dealIds[0];
+  } catch (cause) {
+    const afterFailure = await listAllCreatorDeals(request.creator_user_id);
+    const reconciled = periods.map((period) => afterFailure.find((deal) =>
+      (deal.status === "scheduled" || deal.status === "active")
+      && markerDeal(deal, request.id, period.index)));
+    if (reconciled.every(Boolean)) return reconciled[0]!.id;
+    const partial = afterFailure.filter((deal) =>
+      (deal.status === "scheduled" || deal.status === "active")
+      && markerDeal(deal, request.id));
+    for (const deal of partial) {
+      await renewProvisioningLease(request);
+      await creatorsApi.terminateDeal(request.creator_user_id, deal.id, {
+        reason: `Compensating incomplete approval schedule ${request.id}`,
+        force_end_active_session: true,
+      });
     }
-    if (periods.length === 1 && request.backend_create_attempted_at) {
-      error(409, "backend_create_unconfirmed", "The original backend create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
-    }
-    if (!request.backend_create_attempted_at) {
-      const [claimed] = await tx.update(creator_deal_approval_requests).set({
-        backend_create_attempted_at: new Date().toISOString(),
+    if (canReleaseCreatorDealAttemptAfterCompensation(partial.length)) {
+      await adminDrizzle.update(creator_deal_approval_requests).set({
+        backend_create_attempted_at: null,
         updated_at: new Date().toISOString(),
       }).where(and(
         eq(creator_deal_approval_requests.id, request.id),
-        sql`${creator_deal_approval_requests.backend_create_attempted_at} IS NULL`,
-      )).returning({ id: creator_deal_approval_requests.id });
-      if (!claimed) error(409, "backend_create_in_progress", "Another worker already started backend deal creation.");
+        eq(creator_deal_approval_requests.provisioning_lease_token, request.provisioning_lease_token!),
+      ));
     }
-    try {
-      const dealIds: string[] = [];
-      for (const period of periods) {
-        const existing = existingPeriods[period.index];
-        if (existing) {
-          dealIds.push(existing.id);
-          continue;
-        }
-        const created = await creatorsApi.createDeal(request.creator_user_id, {
-          ...period.payload,
-          terms: {
-            creator_approval_request_id: request.id,
-            creator_approval_period_index: period.index,
-            creator_approval_period_count: period.count,
-            agreement_version: request.agreement_version,
-            agreement_checksum: request.agreement_checksum,
-          },
-        } satisfies CreateDealInput);
-        dealIds.push(created.id);
-      }
-      return { ok: true, dealId: dealIds[0] };
-    } catch (cause) {
-      // Resolve an ambiguous response before compensating. A complete marked
-      // schedule is success even when the final HTTP response was lost.
-      const afterFailure = await listAllCreatorDeals(request.creator_user_id);
-      const reconciled = periods.map((period) => afterFailure.find((deal) =>
-        (deal.status === "scheduled" || deal.status === "active")
-        && markerDeal(deal, request.id, period.index)));
-      if (reconciled.every(Boolean)) {
-        return { ok: true, dealId: reconciled[0]!.id };
-      }
-      // MAIN has no batch-create endpoint. Compensate a partially provisioned
-      // schedule immediately so no subset can remain financially active if a
-      // foreign caller interleaves between period creates. A later retry then
-      // starts clean or reports the foreign overlap.
-      const partial = afterFailure.filter((deal) =>
-        (deal.status === "scheduled" || deal.status === "active")
-        && markerDeal(deal, request.id));
-      for (const deal of partial) {
-        await creatorsApi.terminateDeal(request.creator_user_id, deal.id, {
-          reason: `Compensating incomplete approval schedule ${request.id}`,
-          force_end_active_session: true,
-        });
-      }
-      return { ok: false, cause };
-    }
-  });
-  if (!outcome.ok) throw outcome.cause;
-  return outcome.dealId;
+    throw cause;
+  }
 }
 
 function multiplierApprovalMarker(request: typeof creator_deal_approval_requests.$inferSelect): string {
@@ -950,45 +984,27 @@ async function listAllMultiplierDeals(creatorUserId: string): Promise<Multiplier
 
 async function ensureBackendMultiplierDeal(request: typeof creator_deal_approval_requests.$inferSelect): Promise<string> {
   if (request.backend_deal_id) return request.backend_deal_id;
-  const outcome = await adminDrizzle.transaction(async (tx): Promise<
-    { ok: true; dealId: string } | { ok: false; cause: unknown }
-  > => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`creator-multiplier-deal:${request.creator_user_id}`}, 0))`);
-    const payload = MultiplierPayloadSchema.parse(request.multiplier_payload);
-    const marker = multiplierApprovalMarker(request);
-    const listed = await listAllMultiplierDeals(request.creator_user_id);
-    const existing = listed.find((deal) => deal.terms_version === marker);
-    if (existing) return { ok: true, dealId: existing.id };
-    const conflicting = listed.find((deal) =>
-      ["pending_deposit", "funded", "live", "pending_review", "flagged"].includes(deal.status));
-    if (conflicting) {
-      error(409, "multiplier_deal_conflict", `Creator already has a ${conflicting.status.replaceAll("_", " ")} multiplier deal.`);
-    }
-    if (request.backend_create_attempted_at) {
-      error(409, "backend_create_unconfirmed", "The original backend create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
-    }
-    const [claimed] = await tx.update(creator_deal_approval_requests).set({
-      backend_create_attempted_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).where(and(
-      eq(creator_deal_approval_requests.id, request.id),
-      sql`${creator_deal_approval_requests.backend_create_attempted_at} IS NULL`,
-    )).returning({ id: creator_deal_approval_requests.id });
-    if (!claimed) error(409, "backend_create_in_progress", "Another worker already started multiplier deal creation.");
-    const { approval_expires_at: _approvalExpiresAt, ...contract } = payload;
-    try {
-      const created = await multiplierDealsApi.create(request.creator_user_id, {
-        ...contract,
-        terms_text: z.array(z.string()).parse(request.agreement_lines).join("\n"),
-        terms_version: marker,
-      } satisfies CreateMultiplierDealInput);
-      return { ok: true, dealId: created.id };
-    } catch (cause) {
-      return { ok: false, cause };
-    }
-  });
-  if (!outcome.ok) throw outcome.cause;
-  return outcome.dealId;
+  const payload = MultiplierPayloadSchema.parse(request.multiplier_payload);
+  const marker = multiplierApprovalMarker(request);
+  const listed = await listAllMultiplierDeals(request.creator_user_id);
+  const existing = listed.find((deal) => deal.terms_version === marker);
+  if (existing) return existing.id;
+  const conflicting = listed.find((deal) =>
+    ["pending_deposit", "funded", "live", "pending_review", "flagged"].includes(deal.status));
+  if (conflicting) {
+    error(409, "multiplier_deal_conflict", `Creator already has a ${conflicting.status.replaceAll("_", " ")} multiplier deal.`);
+  }
+  const claimed = await claimBackendCreateAttempt(request, `creator-multiplier-deal:${request.creator_user_id}`);
+  if (!claimed) {
+    error(409, "backend_create_unconfirmed", "The original backend create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
+  }
+  const { approval_expires_at: _approvalExpiresAt, ...contract } = payload;
+  const created = await multiplierDealsApi.create(request.creator_user_id, {
+    ...contract,
+    terms_text: z.array(z.string()).parse(request.agreement_lines).join("\n"),
+    terms_version: marker,
+  } satisfies CreateMultiplierDealInput);
+  return created.id;
 }
 
 // ADMIN owns the commercial P&L contract. The customer backend only owns the
@@ -1149,10 +1165,18 @@ async function ensureAdminPnlDeal(
     };
   }
 
-  const outcome = await adminDrizzle.transaction(async (tx): Promise<
-    { ok: true; pnlDealId: string; linkedBackendDealId: string } | { ok: false; cause: unknown }
-  > => {
+  const payload = PnlPayloadSchema.parse(request.pnl_payload);
+  const existingBeforeFunding = await adminDrizzle.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`creator-pnl-deal:${request.creator_user_id}`}, 0))`);
+    const lease = await tx.execute<{ provisioning_lease_token: string | null }>(sql`
+      SELECT provisioning_lease_token::text
+      FROM creator_deal_approval_requests
+      WHERE id = ${request.id}::uuid
+      FOR UPDATE
+    `);
+    if (lease.rows[0]?.provisioning_lease_token !== request.provisioning_lease_token) {
+      error(409, "provisioning_lease_lost", "Provisioning lease expired.");
+    }
     const [existing] = await tx.select({
       id: creator_pnl_deals.id,
       linkedFillDealId: creator_pnl_deals.linked_fill_deal_id,
@@ -1162,14 +1186,61 @@ async function ensureAdminPnlDeal(
       .limit(1);
     if (existing) {
       return {
-        ok: true,
         pnlDealId: existing.id,
         linkedBackendDealId: existing.linkedFillDealId ?? existing.linkedMultiplierDealId
           ?? error(409, "admin_pnl_funding_missing", "The Admin P&L deal has no linked funding record."),
       };
     }
+    const [conflict] = await tx.select({ id: creator_pnl_deals.id, status: creator_pnl_deals.status })
+      .from(creator_pnl_deals)
+      .where(and(
+        eq(creator_pnl_deals.creator_user_id, request.creator_user_id),
+        sql`${creator_pnl_deals.status} IN ('scheduled','active','settlement_pending','calculated','crediting')`,
+        sql`${creator_pnl_deals.frame_start_utc} < ${payload.frame_end_utc}::timestamptz`,
+        sql`${creator_pnl_deals.frame_end_utc} > ${payload.frame_start_utc}::timestamptz`,
+      )).limit(1);
+    if (conflict) {
+      error(409, "pnl_deal_window_overlap", `Creator already has a ${conflict.status.replaceAll("_", " ")} Admin P&L deal during the proposed frame.`);
+    }
+    return null;
+  });
+  if (existingBeforeFunding) return existingBeforeFunding;
 
-    const payload = PnlPayloadSchema.parse(request.pnl_payload);
+  // All backend reads and writes happen outside an Admin transaction. A create
+  // is preceded by a committed attempt marker; retries reconcile that marker
+  // before deciding whether another remote create is safe.
+  const funding = await ensurePnlFunding(request, payload, async () => {
+    const claimed = await claimBackendCreateAttempt(request, `creator-pnl-deal:${request.creator_user_id}`);
+    if (!claimed) {
+      error(409, "backend_create_unconfirmed", "The original funding create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
+    }
+  });
+
+  return adminDrizzle.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`creator-pnl-deal:${request.creator_user_id}`}, 0))`);
+    const lease = await tx.execute<{ provisioning_lease_token: string | null }>(sql`
+      SELECT provisioning_lease_token::text
+      FROM creator_deal_approval_requests
+      WHERE id = ${request.id}::uuid
+      FOR UPDATE
+    `);
+    if (lease.rows[0]?.provisioning_lease_token !== request.provisioning_lease_token) {
+      error(409, "provisioning_lease_lost", "Provisioning lease expired.");
+    }
+    const [existing] = await tx.select({
+      id: creator_pnl_deals.id,
+      linkedFillDealId: creator_pnl_deals.linked_fill_deal_id,
+      linkedMultiplierDealId: creator_pnl_deals.linked_multiplier_deal_id,
+    }).from(creator_pnl_deals)
+      .where(eq(creator_pnl_deals.source_approval_request_id, request.id))
+      .limit(1);
+    if (existing) {
+      return {
+        pnlDealId: existing.id,
+        linkedBackendDealId: existing.linkedFillDealId ?? existing.linkedMultiplierDealId
+          ?? error(409, "admin_pnl_funding_missing", "The Admin P&L deal has no linked funding record."),
+      };
+    }
     const [conflict] = await tx.select({ id: creator_pnl_deals.id, status: creator_pnl_deals.status })
       .from(creator_pnl_deals)
       .where(and(
@@ -1182,72 +1253,47 @@ async function ensureAdminPnlDeal(
       error(409, "pnl_deal_window_overlap", `Creator already has a ${conflict.status.replaceAll("_", " ")} Admin P&L deal during the proposed frame.`);
     }
 
-    let attempted = request.backend_create_attempted_at != null;
-    const markCreateAttempted = async () => {
-      if (attempted) {
-        error(409, "backend_create_unconfirmed", "The original funding create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
-      }
-      const [claimed] = await tx.update(creator_deal_approval_requests).set({
-        backend_create_attempted_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }).where(and(
-        eq(creator_deal_approval_requests.id, request.id),
-        sql`${creator_deal_approval_requests.backend_create_attempted_at} IS NULL`,
-      )).returning({ id: creator_deal_approval_requests.id });
-      if (!claimed) error(409, "backend_create_in_progress", "Another worker already started P&L funding creation.");
-      attempted = true;
-    };
-
-    try {
-      const funding = await ensurePnlFunding(request, payload, markCreateAttempted);
-      const pnlDealId = crypto.randomUUID();
-      const now = new Date();
-      const startsActive = new Date(payload.frame_start_utc) <= now;
-      await tx.insert(creator_pnl_deals).values({
-        id: pnlDealId,
-        creator_user_id: request.creator_user_id,
-        source_approval_request_id: request.id,
-        status: startsActive ? "active" : "scheduled",
-        frame_start_utc: payload.frame_start_utc,
-        frame_end_utc: payload.frame_end_utc,
-        positive_pnl_share_bps: payload.positive_pnl_share_bps,
-        funding_mode: payload.funding.type,
-        funding_config: funding.multiplierTermsSnapshot
-          ? {
-              ...payload.funding,
-              multiplier_terms_snapshot: funding.multiplierTermsSnapshot,
-            }
-          : payload.funding,
-        linked_fill_deal_id: funding.linkedFillDealId,
-        linked_multiplier_deal_id: funding.linkedMultiplierDealId,
-        max_tip_per_stream_usd: payload.max_tip_per_stream_usd == null ? null : String(payload.max_tip_per_stream_usd),
-        max_tip_per_user_usd: payload.max_tip_per_user_usd == null ? null : String(payload.max_tip_per_user_usd),
-        max_sponsored_battle_usd: payload.max_sponsored_battle_usd == null ? null : String(payload.max_sponsored_battle_usd),
-        max_sponsorship_per_stream_usd: payload.max_sponsorship_per_stream_usd == null ? null : String(payload.max_sponsorship_per_stream_usd),
-        terms_snapshot: {
-          agreement_document_id: request.agreement_document_id,
-          agreement_version: request.agreement_version,
-          agreement_checksum: request.agreement_checksum,
-          agreement_lines: z.array(z.string()).parse(request.agreement_lines),
-        },
-        credit_idempotency_key: `creator-pnl:${pnlDealId}`,
-        activated_at: startsActive ? now.toISOString() : null,
-        created_by_admin_user_id: request.submitted_by,
-      });
-      await tx.update(creator_deal_approval_requests).set({
-        pnl_deal_id: pnlDealId,
-        backend_deal_id: funding.linkedBackendDealId,
-        updated_at: now.toISOString(),
-      }).where(eq(creator_deal_approval_requests.id, request.id));
-      return { ok: true, pnlDealId, linkedBackendDealId: funding.linkedBackendDealId };
-    } catch (cause) {
-      // Commit an ambiguous remote-create marker. A retry first reconciles the
-      // ordinary fill/multiplier by its immutable terms marker.
-      return { ok: false, cause };
-    }
+    const pnlDealId = crypto.randomUUID();
+    const now = new Date();
+    const startsActive = new Date(payload.frame_start_utc) <= now;
+    await tx.insert(creator_pnl_deals).values({
+      id: pnlDealId,
+      creator_user_id: request.creator_user_id,
+      source_approval_request_id: request.id,
+      status: startsActive ? "active" : "scheduled",
+      frame_start_utc: payload.frame_start_utc,
+      frame_end_utc: payload.frame_end_utc,
+      positive_pnl_share_bps: payload.positive_pnl_share_bps,
+      funding_mode: payload.funding.type,
+      funding_config: funding.multiplierTermsSnapshot
+        ? { ...payload.funding, multiplier_terms_snapshot: funding.multiplierTermsSnapshot }
+        : payload.funding,
+      linked_fill_deal_id: funding.linkedFillDealId,
+      linked_multiplier_deal_id: funding.linkedMultiplierDealId,
+      max_tip_per_stream_usd: payload.max_tip_per_stream_usd == null ? null : String(payload.max_tip_per_stream_usd),
+      max_tip_per_user_usd: payload.max_tip_per_user_usd == null ? null : String(payload.max_tip_per_user_usd),
+      max_sponsored_battle_usd: payload.max_sponsored_battle_usd == null ? null : String(payload.max_sponsored_battle_usd),
+      max_sponsorship_per_stream_usd: payload.max_sponsorship_per_stream_usd == null ? null : String(payload.max_sponsorship_per_stream_usd),
+      terms_snapshot: {
+        agreement_document_id: request.agreement_document_id,
+        agreement_version: request.agreement_version,
+        agreement_checksum: request.agreement_checksum,
+        agreement_lines: z.array(z.string()).parse(request.agreement_lines),
+      },
+      credit_idempotency_key: `creator-pnl:${pnlDealId}`,
+      activated_at: startsActive ? now.toISOString() : null,
+      created_by_admin_user_id: request.submitted_by,
+    });
+    await tx.update(creator_deal_approval_requests).set({
+      pnl_deal_id: pnlDealId,
+      backend_deal_id: funding.linkedBackendDealId,
+      updated_at: now.toISOString(),
+    }).where(and(
+      eq(creator_deal_approval_requests.id, request.id),
+      eq(creator_deal_approval_requests.provisioning_lease_token, request.provisioning_lease_token!),
+    ));
+    return { pnlDealId, linkedBackendDealId: funding.linkedBackendDealId };
   });
-  if (!outcome.ok) throw outcome.cause;
-  return { pnlDealId: outcome.pnlDealId, linkedBackendDealId: outcome.linkedBackendDealId };
 }
 
 /**

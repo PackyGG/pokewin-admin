@@ -65,6 +65,14 @@ test("PostgreSQL health fails closed when logical replication is stopped or stal
 
 test("serverless mirror pools preserve shared role connection headroom", () => {
   const source = fs.readFileSync(path.join(repoRoot, "src/lib/db.ts"), "utf8");
+  const antifraudDb = fs.readFileSync(
+    path.join(repoRoot, "services/antifraud-monitor/src/db.ts"),
+    "utf8",
+  );
+  const antifraudMonitor = fs.readFileSync(
+    path.join(repoRoot, "services/antifraud-monitor/src/monitor.ts"),
+    "utf8",
+  );
   const warmRoute = fs.readFileSync(
     path.join(repoRoot, "src/app/api/cron/warm/route.ts"),
     "utf8",
@@ -92,6 +100,29 @@ test("serverless mirror pools preserve shared role connection headroom", () => {
     /idleTimeoutMillis:\s*isReadMirror\s*\?\s*1_000\s*:\s*10_000/,
   );
   assert.match(source, /maxLifetimeSeconds:\s*600/);
+  assert.match(antifraudDb, /const SOURCE_POOL_MAX = \d+;/);
+  assert.match(antifraudDb, /max:\s*SOURCE_POOL_MAX/);
+
+  const dashboardPoolMax = Number(
+    source.match(/const MIRROR_POOL_MAX = (\d+);/)?.[1],
+  );
+  const antifraudPoolMax = Number(
+    antifraudDb.match(/const SOURCE_POOL_MAX = (\d+);/)?.[1],
+  );
+  const signupConcurrency = Number(
+    antifraudMonitor.match(/const SIGNUP_CONCURRENCY = (\d+);/)?.[1],
+  );
+  assert.ok(Number.isInteger(dashboardPoolMax));
+  assert.ok(Number.isInteger(antifraudPoolMax));
+  assert.ok(Number.isInteger(signupConcurrency));
+  assert.ok(
+    antifraudPoolMax >= signupConcurrency,
+    "the monitor pool must serve its largest intentional source-read fan-out",
+  );
+  assert.ok(
+    antifraudPoolMax <= dashboardPoolMax,
+    "the long-lived monitor must not reserve more shared-role sessions than one ephemeral dashboard isolate",
+  );
   assert.match(warmRoute, /export const maxDuration = 60/);
   // The cron used to bound its demand on the shared mirror limiter with a flat
   // two-worker pool (`Array.from({ length: 2 }, …)`). It now bounds it with two

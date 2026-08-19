@@ -78,8 +78,10 @@ function createPool(
     application_name: `pokewin-admin-main-${env}-${access}`,
     min: 0,
     // The production mirror role is capped at 30 sessions and is shared with
-    // Antifraud. Two slots prevent one slow read from serializing every query
-    // on a page, while remaining far below the old eight-session fan-out.
+    // Antifraud. Eight slots prevent slow reads from serializing the dashboard;
+    // the monitor's separate four-session cap reduces competing long-lived
+    // demand. Vercel isolate count is unbounded, so the role's own 30-session
+    // limit remains the aggregate fail-safe.
     // Vercel can freeze an isolate before node-postgres runs its idle timer.
     // Retire mirror clients after every checkout so a completed request cannot
     // retain one of the shared role's 30 sessions indefinitely. A previous
@@ -92,7 +94,7 @@ function createPool(
     // Mirror reads are wrapped by 15s UI fallbacks on the busiest pages. Do
     // not leave their pool waiters alive for another 20s after the caller has
     // already degraded: during mirror connection loss/capacity exhaustion,
-    // those orphaned waiters occupy the two pool slots and turn refreshes into
+    // those orphaned waiters occupy the pool slots and turn refreshes into
     // a connection stampede. Primary operations retain the longer budget;
     // only read-only mirror acquisition fails fast here.
     connectionTimeoutMillis: isReadMirror ? 10_000 : 35_000,
@@ -134,13 +136,13 @@ function createPool(
  * Hard ceiling on how long one checkout may hold its permit. A client still
  * unreleased after this long is treated as a leak (a caller that forgot
  * `release()`, or an isolate frozen mid-request). Returning the permit anyway
- * keeps a leak from permanently shrinking — and with only two permits,
- * deadlocking — every MAIN read in the isolate. The client itself is left
+ * keeps a leak from permanently shrinking — and eventually deadlocking —
+ * every MAIN read in the isolate. The client itself is left
  * alone; the pool's own lifetime/idle timers reclaim it.
  *
  * It MUST stay ABOVE the longest SANCTIONED hold. Firing on a healthy-but-slow
  * reader is not a safe no-op: it returns a permit whose POOL SLOT is still
- * occupied, so the limiter admits a third reader into a two-slot pool, that
+ * occupied, so the limiter admits a replacement reader into a full pool, that
  * reader queues inside node-postgres, and `connectionTimeoutMillis` rejects it
  * with `timeout exceeded when trying to connect` — precisely the tile failure
  * admission control exists to prevent.
@@ -188,8 +190,8 @@ type ConnectCallback = (
  * every read — plain statement and transaction alike — passes through here
  * exactly once. Wrapping `query` as well (as this did until 2026-08-12) made a
  * statement hold one permit while its OWN internal connect waited for a second:
- * with `permits === pool max`, two concurrent reads consumed both permits and
- * then waited forever for a permit only they could release. That deadlocked
+ * with `permits === pool max`, concurrent reads consumed every permit and then
+ * waited forever for permits only they could release. That deadlocked
  * every MAIN read in the isolate until it was recycled — the dashboard's KPI
  * tiles blanked with "timeout exceeded when trying to connect" while the mirror
  * itself was answering in milliseconds.
@@ -301,9 +303,9 @@ const primaryClients: Map<DbEnv, MainDrizzleDb> =
 // Pinned in EVERY environment, not just dev-HMR. Pool identity would otherwise
 // depend on this module being evaluated exactly once per isolate, and Next's
 // route chunking can hand a second copy of a shared module its own module
-// scope. Each copy would then build its own `max: 2` mirror pool, so one
-// isolate quietly consumes four of the mirror role's 30 shared sessions instead
-// of two. `main-read-limiter.ts` is pinned unconditionally for the same reason;
+// scope. Each copy would then build its own `max: 8` mirror pool, so one
+// isolate could quietly consume sixteen of the mirror role's 30 shared sessions
+// instead of eight. `main-read-limiter.ts` is pinned unconditionally for the same reason;
 // a limiter shared across copies in front of unshared pools is worse than
 // either alone. No-op when the module really is evaluated once.
 globalForMainDb.mainReadDbPools = readPools;

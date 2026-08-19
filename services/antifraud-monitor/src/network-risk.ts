@@ -232,7 +232,7 @@ export async function findNetworkClusterHighRiskMembers(
           SELECT DISTINCT ON (network_key) id
           FROM network_snapshots
           WHERE scanned_at >= now() - ($4::text || ' days')::interval
-          ORDER BY network_key, scanned_at DESC
+          ORDER BY network_key, scanned_at DESC, id DESC
         ),
         target_snapshots AS (
           SELECT DISTINCT l.id
@@ -273,7 +273,7 @@ export async function listActiveNetworkClusterHighRiskMembers(
         SELECT DISTINCT ON (network_key) id
         FROM network_snapshots
         WHERE scanned_at >= now() - ($3::text || ' days')::interval
-        ORDER BY network_key, scanned_at DESC
+        ORDER BY network_key, scanned_at DESC, id DESC
       ),
       target_snapshots AS (
         SELECT id FROM latest
@@ -1579,7 +1579,7 @@ export class NetworkRiskService {
           SELECT DISTINCT ON (network_key) id, network_key
           FROM network_snapshots
           WHERE scanned_at >= now() - ($2::text || ' days')::interval
-          ORDER BY network_key, scanned_at DESC
+          ORDER BY network_key, scanned_at DESC, id DESC
         ),
         matching AS (
           SELECT DISTINCT l.id, l.network_key

@@ -285,6 +285,12 @@ export async function assertMigrationDatabaseMatchesRuntime(
   }
 }
 
+// The MAIN mirror role is shared with the serverless dashboard. Live sampling
+// observed two monitor sessions, while the largest intentional source-read
+// fan-out is four, so cap the long-lived monitor at four to reduce shared-role
+// pressure without throttling its designed concurrency.
+const SOURCE_POOL_MAX = 4;
+
 function createSourcePool(input: {
   connectionString: string;
   mode: "disable" | "require";
@@ -304,11 +310,7 @@ function createSourcePool(input: {
       input.mode,
       input.ca,
     ),
-    // Session budget on the production mirror role: it is capped at 30 sessions
-    // and shared with the dashboard, whose mirror pool takes up to 2 per warm
-    // Vercel instance (src/lib/db.ts). 8 here + instances x 2 must stay under
-    // 30, so this number cannot be raised without shrinking the app-tier side.
-    max: 8,
+    max: SOURCE_POOL_MAX,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 8_000,
     options:

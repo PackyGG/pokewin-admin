@@ -15,7 +15,7 @@ const read = (p: string) => fs.readFileSync(path.join(repoRoot, p), "utf8");
 /**
  * Regression: "Couldn't load this section" on the dashboard.
  *
- * The mirror pool is max:2 while `statement_timeout` is 30s and
+ * The mirror pool has a finite cap while `statement_timeout` is 30s and
  * `connectionTimeoutMillis` is 10s. node-postgres applies the connect timeout
  * to QUEUE WAIT, so one slow query holding a slot for up to 30s made every
  * reader queued behind it reject after 10s with
