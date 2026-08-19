@@ -160,8 +160,9 @@ export async function migrate(pool: pg.Pool): Promise<void> {
 
   const client = await pool.connect();
   try {
-    // The pool sets statement_timeout=15000 for normal queries, but migration
-    // work is neither normal nor interruptible: pg_advisory_lock() BLOCKS, so
+    // Migration 083 makes statement_timeout=15000 the database-role default
+    // for normal queries. Migration work is neither normal nor interruptible:
+    // pg_advisory_lock() BLOCKS, so
     // during a rolling deploy the second booting replica waits behind the
     // first. Aborting that wait at 15s (57014) rejects migrate() before
     // app.listen() ever runs, which makes any migration slower than 15s a

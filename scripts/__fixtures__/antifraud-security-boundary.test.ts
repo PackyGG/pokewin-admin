@@ -16,6 +16,14 @@ const auditIndexMigration = readFileSync(
   "drizzle/admin/migrations/20260807_audit_query_indexes.sql",
   "utf8",
 );
+const auditCompactionMigration = readFileSync(
+  "drizzle/admin/migrations/20260819_antifraud_audit_compaction_observability.sql",
+  "utf8",
+);
+const ingestSource = readFileSync(
+  "src/app/api/antifraud/ingest/route.ts",
+  "utf8",
+);
 const accessSource = readFileSync("src/lib/antifraud/access.ts", "utf8");
 const gateSource = readFileSync("src/lib/require-antifraud-access.ts", "utf8");
 const stepUpSource = readFileSync("src/lib/require-2fa.ts", "utf8");
@@ -70,6 +78,50 @@ test("security audit pagination follows its keyset index", () => {
   assert.match(
     auditIndexMigration,
     /antifraud_security_audit_events \(created_at DESC, id DESC\)/,
+  );
+});
+
+test("automated ingest retries compact forward without changing staff rate limits", () => {
+  assert.match(
+    auditCompactionMigration,
+    /dedupe_automated_receipt boolean NOT NULL DEFAULT false/,
+    "historical rows must remain untouched and outside the new unique key",
+  );
+  assert.match(
+    auditCompactionMigration,
+    /CREATE UNIQUE INDEX IF NOT EXISTS antifraud_security_audit_automated_receipt_idx[\s\S]*dedupe_automated_receipt[\s\S]*outcome = 'allowed'/,
+  );
+  assert.match(auditSource, /ON CONFLICT DO NOTHING/);
+  assert.match(auditSource, /RETURNING correlation_id::text/);
+  assert.match(
+    auditSource,
+    /if \(dedupeAutomatedReceipt\)[\s\S]*SELECT correlation_id::text[\s\S]*AND dedupe_automated_receipt[\s\S]*return existingCorrelationId/,
+    "a suppressed retry must reuse the durable receipt's correlation id",
+  );
+  assert.equal(
+    ingestSource.match(/dedupeAutomatedReceipt: true/g)?.length,
+    3,
+    "pre-flight, failed, and succeeded monitor receipts must use the same guarded path",
+  );
+
+  const staffRateLimit = auditSource.slice(
+    auditSource.indexOf("export async function beginAntifraudAction"),
+    auditSource.indexOf("export async function finishAntifraudAction"),
+  );
+  assert.match(staffRateLimit, /SELECT count\(\*\)::text AS count/);
+  assert.match(staffRateLimit, /outcome = 'allowed'/);
+  assert.doesNotMatch(staffRateLimit, /dedupeAutomatedReceipt/);
+});
+
+test("security audit contains-search and query observability are provisioned", () => {
+  assert.match(auditCompactionMigration, /CREATE EXTENSION IF NOT EXISTS pg_trgm/);
+  assert.match(
+    auditCompactionMigration,
+    /antifraud_security_audit_action_trgm_idx[\s\S]*USING gin \(action gin_trgm_ops\)/,
+  );
+  assert.match(
+    auditCompactionMigration,
+    /CREATE EXTENSION IF NOT EXISTS pg_stat_statements/,
   );
 });
 

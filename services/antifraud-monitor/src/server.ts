@@ -18,8 +18,12 @@ import { serviceRequestAuthorized } from "./auth.js";
 import { loadConfig } from "./config.js";
 import {
   assertDatabaseConnections,
+  assertAntifraudSessionSettings,
+  assertMigrationDatabaseMatchesRuntime,
   closeDatabases,
+  createMigrationDatabase,
   createDatabases,
+  redactDatabaseErrorMessage,
 } from "./db.js";
 import {
   sameDecisionIdentity,
@@ -149,6 +153,7 @@ const SECRET_VALUES = [
   config.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL,
   config.BATTLE_TEST_DEV_DATABASE_URL,
   config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER,
+  config.ANTIFRAUD_MIGRATION_DATABASE_URL,
   config.ANTIFRAUD_DATABASE_URL,
   config.REDIS_URL,
   config.ANTIFRAUD_INGEST_SECRET,
@@ -205,6 +210,7 @@ const app = Fastify({
   },
 });
 const db = createDatabases(config);
+const migrationDb = createMigrationDatabase(config);
 const battleTestConfig = new PgBattleTestConfigStore(
   db.antifraud,
   config.BATTLE_TEST_ENVIRONMENT,
@@ -2400,8 +2406,25 @@ function requestShutdown(signal: NodeJS.Signals): void {
 process.once("SIGTERM", () => requestShutdown("SIGTERM"));
 process.once("SIGINT", () => requestShutdown("SIGINT"));
 
-await migrate(db.antifraud);
-await db.antifraud.query("SELECT 1");
+let migrationStartupError: unknown;
+try {
+  await assertMigrationDatabaseMatchesRuntime(migrationDb, db.antifraud);
+  await migrate(migrationDb);
+} catch (error) {
+  migrationStartupError = error;
+} finally {
+  // Migrations deliberately bypass PgBouncer, but direct database sessions
+  // must not remain part of steady-state runtime traffic.
+  await migrationDb.end().catch((error: unknown) => {
+    migrationStartupError ??= error;
+  });
+}
+if (migrationStartupError) {
+  throw new Error(
+    `Antifraud database migration failed: ${redactDatabaseErrorMessage(migrationStartupError)}`,
+  );
+}
+await assertAntifraudSessionSettings(db.antifraud);
 await preloadDisposableEmailDomains();
 if (!isDisposableEmailListLoaded()) {
   throw new Error("Disposable email domain list failed to load");

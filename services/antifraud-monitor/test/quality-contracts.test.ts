@@ -140,6 +140,40 @@ test("migration runner serializes, rolls back failures, and records only commits
   );
 });
 
+test("antifraud migrations bypass the runtime pool and runtime validates role defaults", async () => {
+  const server = await source("../src/server.ts");
+  const db = await source("../src/db.ts");
+  const defaults = await source(
+    "../migrations/083_antifraud_runtime_session_defaults.sql",
+  );
+
+  assert.match(server, /await migrate\(migrationDb\)/);
+  assert.match(
+    server,
+    /await assertMigrationDatabaseMatchesRuntime\(migrationDb, db\.antifraud\)/,
+  );
+  assert.match(server, /await migrationDb\.end\(\)/);
+  assert.match(server, /redactDatabaseErrorMessage\(migrationStartupError\)/);
+  assert.doesNotMatch(server, /cause:\s*migrationStartupError/);
+  assert.doesNotMatch(server, /await migrate\(db\.antifraud\)/);
+  assert.match(server, /await assertAntifraudSessionSettings\(db\.antifraud\)/);
+  assert.match(db, /ANTIFRAUD_MIGRATION_DATABASE_URL/);
+  const runtimePoolFactory = db.slice(
+    db.indexOf("export function antifraudPoolOptions"),
+    db.indexOf("export function migrationPoolOptions"),
+  );
+  assert.doesNotMatch(
+    runtimePoolFactory,
+    /options\s*:/,
+  );
+  assert.match(defaults, /ALTER ROLE %I IN DATABASE %I SET statement_timeout/);
+  assert.match(defaults, /ALTER ROLE %I IN DATABASE %I SET TimeZone/);
+  assert.match(
+    defaults,
+    /ALTER ROLE %I IN DATABASE %I SET idle_in_transaction_session_timeout/,
+  );
+});
+
 test("fiat scores retain an explicit model identity", async () => {
   const fiatMigration = await source(
     "../migrations/012_fiat_deposit_assessments.sql",

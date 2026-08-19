@@ -88,12 +88,129 @@ function redactConnectionSecrets(message: string): string {
   return text;
 }
 
+export function redactDatabaseErrorMessage(error: unknown): string {
+  return redactConnectionSecrets(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
 export type Databases = {
   source: pg.Pool;
   fiatDevSource: pg.Pool | null;
   battleTestDevSource?: pg.Pool | null;
   antifraud: pg.Pool;
 };
+
+type AntifraudPoolConfig = Pick<
+  Config,
+  | "ANTIFRAUD_DATABASE_URL"
+  | "ANTIFRAUD_DATABASE_SSL"
+  | "ANTIFRAUD_DATABASE_CA"
+>;
+
+type MigrationPoolConfig = Pick<
+  Config,
+  | "ANTIFRAUD_MIGRATION_DATABASE_URL"
+  | "ANTIFRAUD_DATABASE_SSL"
+  | "ANTIFRAUD_DATABASE_CA"
+>;
+
+/**
+ * Runtime pool options intentionally contain no PostgreSQL startup `options`.
+ * Railway's transaction-mode PgBouncer rejects arbitrary startup parameters;
+ * migration 083 installs the timeout and UTC safeguards as role-in-database
+ * defaults on PostgreSQL itself instead.
+ */
+export function antifraudPoolOptions(
+  config: AntifraudPoolConfig,
+): pg.PoolConfig {
+  return {
+    connectionString: config.ANTIFRAUD_DATABASE_URL,
+    ssl: sslFor(
+      config.ANTIFRAUD_DATABASE_SSL,
+      config.ANTIFRAUD_DATABASE_CA,
+    ),
+    // Match the managed PgBouncer backend pool. A larger app-side pool would
+    // only build a second queue in the service without increasing PostgreSQL
+    // throughput; 20 still leaves ample room over the old 12-client ceiling.
+    max: 20,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 8_000,
+    // Deliberately NO idle_in_transaction_session_timeout here. The poller's
+    // leader lease is a transaction that issues one advisory-lock query and
+    // then sits idle for the whole tick while every phase runs on other clients
+    // (monitor.ts). A server-side reaper would terminate that session mid-tick
+    // on any slow tick, release the advisory lock early and let a second
+    // replica start a concurrent tick — duplicate containment, not a cleanup.
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 5_000,
+    maxLifetimeSeconds: 600,
+    application_name: "packy-antifraud",
+  };
+}
+
+/** A one-connection, direct-only pool for session-locking migrations. */
+export function migrationPoolOptions(
+  config: MigrationPoolConfig,
+): pg.PoolConfig {
+  return {
+    connectionString: config.ANTIFRAUD_MIGRATION_DATABASE_URL,
+    ssl: sslFor(
+      config.ANTIFRAUD_DATABASE_SSL,
+      config.ANTIFRAUD_DATABASE_CA,
+    ),
+    max: 1,
+    idleTimeoutMillis: 1_000,
+    connectionTimeoutMillis: 8_000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 5_000,
+    application_name: "packy-antifraud-migrations",
+  };
+}
+
+export function createMigrationDatabase(config: Config): pg.Pool {
+  rememberConnectionSecret(config.ANTIFRAUD_MIGRATION_DATABASE_URL);
+  return new Pool(migrationPoolOptions(config));
+}
+
+type DatabaseIdentity = {
+  database_name: string;
+  role_name: string;
+  system_identifier: string;
+};
+
+async function databaseIdentity(pool: pg.Pool): Promise<DatabaseIdentity> {
+  const result = await pool.query<DatabaseIdentity>(`
+    SELECT
+      current_database() AS database_name,
+      current_user AS role_name,
+      system_identifier::text
+    FROM pg_control_system()
+  `);
+  const identity = result.rows[0];
+  if (!identity) throw new Error("PostgreSQL database identity probe returned no row");
+  return identity;
+}
+
+/** Refuse to migrate unless the direct and runtime URLs are the same DB role/cluster. */
+export async function assertMigrationDatabaseMatchesRuntime(
+  migrationPool: pg.Pool,
+  runtimePool: pg.Pool,
+): Promise<void> {
+  const [migration, runtime] = await Promise.all([
+    databaseIdentity(migrationPool),
+    databaseIdentity(runtimePool),
+  ]);
+  if (
+    migration.database_name !== runtime.database_name ||
+    migration.role_name !== runtime.role_name ||
+    migration.system_identifier !== runtime.system_identifier
+  ) {
+    throw new Error(
+      "Antifraud migration database does not match the runtime database identity",
+    );
+  }
+}
 
 function createSourcePool(input: {
   connectionString: string;
@@ -168,30 +285,7 @@ export function createDatabases(config: Config): Databases {
     : null;
 
   rememberConnectionSecret(config.ANTIFRAUD_DATABASE_URL);
-  const antifraud = new Pool({
-    connectionString: config.ANTIFRAUD_DATABASE_URL,
-    ssl: sslFor(
-      config.ANTIFRAUD_DATABASE_SSL,
-      config.ANTIFRAUD_DATABASE_CA,
-    ),
-    // The dedicated Antifraud DB has ample headroom, and 12 was too tight: the
-    // poller, both outbox drains and a couple of fan-out API routes could
-    // together exceed it and push the poller past connectionTimeoutMillis.
-    max: 24,
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 8_000,
-    // Deliberately NO idle_in_transaction_session_timeout here. The poller's
-    // leader lease is a transaction that issues one advisory-lock query and
-    // then sits idle for the whole tick while every phase runs on other clients
-    // (monitor.ts). A server-side reaper would terminate that session mid-tick
-    // on any slow tick, release the advisory lock early and let a second
-    // replica start a concurrent tick — duplicate containment, not a cleanup.
-    options: "-c statement_timeout=15000 -c TimeZone=UTC",
-    keepAlive: true,
-    keepAliveInitialDelayMillis: 5_000,
-    maxLifetimeSeconds: 600,
-    application_name: "packy-antifraud",
-  });
+  const antifraud = new Pool(antifraudPoolOptions(config));
   antifraud.on("error", (error) => {
     console.error("[antifraud-db] idle pool client error", {
       name: error.name,
@@ -201,6 +295,52 @@ export function createDatabases(config: Config): Databases {
   });
 
   return { source, fiatDevSource, battleTestDevSource, antifraud };
+}
+
+/**
+ * Fail closed if the role defaults required by the pooled runtime are absent.
+ * This also catches a PgBouncer backend fleet that predates migration 083 and
+ * still needs to be recycled before it can safely receive production traffic.
+ */
+export async function assertAntifraudSessionSettings(
+  pool: pg.Pool,
+): Promise<void> {
+  const result = await pool.query<{
+    name: string;
+    setting: string;
+    unit: string | null;
+  }>(`
+    SELECT name, setting, unit
+    FROM pg_settings
+    WHERE name IN (
+      'statement_timeout',
+      'TimeZone',
+      'idle_in_transaction_session_timeout'
+    )
+  `);
+  const settings = new Map(result.rows.map((row) => [row.name, row]));
+  const timeout = settings.get("statement_timeout");
+  const timezone = settings.get("TimeZone");
+  const idleTransactionTimeout = settings.get(
+    "idle_in_transaction_session_timeout",
+  );
+  const timeoutOk = timeout?.unit === "ms" && Number(timeout.setting) === 15_000;
+  const timezoneOk = timezone
+    ? new Set(["UTC", "Etc/UTC"]).has(timezone.setting)
+    : false;
+  const idleTransactionTimeoutOk =
+    idleTransactionTimeout?.unit === "ms" &&
+    Number(idleTransactionTimeout.setting) === 0;
+
+  if (!timeoutOk || !timezoneOk || !idleTransactionTimeoutOk) {
+    throw new Error(
+      "Antifraud database session safeguards are not active " +
+        `(statement_timeout=${timeout?.setting ?? "missing"}${timeout?.unit ?? ""}, ` +
+        `TimeZone=${timezone?.setting ?? "missing"}, ` +
+        `idle_in_transaction_session_timeout=${idleTransactionTimeout?.setting ?? "missing"}` +
+        `${idleTransactionTimeout?.unit ?? ""})`,
+    );
+  }
 }
 
 export async function assertDatabaseConnections(db: Databases): Promise<void> {

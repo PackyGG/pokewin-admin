@@ -26,8 +26,9 @@ const schema = z.object({
   RAILWAY_GIT_COMMIT_SHA: z.string().optional(),
   RAILWAY_DEPLOYMENT_ID: z.string().optional(),
   // Nothing reads `config.TZ` — the process timezone is pinned by
-  // `process.env.TZ ??= "UTC"` in server.ts and by `-c TimeZone=UTC` on both
-  // pools. The field stays declared anyway: the audit-contracts test requires
+  // `process.env.TZ ??= "UTC"` in server.ts. Source pools pin UTC in their
+  // startup options; migration 083 supplies the Antifraud role default. The
+  // field stays declared anyway: the audit-contracts test requires
   // every `process.env.X` consumed under src/ to be declared here, so this is
   // the schema's record of an env var the service does read.
   TZ: z.string().min(1).default("UTC"),
@@ -46,6 +47,10 @@ const schema = z.object({
   BATTLE_TEST_ENVIRONMENT: z.enum(["dev", "prod"]).default("dev"),
   BATTLE_TEST_DEV_DATABASE_URL: z.string().min(1).optional(),
   BATTLE_TEST_DEV_SERVER_SEED_PEPPER: z.string().min(32).optional(),
+  // Runtime traffic may use a transaction-mode pooler. Migrations must not:
+  // their session advisory lock and session-level timeout override require one
+  // stable, direct PostgreSQL connection for the entire migration run.
+  ANTIFRAUD_MIGRATION_DATABASE_URL: z.string().min(1),
   ANTIFRAUD_DATABASE_URL: z.string().min(1),
   ANTIFRAUD_DATABASE_SSL: z.enum(["disable", "require"]).default("disable"),
   ANTIFRAUD_DATABASE_CA: z.string().optional(),

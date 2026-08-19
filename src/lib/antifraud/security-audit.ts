@@ -41,6 +41,12 @@ type AuditInput = {
   targetId?: string | null;
   reasonCode?: string | null;
   idempotencyKey?: string | null;
+  /**
+   * Collapse signed monitor redeliveries onto one pre-flight receipt. This is
+   * deliberately opt-in: staff action attempts must remain one row per
+   * attempt because beginAntifraudAction counts those rows for rate limiting.
+   */
+  dedupeAutomatedReceipt?: boolean;
   metadata?: Record<string, unknown>;
 };
 
@@ -160,8 +166,20 @@ export async function appendAntifraudSecurityAudit(
   const idempotencyHash = input.idempotencyKey
     ? hashSensitive(input.idempotencyKey)
     : null;
+  const dedupeAutomatedReceipt = input.dedupeAutomatedReceipt === true;
+  if (
+    dedupeAutomatedReceipt &&
+    (!idempotencyHash ||
+      input.eventKind !== "action" ||
+      input.actorUsername !== "system:antifraud-monitor" ||
+      !input.action.startsWith("antifraud.automated:"))
+  ) {
+    throw new Error(
+      "Automated audit receipt deduplication requires a signed monitor action and idempotency key",
+    );
+  }
 
-  await adminDrizzle.execute(sql`
+  const inserted = await adminDrizzle.execute<{ correlation_id: string }>(sql`
     INSERT INTO antifraud_security_audit_events (
       correlation_id,
       actor_admin_user_id,
@@ -180,6 +198,7 @@ export async function appendAntifraudSecurityAudit(
       ip_hash,
       user_agent_hash,
       idempotency_key_hash,
+      dedupe_automated_receipt,
       metadata
     ) VALUES (
       ${correlationId}::uuid,
@@ -207,16 +226,38 @@ export async function appendAntifraudSecurityAudit(
       ${request.ipHash},
       ${request.userAgentHash},
       ${idempotencyHash},
+      ${dedupeAutomatedReceipt},
       ${JSON.stringify(metadata)}::jsonb
     )
-    ON CONFLICT (
-      action,
-      outcome,
-      idempotency_key_hash
-    ) WHERE idempotency_key_hash IS NOT NULL
-      AND outcome IN ('succeeded', 'failed')
-    DO NOTHING
+    -- The historical terminal-outcome key and the forward-only automated
+    -- pre-flight key are both idempotency constraints. An untargeted conflict
+    -- handler covers either one without changing staff action inserts, whose
+    -- dedupe_automated_receipt flag remains false.
+    ON CONFLICT DO NOTHING
+    RETURNING correlation_id::text
   `);
+  if (inserted.rows[0]?.correlation_id) {
+    return inserted.rows[0].correlation_id;
+  }
+  if (dedupeAutomatedReceipt) {
+    // ON CONFLICT may have waited for another delivery to commit. Use a fresh
+    // statement snapshot so the caller receives the correlation id of the one
+    // durable pre-flight receipt, keeping its terminal outcome linked to it.
+    const existing = await adminDrizzle.execute<{ correlation_id: string }>(sql`
+      SELECT correlation_id::text
+      FROM antifraud_security_audit_events
+      WHERE action = ${safeIdentifier(input.action, 160)}
+        AND outcome = 'allowed'
+        AND idempotency_key_hash = ${idempotencyHash}
+        AND dedupe_automated_receipt
+      LIMIT 1
+    `);
+    const existingCorrelationId = existing.rows[0]?.correlation_id;
+    if (!existingCorrelationId) {
+      throw new Error("Automated audit receipt deduplication lost its durable receipt");
+    }
+    return existingCorrelationId;
+  }
   return correlationId;
 }
 

@@ -187,6 +187,8 @@ const runtimeConfig: Config = {
   SOURCE_DATABASE_SSL: "disable",
   BATTLE_TEST_ENVIRONMENT: "dev",
   FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_SSL: "disable",
+  ANTIFRAUD_MIGRATION_DATABASE_URL:
+    "postgresql://fraud-user:fraud-secret@fraud-direct/db",
   ANTIFRAUD_DATABASE_URL: "postgresql://fraud-user:fraud-secret@fraud/db",
   ANTIFRAUD_DATABASE_SSL: "disable",
   REDIS_URL: "redis://default:redis-secret@redis",
@@ -301,6 +303,7 @@ test("authoritative runtime status returns presence and compiled ids only", () =
   });
   for (const secret of [
     runtimeConfig.SOURCE_DATABASE_URL,
+    runtimeConfig.ANTIFRAUD_MIGRATION_DATABASE_URL,
     runtimeConfig.ANTIFRAUD_DATABASE_URL,
     runtimeConfig.REDIS_URL,
     runtimeConfig.FINGERPRINT_SECRET_API_KEY,

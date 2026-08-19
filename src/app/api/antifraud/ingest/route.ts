@@ -204,10 +204,9 @@ export async function POST(request: Request): Promise<Response> {
     try {
       // Pre-flight receipt, written BEFORE anything is stored so an
       // unavailable audit fails the delivery CLOSED instead of acting
-      // unlogged. The `allowed` outcome is deliberately per-ATTEMPT: the audit
-      // INSERT's conflict clause only de-duplicates `succeeded`/`failed`, so a
-      // redelivery writes another row — `idempotencyKey` correlates the
-      // attempts here, it does not collapse them.
+      // unlogged. Signed redeliveries reuse the one durable pre-flight receipt
+      // and its correlation id; terminal outcomes remain independently
+      // idempotent under the same signal key.
       correlationId = await appendAntifraudSecurityAudit({
         actorUsername: "system:antifraud-monitor",
         actorRoles: ["system"],
@@ -218,6 +217,7 @@ export async function POST(request: Request): Promise<Response> {
         targetType: "user",
         targetId: signal.userId ?? signal.id,
         idempotencyKey: signal.id,
+        dedupeAutomatedReceipt: true,
         metadata: {
           severity: signal.severity,
           riskScore: signal.riskScore,
@@ -246,6 +246,7 @@ export async function POST(request: Request): Promise<Response> {
           targetType: "user",
           targetId: signal.userId ?? signal.id,
           idempotencyKey: signal.id,
+          dedupeAutomatedReceipt: true,
           reasonCode: antifraudErrorCode(err),
         });
       } catch {
@@ -323,6 +324,7 @@ async function appendOutcomeAudit(input: {
       targetType: "user",
       targetId: input.signal.userId ?? input.signal.id,
       idempotencyKey: input.signal.id,
+      dedupeAutomatedReceipt: true,
       metadata: input.metadata,
     });
   } catch (err) {

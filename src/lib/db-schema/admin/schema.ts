@@ -2243,6 +2243,7 @@ export const antifraud_security_audit_events = pgTable("antifraud_security_audit
 	ip_hash: text(),
 	user_agent_hash: text(),
 	idempotency_key_hash: text(),
+	dedupe_automated_receipt: boolean().default(false).notNull(),
 	metadata: jsonb().default({}).notNull(),
 	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
@@ -2250,6 +2251,7 @@ export const antifraud_security_audit_events = pgTable("antifraud_security_audit
 	index("antifraud_security_audit_actor_time_idx").using("btree", table.actor_admin_user_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("uuid_ops")),
 	index("antifraud_security_audit_correlation_idx").using("btree", table.correlation_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("uuid_ops")),
 	index("antifraud_security_audit_created_id_idx").using("btree", table.created_at.desc().nullsFirst().op("uuid_ops"), table.id.desc().nullsFirst().op("timestamptz_ops")),
+	uniqueIndex("antifraud_security_audit_automated_receipt_idx").using("btree", table.action.asc().nullsLast().op("text_ops"), table.idempotency_key_hash.asc().nullsLast().op("text_ops")).where(sql`dedupe_automated_receipt AND idempotency_key_hash IS NOT NULL AND outcome = 'allowed'`),
 	uniqueIndex("antifraud_security_audit_outcome_idempotency_idx").using("btree", table.action.asc().nullsLast().op("text_ops"), table.outcome.asc().nullsLast().op("text_ops"), table.idempotency_key_hash.asc().nullsLast().op("text_ops")).where(sql`((idempotency_key_hash IS NOT NULL) AND (outcome = ANY (ARRAY['succeeded'::text, 'failed'::text])))`),
 	foreignKey({
 			columns: [table.actor_admin_user_id],

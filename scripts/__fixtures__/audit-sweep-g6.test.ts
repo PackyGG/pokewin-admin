@@ -42,12 +42,18 @@ test("service pool errors are redacted and the antifraud pool keeps no idle-in-t
   // These logs run before Fastify exists, so the `err` serializer in server.ts
   // that scrubs secret VALUES never sees them.
   assert.doesNotMatch(db, /message: error\.message,/);
-  assert.equal(db.match(/redactConnectionSecrets\(/g)?.length, 4);
+  assert.equal(db.match(/redactConnectionSecrets\(/g)?.length, 5);
 
   // The poller lease is a transaction that holds one advisory lock and then
   // sits idle for the whole tick. A server-side idle-in-transaction reaper
   // would release that lock mid-tick and let a second replica run concurrently.
-  assert.doesNotMatch(db, /idle_in_transaction_session_timeout=/);
+  const runtimePool = db.slice(
+    db.indexOf("export function antifraudPoolOptions"),
+    db.indexOf("export function migrationPoolOptions"),
+  );
+  assert.doesNotMatch(runtimePool, /idle_in_transaction_session_timeout\s*:/);
+  assert.doesNotMatch(runtimePool, /options\s*:/);
+  assert.match(db, /Number\(idleTransactionTimeout\.setting\) === 0/);
   assert.match(monitor, /pg_try_advisory_xact_lock\(\$1\) AS acquired/);
   assert.match(db, /keepAlive: true/);
   assert.match(db, /maxLifetimeSeconds: 600/);

@@ -106,6 +106,18 @@ test("migration checksums are stable across LF and CRLF checkouts", () => {
   );
 });
 
+test("applied migration 082 retains its production checksum", async () => {
+  const raw = await readFile(
+    join(migrationsDir, "082_battle_test_user_sequence_environments.sql"),
+  );
+
+  assert.equal(
+    computeChecksum(raw),
+    "1e55ff2244658cbdf536a99732e718d66f49514a20c37616cdb2f1247de0895f",
+    "never edit an already-applied migration; put follow-up changes in a new file",
+  );
+});
+
 test("a legacy raw CRLF checksum is accepted and upgraded to canonical LF", async () => {
   const files = await realMigrationFiles();
   const target = files[0];

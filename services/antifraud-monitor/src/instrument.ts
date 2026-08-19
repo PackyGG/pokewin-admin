@@ -16,6 +16,7 @@ const secrets = [
   process.env.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_CA,
   process.env.BATTLE_TEST_DEV_DATABASE_URL,
   process.env.BATTLE_TEST_DEV_SERVER_SEED_PEPPER,
+  process.env.ANTIFRAUD_MIGRATION_DATABASE_URL,
   process.env.ANTIFRAUD_DATABASE_URL,
   process.env.ANTIFRAUD_DATABASE_CA,
   process.env.REDIS_URL,

@@ -8,6 +8,13 @@ Independent TypeScript service for signup risk assessment and short-lived
 behaviour monitoring. It reads Packy through a read-only PostgreSQL connection
 and stores all antifraud state in the dedicated Antifraud PostgreSQL database.
 
+`ANTIFRAUD_DATABASE_URL` is the steady-state runtime connection and may point
+to Railway's transaction-mode PgBouncer. `ANTIFRAUD_MIGRATION_DATABASE_URL`
+must point directly to the same PostgreSQL database: the migration runner uses
+a session advisory lock and therefore cannot run through transaction pooling.
+The direct pool is limited to one connection and closed immediately after boot
+migrations finish.
+
 It does not modify the Packy frontend or backend.
 
 ## Runtime
@@ -314,9 +321,12 @@ origin rejection is logged server-side with the configured allowlist.
 ## Timezone and health
 
 Set `TZ=UTC` as a service variable (Railway variables are not settable from
-`railway.json`); the process also defaults `TZ` to `UTC` at boot and both
-connection pools pin `-c TimeZone=UTC`, so naive timestamps never depend on the
-container's local zone.
+`railway.json`); the process also defaults `TZ` to `UTC` at boot. Source pools
+pin UTC in their direct startup options. Antifraud migration 083 installs UTC,
+the 15-second statement timeout, and the leader-safe disabled idle-transaction
+timeout as PostgreSQL role-in-database defaults. They remain active through
+transaction-mode PgBouncer without unsupported startup parameters. Boot fails
+closed if the runtime connection does not observe those safeguards.
 
 `/health` returns `503` when the elected poller leader has not completed a
 successful tick within `POLLER_LIVENESS_TIMEOUT_MS` (default 120000), so the

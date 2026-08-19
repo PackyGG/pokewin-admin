@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { sourceConnectionString, sourceSslFor } from "../src/db.js";
+import type pg from "pg";
+
+import {
+  antifraudPoolOptions,
+  assertAntifraudSessionSettings,
+  assertMigrationDatabaseMatchesRuntime,
+  migrationPoolOptions,
+  sourceConnectionString,
+  sourceSslFor,
+} from "../src/db.js";
 
 test("source database TLS is disabled only when explicitly configured", () => {
   assert.equal(sourceSslFor("disable"), false);
@@ -40,5 +49,118 @@ test("source connection string errors never expose credentials", () => {
   assert.throws(
     () => sourceConnectionString("not-a-database-url-with-secret", "require"),
     { message: "SOURCE_DATABASE_URL is invalid" },
+  );
+});
+
+test("pooled antifraud runtime sends no unsupported startup options", () => {
+  const options = antifraudPoolOptions({
+    ANTIFRAUD_DATABASE_URL: "postgresql://pooler/runtime",
+    ANTIFRAUD_DATABASE_SSL: "disable",
+  });
+
+  assert.equal(options.connectionString, "postgresql://pooler/runtime");
+  assert.equal(options.max, 20);
+  assert.equal(options.application_name, "packy-antifraud");
+  assert.equal(options.options, undefined);
+});
+
+test("migration pool is separate, direct, and limited to one connection", () => {
+  const options = migrationPoolOptions({
+    ANTIFRAUD_MIGRATION_DATABASE_URL: "postgresql://postgres-direct/migrations",
+    ANTIFRAUD_DATABASE_SSL: "disable",
+  });
+
+  assert.equal(
+    options.connectionString,
+    "postgresql://postgres-direct/migrations",
+  );
+  assert.equal(options.max, 1);
+  assert.equal(options.application_name, "packy-antifraud-migrations");
+  assert.equal(options.options, undefined);
+});
+
+test("migration database identity must match the runtime database", async () => {
+  const pool = (identity: {
+    database_name: string;
+    role_name: string;
+    system_identifier: string;
+  }) =>
+    ({ query: async () => ({ rows: [identity] }) }) as unknown as pg.Pool;
+  const expected = {
+    database_name: "railway",
+    role_name: "postgres",
+    system_identifier: "123456789",
+  };
+
+  await assert.doesNotReject(() =>
+    assertMigrationDatabaseMatchesRuntime(pool(expected), pool(expected)),
+  );
+  await assert.rejects(
+    () =>
+      assertMigrationDatabaseMatchesRuntime(
+        pool(expected),
+        pool({ ...expected, system_identifier: "987654321" }),
+      ),
+    /does not match the runtime database identity/,
+  );
+});
+
+test("runtime session safeguard verification accepts the required defaults", async () => {
+  const pool = {
+    query: async () => ({
+      rows: [
+        { name: "statement_timeout", setting: "15000", unit: "ms" },
+        { name: "TimeZone", setting: "UTC", unit: null },
+        {
+          name: "idle_in_transaction_session_timeout",
+          setting: "0",
+          unit: "ms",
+        },
+      ],
+    }),
+  } as unknown as pg.Pool;
+
+  await assert.doesNotReject(() => assertAntifraudSessionSettings(pool));
+});
+
+test("runtime session safeguard verification fails closed on a missing timeout", async () => {
+  const pool = {
+    query: async () => ({
+      rows: [
+        { name: "statement_timeout", setting: "0", unit: "ms" },
+        { name: "TimeZone", setting: "Etc/UTC", unit: null },
+        {
+          name: "idle_in_transaction_session_timeout",
+          setting: "0",
+          unit: "ms",
+        },
+      ],
+    }),
+  } as unknown as pg.Pool;
+
+  await assert.rejects(
+    () => assertAntifraudSessionSettings(pool),
+    /statement_timeout=0ms/,
+  );
+});
+
+test("runtime session safeguard verification protects the idle leader lease", async () => {
+  const pool = {
+    query: async () => ({
+      rows: [
+        { name: "statement_timeout", setting: "15000", unit: "ms" },
+        { name: "TimeZone", setting: "UTC", unit: null },
+        {
+          name: "idle_in_transaction_session_timeout",
+          setting: "30000",
+          unit: "ms",
+        },
+      ],
+    }),
+  } as unknown as pg.Pool;
+
+  await assert.rejects(
+    () => assertAntifraudSessionSettings(pool),
+    /idle_in_transaction_session_timeout=30000ms/,
   );
 });

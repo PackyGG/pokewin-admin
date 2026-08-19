@@ -29,6 +29,12 @@ export const NETWORK_HIGH_RISK_CASE_PEAK_SCORE = 80;
 const CLUSTER_LOOKUP_BATCH_SIZE = 500;
 const CLUSTER_SCAN_LOOKBACK_DAYS = 30;
 const CLUSTER_SCAN_MEMBER_LIMIT = 5_000;
+// Evidence readers use a 30-day lookback. Keep an additional five-day buffer so cleanup can
+// never race a boundary query, and delete only a small number of complete snapshots per pass;
+// their nodes, secrets, and edges are removed atomically by the existing ON DELETE CASCADE FKs.
+export const NETWORK_SNAPSHOT_RETENTION_DAYS = 35;
+export const NETWORK_SNAPSHOT_CLEANUP_BATCH_SIZE = 10;
+const NETWORK_SNAPSHOT_CLEANUP_INTERVAL_MS = 6 * 60 * 60_000;
 
 export const CREATOR_WINDOW_KEYS = ["7d", "30d", "90d", "lifetime"] as const;
 export type CreatorWindowKey = (typeof CREATOR_WINDOW_KEYS)[number];
@@ -288,6 +294,90 @@ export async function listActiveNetworkClusterHighRiskMembers(
   return new Set(result.rows.map((row) => row.user_id));
 }
 
+/**
+ * Removes a bounded batch of superseded graph snapshots outside every evidence window.
+ *
+ * The newest snapshot for both a network key and a root account is retained even when stale,
+ * as is every snapshot referenced by a case. Row locks make concurrent service replicas split
+ * the work rather than delete the same batch. Deleting the parent is intentionally atomic so a
+ * graph can never be left with only some nodes or edges.
+ */
+export async function cleanupExpiredNetworkSnapshots(
+  db: Databases,
+): Promise<number> {
+  const client = await db.antifraud.connect();
+  let destroyClient = false;
+  try {
+    await client.query("BEGIN");
+    const guard = await client.query<{ acquired: boolean }>(`
+      SELECT pg_try_advisory_xact_lock(
+        hashtextextended('antifraud-network-snapshot-retention-v1', 0)
+      ) AS acquired
+    `);
+    if (!guard.rows[0]?.acquired) {
+      await client.query("COMMIT");
+      return 0;
+    }
+
+    // Lock before the case check. Case creation locks the same parent row, so
+    // either it commits first and this pass skips/rechecks its reference, or
+    // cleanup deletes first and case creation cannot silently retain a NULL
+    // evidence pointer.
+    const candidates = await client.query<{ id: string }>(
+      `
+        SELECT snapshot.id
+        FROM network_snapshots snapshot
+        WHERE snapshot.scanned_at < now() - ($1::text || ' days')::interval
+          AND EXISTS (
+            SELECT 1
+            FROM network_snapshots newer
+            WHERE newer.network_key = snapshot.network_key
+              AND (newer.scanned_at, newer.id) > (snapshot.scanned_at, snapshot.id)
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM network_snapshots newer
+            WHERE newer.root_user_id = snapshot.root_user_id
+              AND (newer.scanned_at, newer.id) > (snapshot.scanned_at, snapshot.id)
+          )
+        ORDER BY snapshot.scanned_at, snapshot.id
+        LIMIT $2
+        FOR UPDATE OF snapshot SKIP LOCKED
+      `,
+      [NETWORK_SNAPSHOT_RETENTION_DAYS, NETWORK_SNAPSHOT_CLEANUP_BATCH_SIZE],
+    );
+    if (candidates.rows.length === 0) {
+      await client.query("COMMIT");
+      return 0;
+    }
+
+    // This is a new READ COMMITTED command snapshot taken after the parent
+    // locks. Recheck references here instead of trusting the candidate query.
+    const deleted = await client.query<{ id: string }>(
+      `
+        DELETE FROM network_snapshots snapshot
+        WHERE snapshot.id = ANY($1::uuid[])
+          AND NOT EXISTS (
+            SELECT 1
+            FROM cases c
+            WHERE c.network_snapshot_id = snapshot.id
+          )
+        RETURNING snapshot.id
+      `,
+      [candidates.rows.map((row) => row.id)],
+    );
+    await client.query("COMMIT");
+    return deleted.rowCount ?? deleted.rows.length;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {
+      destroyClient = true;
+    });
+    throw error;
+  } finally {
+    client.release(destroyClient);
+  }
+}
+
 export class NetworkRiskService {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -296,6 +386,7 @@ export class NetworkRiskService {
   private readonly workerId = randomUUID();
   private lastAccountReconciliationAt = 0;
   private lastCreatorReconciliationAt = 0;
+  private lastSnapshotCleanupAt = 0;
 
   constructor(
     private readonly db: Databases,
@@ -464,6 +555,30 @@ export class NetworkRiskService {
           await this.completeJob(job.id, message.slice(0, 1_000));
         } finally {
           clearInterval(heartbeat);
+        }
+      }
+
+      // Core scans always get the worker first. Retention is best-effort and bounded to one
+      // small statement so a cleanup failure or slow cascade cannot fail a scan job.
+      if (
+        !this.stopping &&
+        now - this.lastSnapshotCleanupAt >=
+          NETWORK_SNAPSHOT_CLEANUP_INTERVAL_MS
+      ) {
+        this.lastSnapshotCleanupAt = now;
+        try {
+          const deleted = await cleanupExpiredNetworkSnapshots(this.db);
+          if (deleted > 0) {
+            this.log.info(
+              { deleted, retentionDays: NETWORK_SNAPSHOT_RETENTION_DAYS },
+              "Cleaned up expired Antifraud network snapshots",
+            );
+          }
+        } catch (error) {
+          this.log.warn(
+            { err: error },
+            "Antifraud network snapshot cleanup deferred after failure",
+          );
         }
       }
     } finally {
