@@ -32,6 +32,10 @@ function fakePool(options: {
     query: async (text: string, values?: unknown[]) => {
       calls.push({ text, values });
 
+      if (text.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }], rowCount: 1 };
+      }
+
       if (text.includes("SELECT version FROM schema_migrations WHERE checksum IS NULL")) {
         const versions = options.nullChecksumVersions ?? [];
         return { rows: versions.map((version) => ({ version })), rowCount: versions.length };
@@ -222,4 +226,76 @@ test("the duplicate-prefix guard fails if a new file is added onto an existing a
 test("the current on-disk migrations directory has no un-allowlisted duplicate prefixes", async () => {
   const files = await realMigrationFiles();
   assert.doesNotThrow(() => checkDuplicatePrefixes(files));
+});
+
+test("migration lock acquisition honors the startup deadline", async () => {
+  let releasedWith: Error | undefined;
+  const client = {
+    query: async (text: string) => {
+      if (text.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: false }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release: (error?: Error) => {
+      releasedWith = error;
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      migrate(
+        { connect: async () => client } as unknown as pg.Pool,
+        { lockDeadlineAt: Date.now() },
+      ),
+    /Timed out waiting for the migration lock/,
+  );
+  assert.equal(releasedWith, undefined);
+});
+
+test("migration cleanup redacts direct connection errors before logging", async () => {
+  const secret = "postgresql://user:very-secret@example.test/db";
+  const logged: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...values: unknown[]) => logged.push(values);
+  const client = {
+    query: async (text: string) => {
+      if (text.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }], rowCount: 1 };
+      }
+      if (text.includes("pg_advisory_unlock")) {
+        throw new Error(`connection failed for ${secret}`);
+      }
+      if (text.includes("SELECT version FROM schema_migrations")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (text.includes("SELECT EXISTS")) {
+        return { rows: [{ exists: true }], rowCount: 1 };
+      }
+      if (text.includes("SELECT checksum")) {
+        return { rows: [{ checksum: null }], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release: () => undefined,
+  };
+
+  try {
+    await migrate(
+      { connect: async () => client } as unknown as pg.Pool,
+      {
+        redactErrorMessage: (error) =>
+          String(error instanceof Error ? error.message : error).replaceAll(
+            secret,
+            "[redacted]",
+          ),
+      },
+    );
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  const rendered = JSON.stringify(logged);
+  assert.doesNotMatch(rendered, /very-secret/);
+  assert.match(rendered, /\[redacted\]/);
 });

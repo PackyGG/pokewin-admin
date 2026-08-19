@@ -7,6 +7,7 @@ import {
   antifraudPoolOptions,
   assertAntifraudSessionSettings,
   assertMigrationDatabaseMatchesRuntime,
+  isTransientDatabaseStartupError,
   migrationPoolOptions,
   sourceConnectionString,
   sourceSslFor,
@@ -14,6 +15,49 @@ import {
 
 test("source database TLS is disabled only when explicitly configured", () => {
   assert.equal(sourceSslFor("disable"), false);
+});
+
+test("database startup retries failover errors but not integrity failures", () => {
+  assert.equal(isTransientDatabaseStartupError({ code: "57P01" }), true);
+  assert.equal(isTransientDatabaseStartupError({ code: "08006" }), true);
+  assert.equal(isTransientDatabaseStartupError({ code: "08P01" }), false);
+  assert.equal(isTransientDatabaseStartupError({ code: "EAI_AGAIN" }), true);
+  assert.equal(isTransientDatabaseStartupError({ code: "EHOSTUNREACH" }), true);
+  assert.equal(isTransientDatabaseStartupError({ code: "EPIPE" }), true);
+  assert.equal(
+    isTransientDatabaseStartupError(
+      new Error("server login has been failing, cached error: connect failed (server_login_retry)"),
+    ),
+    true,
+  );
+  assert.equal(
+    isTransientDatabaseStartupError({
+      cause: new Error("the database system is shutting down"),
+    }),
+    true,
+  );
+  assert.equal(
+    isTransientDatabaseStartupError(
+      new Error("Antifraud migration database does not match the runtime database identity"),
+    ),
+    false,
+  );
+  assert.equal(
+    isTransientDatabaseStartupError(new Error("Migration checksum mismatch")),
+    false,
+  );
+  assert.equal(
+    isTransientDatabaseStartupError(
+      new Error("server login has been failing: password authentication failed"),
+    ),
+    false,
+  );
+  assert.equal(
+    isTransientDatabaseStartupError(
+      new Error("connect failed: self-signed certificate in certificate chain"),
+    ),
+    false,
+  );
 });
 
 test("source database require keeps transport encrypted without a private CA", () => {

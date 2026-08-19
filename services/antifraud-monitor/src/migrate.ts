@@ -154,21 +154,57 @@ async function backfillMissingChecksums(
   }
 }
 
-export async function migrate(pool: pg.Pool): Promise<void> {
+type MigrationOptions = {
+  lockDeadlineAt?: number;
+  shouldAbort?: () => boolean;
+  redactErrorMessage?: (error: unknown) => string;
+};
+
+function migrationStartupError(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: "57P03" });
+}
+
+export async function migrate(
+  pool: pg.Pool,
+  options: MigrationOptions = {},
+): Promise<void> {
   const { dir: migrationsDir, files } = await resolveMigrations();
   checkDuplicatePrefixes(files);
 
   const client = await pool.connect();
+  let advisoryLockHeld = false;
   try {
     // Migration 083 makes statement_timeout=15000 the database-role default
     // for normal queries. Migration work is neither normal nor interruptible:
-    // pg_advisory_lock() BLOCKS, so
-    // during a rolling deploy the second booting replica waits behind the
-    // first. Aborting that wait at 15s (57014) rejects migrate() before
-    // app.listen() ever runs, which makes any migration slower than 15s a
-    // deterministic boot failure for every concurrent replica.
+    // Polling pg_try_advisory_lock keeps lock acquisition inside the caller's
+    // startup deadline. Once this process owns the lock, actual migration DDL
+    // remains deliberately uncancelled so a platform timeout cannot interrupt
+    // a transaction halfway through its schema change.
+    for (;;) {
+      if (options.shouldAbort?.()) {
+        throw migrationStartupError("Migration startup aborted during shutdown");
+      }
+      if (
+        options.lockDeadlineAt !== undefined &&
+        Date.now() >= options.lockDeadlineAt
+      ) {
+        throw migrationStartupError("Timed out waiting for the migration lock");
+      }
+      const lock = await client.query<{ locked: boolean }>(
+        "SELECT pg_try_advisory_lock($1) AS locked",
+        [841_772_991],
+      );
+      if (lock.rows[0]?.locked) {
+        advisoryLockHeld = true;
+        break;
+      }
+      const remainingMs =
+        options.lockDeadlineAt === undefined
+          ? 250
+          : Math.max(0, options.lockDeadlineAt - Date.now());
+      await new Promise((resolve) => setTimeout(resolve, Math.min(250, remainingMs)));
+    }
     await client.query("SET statement_timeout = 0");
-    await client.query("SELECT pg_advisory_lock($1)", [841_772_991]);
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version text PRIMARY KEY,
@@ -239,14 +275,18 @@ export async function migrate(pool: pg.Pool): Promise<void> {
     let cleanupError: Error | undefined;
     const asError = (error: unknown): Error =>
       error instanceof Error ? error : new Error(String(error));
-    await client
-      .query("SELECT pg_advisory_unlock($1)", [841_772_991])
-      .catch((error: unknown) => {
-        cleanupError = asError(error);
-        console.error("[migrate] advisory unlock failed", {
-          message: cleanupError.message,
+    if (advisoryLockHeld) {
+      await client
+        .query("SELECT pg_advisory_unlock($1)", [841_772_991])
+        .catch((error: unknown) => {
+          cleanupError = asError(error);
+          console.error("[migrate] advisory unlock failed", {
+            message:
+              options.redactErrorMessage?.(cleanupError) ??
+              "database cleanup failed",
+          });
         });
-      });
+    }
     await client.query("RESET statement_timeout").catch((error: unknown) => {
       cleanupError ??= asError(error);
     });

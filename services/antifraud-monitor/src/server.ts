@@ -23,6 +23,7 @@ import {
   closeDatabases,
   createMigrationDatabase,
   createDatabases,
+  isTransientDatabaseStartupError,
   redactDatabaseErrorMessage,
 } from "./db.js";
 import {
@@ -2382,11 +2383,13 @@ app.addHook("onClose", async () => {
 });
 
 let shutdownPromise: Promise<void> | null = null;
+const startupAbortController = new AbortController();
 function requestShutdown(signal: NodeJS.Signals): void {
   if (shutdownPromise) return;
   // Flip into lame-duck first: /health and /ready go 503 immediately and the
   // short drain window lets the platform stop routing before the close starts.
   shuttingDown = true;
+  startupAbortController.abort();
   app.log.info({ signal }, "Antifraud service shutdown requested");
   const warning = setTimeout(() => {
     app.log.error({ signal }, "Antifraud service shutdown exceeded 25 seconds");
@@ -2407,11 +2410,74 @@ process.once("SIGTERM", () => requestShutdown("SIGTERM"));
 process.once("SIGINT", () => requestShutdown("SIGINT"));
 
 let migrationStartupError: unknown;
+const databaseStartupStartedAt = Date.now();
+const DATABASE_STARTUP_RETRY_BUDGET_MS = 120_000;
+const databaseStartupDeadlineAt =
+  databaseStartupStartedAt + DATABASE_STARTUP_RETRY_BUDGET_MS;
+let databaseStartupAttempts = 0;
+async function waitForDatabaseStartupRetry(delayMs: number): Promise<boolean> {
+  if (startupAbortController.signal.aborted) return false;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (completed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      startupAbortController.signal.removeEventListener("abort", onAbort);
+      resolve(completed);
+    };
+    const onAbort = () => finish(false);
+    const timer = setTimeout(() => finish(true), delayMs);
+    startupAbortController.signal.addEventListener("abort", onAbort, {
+      once: true,
+    });
+  });
+}
 try {
-  await assertMigrationDatabaseMatchesRuntime(migrationDb, db.antifraud);
-  await migrate(migrationDb);
-} catch (error) {
-  migrationStartupError = error;
+  for (;;) {
+    if (shuttingDown) break;
+    if (Date.now() >= databaseStartupDeadlineAt) {
+      migrationStartupError = Object.assign(
+        new Error("Database startup retry deadline exceeded"),
+        { code: "57P03" },
+      );
+      break;
+    }
+    try {
+      await assertMigrationDatabaseMatchesRuntime(migrationDb, db.antifraud);
+      await migrate(migrationDb, {
+        lockDeadlineAt: databaseStartupDeadlineAt,
+        shouldAbort: () => shuttingDown,
+        redactErrorMessage: redactDatabaseErrorMessage,
+      });
+      if (shuttingDown) break;
+      await assertAntifraudSessionSettings(db.antifraud);
+      break;
+    } catch (error) {
+      databaseStartupAttempts += 1;
+      const remainingMs =
+        DATABASE_STARTUP_RETRY_BUDGET_MS -
+        (Date.now() - databaseStartupStartedAt);
+      if (remainingMs <= 0 || !isTransientDatabaseStartupError(error)) {
+        migrationStartupError = error;
+        break;
+      }
+      const retryInMs = Math.min(
+        remainingMs,
+        10_000,
+        1_000 * 2 ** Math.min(databaseStartupAttempts - 1, 4),
+      );
+      app.log.warn(
+        {
+          attempt: databaseStartupAttempts,
+          retryInMs,
+          error: redactDatabaseErrorMessage(error),
+        },
+        "Antifraud database startup deferred during failover",
+      );
+      if (!(await waitForDatabaseStartupRetry(retryInMs))) break;
+    }
+  }
 } finally {
   // Migrations deliberately bypass PgBouncer, but direct database sessions
   // must not remain part of steady-state runtime traffic.
@@ -2419,12 +2485,14 @@ try {
     migrationStartupError ??= error;
   });
 }
-if (migrationStartupError) {
+if (migrationStartupError && !shuttingDown) {
   throw new Error(
     `Antifraud database migration failed: ${redactDatabaseErrorMessage(migrationStartupError)}`,
   );
 }
-await assertAntifraudSessionSettings(db.antifraud);
+if (shuttingDown) {
+  await shutdownPromise;
+} else {
 await preloadDisposableEmailDomains();
 if (!isDisposableEmailListLoaded()) {
   throw new Error("Disposable email domain list failed to load");
@@ -2496,3 +2564,4 @@ void (async () => {
     }
   }
 })();
+}

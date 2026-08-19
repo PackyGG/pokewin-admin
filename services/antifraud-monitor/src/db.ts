@@ -94,6 +94,51 @@ export function redactDatabaseErrorMessage(error: unknown): string {
   );
 }
 
+const TRANSIENT_DATABASE_STARTUP_CODES = new Set([
+  "57P01", // administrator command / planned leader demotion
+  "57P02", // crash shutdown
+  "57P03", // cannot connect now / recovery still starting
+  "53300", // temporary connection admission pressure
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EAI_AGAIN",
+  "EHOSTUNREACH",
+  "EPIPE",
+  "ENETUNREACH",
+  "ETIMEDOUT",
+]);
+
+/** Retry only connection lifecycle failures; schema/identity failures stay fail-fast. */
+export function isTransientDatabaseStartupError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; current != null && depth < 6; depth += 1) {
+    if (seen.has(current)) break;
+    seen.add(current);
+    const record =
+      typeof current === "object"
+        ? (current as { code?: unknown; message?: unknown; cause?: unknown })
+        : null;
+    const code = typeof record?.code === "string" ? record.code.toUpperCase() : "";
+    if (
+      ["08000", "08001", "08003", "08004", "08006", "08007"].includes(code) ||
+      TRANSIENT_DATABASE_STARTUP_CODES.has(code)
+    ) {
+      return true;
+    }
+    const message = String(record?.message ?? current).toLowerCase();
+    if (
+      /server_login_retry/.test(message) ||
+      /database system is (?:starting up|shutting down|not yet accepting connections)/.test(message) ||
+      /connection (?:terminated|reset|refused|timed out)|socket hang up|temporary failure in name resolution/.test(message)
+    ) {
+      return true;
+    }
+    current = record?.cause;
+  }
+  return false;
+}
+
 export type Databases = {
   source: pg.Pool;
   fiatDevSource: pg.Pool | null;

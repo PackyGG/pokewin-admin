@@ -109,7 +109,7 @@ test("reward rush rules cannot combine events from different monitor sessions", 
 
 test("migration runner serializes, rolls back failures, and records only commits", async () => {
   const migrate = await source("../src/migrate.ts");
-  assert.match(migrate, /SELECT pg_advisory_lock\(\$1\)/);
+  assert.match(migrate, /SELECT pg_try_advisory_lock\(\$1\) AS locked/);
   assert.match(
     migrate,
     /SELECT EXISTS\(SELECT 1 FROM schema_migrations WHERE version = \$1\)/,
@@ -147,7 +147,7 @@ test("antifraud migrations bypass the runtime pool and runtime validates role de
     "../migrations/083_antifraud_runtime_session_defaults.sql",
   );
 
-  assert.match(server, /await migrate\(migrationDb\)/);
+  assert.match(server, /await migrate\(migrationDb, \{/);
   assert.match(
     server,
     /await assertMigrationDatabaseMatchesRuntime\(migrationDb, db\.antifraud\)/,
@@ -157,6 +157,9 @@ test("antifraud migrations bypass the runtime pool and runtime validates role de
   assert.doesNotMatch(server, /cause:\s*migrationStartupError/);
   assert.doesNotMatch(server, /await migrate\(db\.antifraud\)/);
   assert.match(server, /await assertAntifraudSessionSettings\(db\.antifraud\)/);
+  assert.match(server, /DATABASE_STARTUP_RETRY_BUDGET_MS = 120_000/);
+  assert.match(server, /isTransientDatabaseStartupError\(error\)/);
+  assert.match(server, /Antifraud database startup deferred during failover/);
   assert.match(db, /ANTIFRAUD_MIGRATION_DATABASE_URL/);
   const runtimePoolFactory = db.slice(
     db.indexOf("export function antifraudPoolOptions"),
