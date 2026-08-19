@@ -54,7 +54,7 @@ function createPool(): Pool {
     // isolates are warm, so a small per-instance concurrency is safe again and
     // the serialization disappears.
     //
-    // Sizing: 4 per instance against max_client_conn=500 tolerates ~125 warm
+    // Sizing: 4 per instance against max_client_conn=100 tolerates ~25 warm
     // isolates, while the backend never exceeds the pooler's 20 server
     // connections out of the database's 97 usable.
     max,
@@ -67,8 +67,15 @@ function createPool(): Pool {
     // trying to connect`, which is not a query timeout and has no page-level
     // fallback. 35s matches the MAIN primary pools in `src/lib/db.ts`.
     connectionTimeoutMillis: 35_000,
-    statement_timeout: 30_000,
-    idle_in_transaction_session_timeout: 30_000,
+    // Railway's managed PgBouncer rejects these as unsupported startup
+    // parameters. Pooled sessions inherit the same 30s limits from the Admin
+    // database defaults; the direct path keeps sending them explicitly.
+    ...(!pooled
+      ? {
+          statement_timeout: 30_000,
+          idle_in_transaction_session_timeout: 30_000,
+        }
+      : {}),
     maxLifetimeSeconds: 600,
     keepAlive: true,
     keepAliveInitialDelayMillis: 5_000,

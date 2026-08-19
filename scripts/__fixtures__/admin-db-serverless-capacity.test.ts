@@ -64,11 +64,9 @@ test("the Admin pool and Drizzle client are process-global in production", () =>
 });
 
 /**
- * PgBouncer does not forward `statement_timeout` or
- * `idle_in_transaction_session_timeout` startup parameters — they must be
- * listed in its ignore list for connections to be accepted at all, and
- * "ignore" drops them. Measured through the pooled endpoint, the app's 30s
- * limits degraded to 5min and 0 (disabled) respectively.
+ * Railway's managed PgBouncer rejects `statement_timeout` and
+ * `idle_in_transaction_session_timeout` startup parameters. The pooled path
+ * must omit them so the connection succeeds.
  *
  * They are therefore re-asserted as database-level defaults by
  * drizzle/admin/migrations/20260812_admin_db_session_timeouts.sql. The pool
@@ -84,6 +82,11 @@ test("Admin session safety limits survive the pooler", () => {
 
   assert.match(source, /statement_timeout: 30_000/);
   assert.match(source, /idle_in_transaction_session_timeout: 30_000/);
+  assert.match(
+    source,
+    /\.\.\.\(!pooled[\s\S]{0,180}statement_timeout: 30_000,[\s\S]{0,180}idle_in_transaction_session_timeout: 30_000/,
+    "startup timeout parameters must only be sent on direct connections",
+  );
 
   assert.match(
     migration,
