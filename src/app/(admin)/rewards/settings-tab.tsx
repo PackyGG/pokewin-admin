@@ -26,7 +26,7 @@ export function SettingsTab() {
             variant="outline"
             size="sm"
             nativeButton={false}
-            render={<Link href="/rewards?tab=rakeback" />}
+            render={<Link href="/rewards?tab=rakeback&rbtab=config" />}
           >
             Manage
           </Button>

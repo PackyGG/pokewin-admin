@@ -65,7 +65,7 @@ export function RakebackTab({
 }: {
   params: Record<string, string | undefined>;
 }) {
-  const rbtab = params.rbtab || "claims";
+  const rbtab = params.rbtab || "config";
   const { page, perPage } = parsePagination(params);
   const icPeriod: InstantClaimPeriod = isInstantClaimPeriod(params.icPeriod)
     ? params.icPeriod
