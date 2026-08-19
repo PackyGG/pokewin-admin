@@ -31,7 +31,7 @@ export function LevelUpTab({
     <div className="space-y-4">
       <SectionHeading
         icon={TrendingUp}
-        title="Level Up Rewards"
+        title="Daily Packs"
         action={<CreateRewardButton />}
       />
       <Suspense
@@ -76,7 +76,7 @@ async function LevelUpContent({
   if (error) {
     return (
       <TileErrorFallback
-        label="Level-up rewards"
+        label="Daily Packs"
         hint="The read failed or timed out — no data was changed. Refresh to retry."
         size="panel"
       />

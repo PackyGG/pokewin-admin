@@ -42,7 +42,7 @@ const TABS = [
   { value: "promo-codes", label: "Promo Codes", icon: Ticket },
   { value: "leaderboards", label: "Leaderboards", icon: Trophy },
   { value: "deposit-bonus", label: "Deposit Bonus", icon: Coins },
-  { value: "level-up", label: "Level Up", icon: TrendingUp },
+  { value: "level-up", label: "Daily Packs", icon: TrendingUp },
   { value: "affiliate", label: "Affiliate", icon: Users },
   { value: "settings", label: "Settings", icon: Settings },
 ] as const;

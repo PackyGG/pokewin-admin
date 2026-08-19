@@ -102,8 +102,8 @@ export function LevelUpTable({ data }: { data: RewardItem[] }) {
           <div className="rounded-md border">
             <EmptyState
               icon={TrendingUp}
-              title="No level-up rewards found"
-              description="Add a level-up reward to grant cash or packs when players reach a level."
+              title="No Daily Packs found"
+              description="Add a Daily Pack reward to grant cash or packs when players reach a level."
               compact
             />
           </div>
@@ -187,8 +187,8 @@ export function LevelUpTable({ data }: { data: RewardItem[] }) {
                 <TableCell colSpan={8} className="p-0">
                   <EmptyState
                     icon={TrendingUp}
-                    title="No level-up rewards found"
-                    description="Add a level-up reward to grant cash or packs when players reach a level."
+                    title="No Daily Packs found"
+                    description="Add a Daily Pack reward to grant cash or packs when players reach a level."
                     compact
                   />
                 </TableCell>
