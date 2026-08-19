@@ -2455,7 +2455,10 @@ try {
         redactErrorMessage: redactDatabaseErrorMessage,
       });
       if (shuttingDown) break;
-      await assertAntifraudSessionSettings(db.antifraud);
+      await assertAntifraudSessionSettings(
+        db.antifraud,
+        Math.max(1, Math.min(10_000, databaseStartupDeadlineAt - Date.now())),
+      );
       break;
     } catch (error) {
       databaseStartupAttempts += 1;

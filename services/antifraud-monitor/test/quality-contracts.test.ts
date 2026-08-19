@@ -157,7 +157,10 @@ test("antifraud migrations bypass the runtime pool and runtime validates role de
   assert.match(server, /redactDatabaseErrorMessage\(migrationStartupError\)/);
   assert.doesNotMatch(server, /cause:\s*migrationStartupError/);
   assert.doesNotMatch(server, /await migrate\(db\.antifraud\)/);
-  assert.match(server, /await assertAntifraudSessionSettings\(db\.antifraud\)/);
+  assert.match(
+    server,
+    /await assertAntifraudSessionSettings\(\s*db\.antifraud,[\s\S]*?databaseStartupDeadlineAt - Date\.now\(\)/,
+  );
   assert.match(server, /DATABASE_STARTUP_RETRY_BUDGET_MS = 120_000/);
   assert.match(server, /isTransientDatabaseStartupError\(error\)/);
   assert.match(server, /Antifraud database startup deferred during failover/);

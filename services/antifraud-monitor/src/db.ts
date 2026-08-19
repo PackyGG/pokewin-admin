@@ -377,12 +377,10 @@ export function createDatabases(config: Config): Databases {
  */
 export async function assertAntifraudSessionSettings(
   pool: pg.Pool,
+  queryTimeoutMs = 10_000,
 ): Promise<void> {
-  const result = await pool.query<{
-    name: string;
-    setting: string;
-    unit: string | null;
-  }>(`
+  const query = {
+    text: `
     SELECT name, setting, unit
     FROM pg_settings
     WHERE name IN (
@@ -390,7 +388,14 @@ export async function assertAntifraudSessionSettings(
       'TimeZone',
       'idle_in_transaction_session_timeout'
     )
-  `);
+  `,
+    query_timeout: queryTimeoutMs,
+  } as pg.QueryConfig;
+  const result = await pool.query<{
+    name: string;
+    setting: string;
+    unit: string | null;
+  }>(query);
   const settings = new Map(result.rows.map((row) => [row.name, row]));
   const timeout = settings.get("statement_timeout");
   const timezone = settings.get("TimeZone");
