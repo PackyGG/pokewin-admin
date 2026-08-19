@@ -160,6 +160,18 @@ test("antifraud migrations bypass the runtime pool and runtime validates role de
   assert.match(server, /DATABASE_STARTUP_RETRY_BUDGET_MS = 120_000/);
   assert.match(server, /isTransientDatabaseStartupError\(error\)/);
   assert.match(server, /Antifraud database startup deferred during failover/);
+  assert.match(
+    server,
+    /await live\.start\(\);\s*if \(shuttingDown\) \{\s*await live\.close\(\);/,
+  );
+  assert.match(
+    server,
+    /await ingestDelivery\.start\(\);\s*if \(shuttingDown\) \{\s*await ingestDelivery\.stop\(\);/,
+  );
+  assert.match(
+    server,
+    /await networkRisk\.start\(\);\s*if \(shuttingDown\) \{\s*await networkRisk\.stop\(\);/,
+  );
   assert.match(db, /ANTIFRAUD_MIGRATION_DATABASE_URL/);
   const runtimePoolFactory = db.slice(
     db.indexOf("export function antifraudPoolOptions"),

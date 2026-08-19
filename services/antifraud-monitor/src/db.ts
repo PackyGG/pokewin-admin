@@ -111,6 +111,7 @@ const TRANSIENT_DATABASE_STARTUP_CODES = new Set([
 /** Retry only connection lifecycle failures; schema/identity failures stay fail-fast. */
 export function isTransientDatabaseStartupError(error: unknown): boolean {
   const seen = new Set<unknown>();
+  const chain: Array<{ code: string; message: string }> = [];
   let current: unknown = error;
   for (let depth = 0; current != null && depth < 6; depth += 1) {
     if (seen.has(current)) break;
@@ -120,13 +121,30 @@ export function isTransientDatabaseStartupError(error: unknown): boolean {
         ? (current as { code?: unknown; message?: unknown; cause?: unknown })
         : null;
     const code = typeof record?.code === "string" ? record.code.toUpperCase() : "";
+    const message = String(record?.message ?? current).toLowerCase();
+    chain.push({ code, message });
+    current = record?.cause;
+  }
+
+  // PgBouncer appends server_login_retry to cached permanent upstream errors
+  // too. Inspect the entire cause chain before accepting lifecycle evidence.
+  if (
+    chain.some(({ message }) =>
+      /password authentication failed|no pg_hba\.conf entry|certificate|self-signed|tls verification|ssl verification/.test(
+        message,
+      ),
+    )
+  ) {
+    return false;
+  }
+
+  for (const { code, message } of chain) {
     if (
       ["08000", "08001", "08003", "08004", "08006", "08007"].includes(code) ||
       TRANSIENT_DATABASE_STARTUP_CODES.has(code)
     ) {
       return true;
     }
-    const message = String(record?.message ?? current).toLowerCase();
     if (
       /server_login_retry/.test(message) ||
       /database system is (?:starting up|shutting down|not yet accepting connections)/.test(message) ||
@@ -134,7 +152,6 @@ export function isTransientDatabaseStartupError(error: unknown): boolean {
     ) {
       return true;
     }
-    current = record?.cause;
   }
   return false;
 }

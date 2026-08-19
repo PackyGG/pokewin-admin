@@ -54,6 +54,14 @@ test("database startup retries failover errors but not integrity failures", () =
   );
   assert.equal(
     isTransientDatabaseStartupError(
+      new Error(
+        "server login has been failing: password authentication failed (server_login_retry)",
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    isTransientDatabaseStartupError(
       new Error("connect failed: self-signed certificate in certificate chain"),
     ),
     false,

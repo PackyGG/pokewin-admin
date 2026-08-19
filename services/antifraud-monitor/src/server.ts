@@ -2490,18 +2490,33 @@ if (migrationStartupError && !shuttingDown) {
     `Antifraud database migration failed: ${redactDatabaseErrorMessage(migrationStartupError)}`,
   );
 }
-if (shuttingDown) {
-  await shutdownPromise;
-} else {
+async function startRuntime(): Promise<void> {
+if (shuttingDown) return;
 await preloadDisposableEmailDomains();
+if (shuttingDown) return;
 if (!isDisposableEmailListLoaded()) {
   throw new Error("Disposable email domain list failed to load");
 }
 // Fail the boot when the live channel cannot be subscribed: a green service
 // publishing into a channel with zero subscribers is silently broken.
 await live.start();
+if (shuttingDown) {
+  await live.close();
+  return;
+}
 await ingestDelivery.start();
+if (shuttingDown) {
+  await ingestDelivery.stop();
+  await live.close();
+  return;
+}
 await networkRisk.start();
+if (shuttingDown) {
+  await networkRisk.stop();
+  await ingestDelivery.stop();
+  await live.close();
+  return;
+}
 maxmindReportTimer = setInterval(() => {
   void maxmind.drainReports().catch((error) => {
     app.log.warn({ err: error }, "MaxMind feedback outbox drain failed");
@@ -2514,7 +2529,12 @@ maxmindReportTimer.unref();
 void maxmind.drainReports().catch((error) => {
   app.log.warn({ err: error }, "MaxMind feedback outbox drain failed");
 });
+if (shuttingDown) return;
 await app.listen({ port: config.PORT, host: "0.0.0.0" });
+if (shuttingDown) {
+  await app.close();
+  return;
+}
 app.log.info(
   {
     event: "fiat_eligibility.endpoint_ready",
@@ -2564,4 +2584,11 @@ void (async () => {
     }
   }
 })();
+}
+
+if (!shuttingDown) {
+  await startRuntime();
+}
+if (shuttingDown && shutdownPromise) {
+  await shutdownPromise;
 }
