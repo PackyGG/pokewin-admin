@@ -5,6 +5,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { getPrimaryDrizzleDb } from "@/lib/db";
 import {
+  balances,
   race_claim_holds,
   race_claims,
   race_periods,
@@ -672,49 +673,65 @@ export async function freezeUserRaceClaim(params: {
 
   const periodDate = parsePeriodStart(periodStart);
 
-  // Can't freeze a prize that's already been paid out — that needs a clawback,
-  // not a hold. Mirrors the backend's RACE_ALREADY_CLAIMED guard.
   const validRaceType = raceType as RaceType;
-  const [existingClaim] = await db
-    .select({ id: race_claims.id })
-    .from(race_claims)
-    .where(
-      and(
-        eq(race_claims.user_id, userId),
-        eq(race_claims.race_type, validRaceType),
-        eq(race_claims.race_period_start, periodDate),
-      ),
-    )
-    .limit(1);
-  if (existingClaim) {
-    throw new Error(
-      "Prize already claimed — freezing cannot block a paid prize",
-    );
-  }
-
-  const [alreadyHeld] = await db
-    .select({ id: race_claim_holds.id })
-    .from(race_claim_holds)
-    .where(
-      and(
-        eq(race_claim_holds.user_id, userId),
-        eq(race_claim_holds.race_type, validRaceType),
-        eq(race_claim_holds.race_period_start, periodDate),
-        isNull(race_claim_holds.released_at),
-      ),
-    )
-    .limit(1);
-  if (alreadyHeld) {
-    throw new Error("This claim is already frozen");
-  }
-
   try {
-    await db.insert(race_claim_holds).values({
-      user_id: userId,
-      race_type: validRaceType,
-      race_period_start: periodDate,
-      reason: reason.trim(),
-      created_by: session.userId,
+    await db.transaction(async (tx) => {
+      // The backend claim transaction takes this exact lock first via
+      // getBalanceWithLock. Taking the same row in the same order makes
+      // freeze-vs-claim deterministic: whichever transaction commits first is
+      // observed by the other before it checks the claim/hold rows.
+      const [balance] = await tx
+        .select({ id: balances.id })
+        .from(balances)
+        .where(eq(balances.user_id, userId))
+        .for("update")
+        .limit(1);
+      if (!balance) {
+        throw new Error("User balance not found");
+      }
+
+      // Can't freeze a prize that's already been paid out — that needs a
+      // clawback, not a hold. This read must remain after the balance lock.
+      const [existingClaim] = await tx
+        .select({ id: race_claims.id })
+        .from(race_claims)
+        .where(
+          and(
+            eq(race_claims.user_id, userId),
+            eq(race_claims.race_type, validRaceType),
+            eq(race_claims.race_period_start, periodDate),
+          ),
+        )
+        .limit(1);
+      if (existingClaim) {
+        throw new Error(
+          "Prize already claimed — freezing cannot block a paid prize",
+        );
+      }
+
+      const [alreadyHeld] = await tx
+        .select({ id: race_claim_holds.id })
+        .from(race_claim_holds)
+        .where(
+          and(
+            eq(race_claim_holds.user_id, userId),
+            eq(race_claim_holds.race_type, validRaceType),
+            eq(race_claim_holds.race_period_start, periodDate),
+            isNull(race_claim_holds.released_at),
+          ),
+        )
+        .limit(1);
+      if (alreadyHeld) {
+        throw new Error("This claim is already frozen");
+      }
+
+      await tx.insert(race_claim_holds).values({
+        user_id: userId,
+        race_type: validRaceType,
+        race_period_start: periodDate,
+        reason: reason.trim(),
+        created_by: session.userId,
+      });
     });
   } catch (error) {
     if ((error as { code?: string })?.code === "23505") {

@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { readDrizzleForEnv } from "@/lib/db";
+import { getPrimaryDrizzleDb, readDrizzleForEnv } from "@/lib/db";
 import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
@@ -93,8 +93,12 @@ async function getRaceClaimReviewByUser(params: {
   const claimedAtByUser = new Map<string, string>();
   if (userIds.length === 0) return { holdByUser, claimedAtByUser };
 
+  // This small, user-scoped overlay is operator control state, not analytics.
+  // Read it from the request-scoped primary so a Server Action revalidation
+  // cannot race mirror replay and temporarily erase the hold it just wrote.
+  const primary = await getPrimaryDrizzleDb();
   const [holds, claims] = await Promise.all([
-    queryMainRows<
+    queryRows<
       {
         id: string;
         user_id: string;
@@ -103,6 +107,7 @@ async function getRaceClaimReviewByUser(params: {
         created_at: Date | string;
       }[]
     >(
+      primary,
       `SELECT id, user_id, reason, created_by, created_at
          FROM race_claim_holds
         WHERE race_type::text = $1 AND race_period_start = $2
@@ -111,7 +116,8 @@ async function getRaceClaimReviewByUser(params: {
       periodStart,
       userIds,
     ),
-    queryMainRows<{ user_id: string; claimed_at: Date | string }[]>(
+    queryRows<{ user_id: string; claimed_at: Date | string }[]>(
+      primary,
       `SELECT user_id, claimed_at FROM race_claims
         WHERE race_type::text = $1 AND race_period_start = $2
           AND user_id = ANY($3::text[])`,
