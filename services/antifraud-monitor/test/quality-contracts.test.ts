@@ -165,6 +165,7 @@ test("antifraud migrations bypass the runtime pool and runtime validates role de
   assert.match(server, /isTransientDatabaseStartupError\(error\)/);
   assert.match(server, /Antifraud database startup deferred during failover/);
   assert.match(server, /Antifraud runtime startup interrupted by shutdown/);
+  assert.match(server, /if \(!\(await waitForStartupRetry\(retryInMs\)\)\) return/);
   assert.match(server, /databaseStartupDeadlineAt - Date\.now\(\)/);
   assert.match(migrateSource, /query_timeout: queryTimeoutMs/);
   assert.match(

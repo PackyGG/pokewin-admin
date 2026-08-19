@@ -2415,7 +2415,7 @@ const DATABASE_STARTUP_RETRY_BUDGET_MS = 120_000;
 const databaseStartupDeadlineAt =
   databaseStartupStartedAt + DATABASE_STARTUP_RETRY_BUDGET_MS;
 let databaseStartupAttempts = 0;
-async function waitForDatabaseStartupRetry(delayMs: number): Promise<boolean> {
+async function waitForStartupRetry(delayMs: number): Promise<boolean> {
   if (startupAbortController.signal.aborted) return false;
   return new Promise((resolve) => {
     let settled = false;
@@ -2482,7 +2482,7 @@ try {
         },
         "Antifraud database startup deferred during failover",
       );
-      if (!(await waitForDatabaseStartupRetry(retryInMs))) break;
+      if (!(await waitForStartupRetry(retryInMs))) break;
     }
   }
 } finally {
@@ -2587,7 +2587,7 @@ void (async () => {
         { err: error, failures, retryInMs },
         "Antifraud source poller startup deferred",
       );
-      await new Promise((resolve) => setTimeout(resolve, retryInMs));
+      if (!(await waitForStartupRetry(retryInMs))) return;
     }
   }
 })();
