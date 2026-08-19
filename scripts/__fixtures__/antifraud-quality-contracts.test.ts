@@ -75,7 +75,10 @@ test("manager mutations require admin service authority and durable local audit"
   const allowedWrites = [...allowlist.matchAll(/"([A-Z]+ \/[^"]*)"/g)].map(
     (match) => match[1],
   );
-  assert.deepEqual(allowedWrites, ["POST /v1/ws/tickets"]);
+  assert.deepEqual(allowedWrites, [
+    "POST /v1/ws/tickets",
+    "POST /v1/chain/get_info",
+  ]);
 
   // Admin-only reads stay enumerated, because a GET is presumed safe.
   for (const adminRead of [
