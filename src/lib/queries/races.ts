@@ -60,6 +60,8 @@ export type RaceLeaderboardEntry = {
   username: string | null;
   position: number;
   wageredUsd: number;
+  /** Gross completed deposits in the rolling 28 days ending now. */
+  deposited28dUsd: number;
   /** Projected prize from race_prize_tiers; null when no tier for this position. */
   prizeAmountUsd: number | null;
   // Per-user claim review state for the selected period. `hold` is the active
@@ -77,6 +79,30 @@ export type RaceLeaderboardEntry = {
    */
   excluded: boolean;
 };
+
+async function getDeposited28dByUser(
+  userIds: string[],
+): Promise<Map<string, number>> {
+  if (userIds.length === 0) return new Map();
+
+  const rows = await queryMainRows<
+    { user_id: string; deposited_28d_usd: string }[]
+  >(
+    `SELECT user_id,
+            COALESCE(SUM(ABS(amount::numeric)), 0)::text AS deposited_28d_usd
+       FROM ledger_transactions
+      WHERE user_id = ANY($1::text[])
+        AND type = 'deposit'
+        AND status = 'completed'
+        AND created_at >= NOW() - INTERVAL '28 days'
+      GROUP BY user_id`,
+    userIds,
+  );
+
+  return new Map(
+    rows.map((row) => [row.user_id, toNumber(row.deposited_28d_usd)]),
+  );
+}
 
 export async function getRacePrizeTiers() {
   const tiers = await queryMainRows<
@@ -361,39 +387,45 @@ export async function getRaceLeaderboard(params: {
 
   // Overlay per-user claim review state (active holds + paid claims) for the
   // selected period so the leaderboard doubles as the fraud-review surface.
-  // Only the rows on this page are looked up — one round-trip each.
+  // Only the rows on this page are looked up. The deposit, hold, and claim
+  // batches run concurrently, so this does not introduce a per-user query.
   const userIds = entries.map((e) => e.user_id);
   const periodDate = periodStart ? new Date(periodStart) : null;
   const holdByUser = new Map<string, RaceClaimHoldInfo>();
   const claimedAtByUser = new Map<string, string>();
+  const [deposited28dByUser, holds, claims] = await Promise.all([
+    getDeposited28dByUser(userIds),
+    periodDate && userIds.length > 0
+      ? queryMainRows<
+          {
+            id: string;
+            user_id: string;
+            reason: string;
+            created_by: string;
+            created_at: Date | string;
+          }[]
+        >(
+          `SELECT id, user_id, reason, created_by, created_at
+             FROM race_claim_holds
+            WHERE race_type::text = $1 AND race_period_start = $2
+              AND released_at IS NULL AND user_id = ANY($3::text[])`,
+          raceType,
+          periodDate,
+          userIds,
+        )
+      : Promise.resolve([]),
+    periodDate && userIds.length > 0
+      ? queryMainRows<{ user_id: string; claimed_at: Date | string }[]>(
+          `SELECT user_id, claimed_at FROM race_claims
+            WHERE race_type::text = $1 AND race_period_start = $2
+              AND user_id = ANY($3::text[])`,
+          raceType,
+          periodDate,
+          userIds,
+        )
+      : Promise.resolve([]),
+  ]);
   if (periodDate && userIds.length > 0) {
-    const [holds, claims] = await Promise.all([
-      queryMainRows<
-        {
-          id: string;
-          user_id: string;
-          reason: string;
-          created_by: string;
-          created_at: Date | string;
-        }[]
-      >(
-        `SELECT id, user_id, reason, created_by, created_at
-           FROM race_claim_holds
-          WHERE race_type::text = $1 AND race_period_start = $2
-            AND released_at IS NULL AND user_id = ANY($3::text[])`,
-        raceType,
-        periodDate,
-        userIds,
-      ),
-      queryMainRows<{ user_id: string; claimed_at: Date | string }[]>(
-        `SELECT user_id, claimed_at FROM race_claims
-          WHERE race_type::text = $1 AND race_period_start = $2
-            AND user_id = ANY($3::text[])`,
-        raceType,
-        periodDate,
-        userIds,
-      ),
-    ]);
     for (const h of holds) {
       holdByUser.set(h.user_id, {
         id: h.id,
@@ -416,6 +448,7 @@ export async function getRaceLeaderboard(params: {
         username: e.username,
         position: rank,
         wageredUsd: toNumber(e.wagered_usd),
+        deposited28dUsd: deposited28dByUser.get(e.user_id) ?? 0,
         prizeAmountUsd: tierByPosition.get(rank) ?? null,
         hold: holdByUser.get(e.user_id) ?? null,
         claimedAt: claimedAtByUser.get(e.user_id) ?? null,
@@ -521,6 +554,9 @@ export async function getLiveRaceLeaderboard(params: {
 
   const tierByPosition = new Map(tiers.map((t) => [t.position, t.prize] as const));
   const excluded = new Set(excludedUserIds);
+  const deposited28dByUser = await getDeposited28dByUser(
+    rows.map((row) => row.user_id),
+  );
 
   return {
     data: rows.map((r) => ({
@@ -529,6 +565,7 @@ export async function getLiveRaceLeaderboard(params: {
       username: r.username,
       position: r.position,
       wageredUsd: toNumber(r.wagered),
+      deposited28dUsd: deposited28dByUser.get(r.user_id) ?? 0,
       prizeAmountUsd: tierByPosition.get(r.position) ?? null,
       // A running race has no finalized claims/holds yet.
       hold: null,
@@ -932,6 +969,9 @@ async function getAllTimeLeaderboard(params: {
   const excludedSet = new Set(
     await getExcludedUserIds().catch(() => [] as string[]),
   );
+  const deposited28dByUser = await getDeposited28dByUser(
+    rows.map((row) => row.user_id),
+  );
 
   return {
     data: rows.map((r, i) => ({
@@ -940,6 +980,7 @@ async function getAllTimeLeaderboard(params: {
       username: r.username,
       position: offset + i + 1,
       wageredUsd: r.total_wagered,
+      deposited28dUsd: deposited28dByUser.get(r.user_id) ?? 0,
       prizeAmountUsd: null,
       // All-time view spans every period, so per-period claim review state
       // (holds/claims) doesn't apply.

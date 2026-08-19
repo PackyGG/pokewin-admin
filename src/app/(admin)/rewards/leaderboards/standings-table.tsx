@@ -44,6 +44,7 @@ type Standing = {
   userId: string;
   username: string | null;
   wageredUsd: number;
+  deposited28dUsd: number;
   prizeAmountUsd: number | null;
   hold: HoldInfo | null;
   claimedAt: string | null;
@@ -294,7 +295,7 @@ export function StandingsTable({
     );
   }
 
-  const colCount = (showPrizes ? 1 : 0) + (reviewable ? 5 : 3);
+  const colCount = 4 + (showPrizes ? 1 : 0) + (reviewable ? 2 : 0);
 
   // Empty-state copy. A running race shows LIVE standings computed from wagers,
   // so an empty table here means "no race-eligible wagers yet", not "no data".
@@ -364,6 +365,9 @@ export function StandingsTable({
                     <div className="text-sm font-medium tabular-nums">
                       {formatCurrency(s.wageredUsd)}
                     </div>
+                    <div className="text-xs tabular-nums text-muted-foreground">
+                      {formatCurrency(s.deposited28dUsd)} deposited · 4w
+                    </div>
                     <div className="mt-0.5">
                       <ActionButton s={s} />
                     </div>
@@ -383,6 +387,9 @@ export function StandingsTable({
               <TableHead>Position</TableHead>
               <TableHead>User</TableHead>
               <TableHead>Wagered</TableHead>
+              <TableHead title="Gross completed deposits in the rolling 28 days ending now">
+                Deposited · 4w
+              </TableHead>
               {showPrizes && <TableHead>Prize</TableHead>}
               {reviewable && <TableHead>Claim</TableHead>}
               {reviewable && <TableHead className="w-[120px]" />}
@@ -406,6 +413,9 @@ export function StandingsTable({
                   </span>
                 </TableCell>
                 <TableCell>{formatCurrency(e.wageredUsd)}</TableCell>
+                <TableCell className="tabular-nums">
+                  {formatCurrency(e.deposited28dUsd)}
+                </TableCell>
                 {showPrizes && (
                   <TableCell>
                     <PrizeCell amount={e.prizeAmountUsd} />
