@@ -259,7 +259,7 @@ test("saved Pack Builder drafts preserve and restore their exact odds", async ()
   assert.match(builderForm, /restorePackBuildDraftRevisionAction/);
 });
 
-test("the normal Packs dashboard has no pack edit entry point", async () => {
+test("pack editing is exposed only from the permission-gated detail page", async () => {
   const [page, detailPage, detailView, rowActions] = await Promise.all([
     readFile("src/app/(admin)/packs/page.tsx", "utf8"),
     readFile("src/app/(admin)/packs/[id]/page.tsx", "utf8"),
@@ -267,9 +267,13 @@ test("the normal Packs dashboard has no pack edit entry point", async () => {
     readFile("src/app/(admin)/packs/pack-row-actions.tsx", "utf8"),
   ]);
 
-  for (const source of [page, detailPage, detailView, rowActions]) {
-    assert.doesNotMatch(source, /PackEditForm|\?edit=1|Edit pack|initialViewMode/);
-  }
+  assert.doesNotMatch(page, /PackEditForm/);
+  assert.doesNotMatch(rowActions, /PackEditForm/);
+  assert.match(detailPage, /__can_update_pack/);
+  assert.match(detailPage, /__can_edit_live_packs/);
+  assert.match(detailView, /PackEditForm/);
+  assert.match(detailView, /showEditButton/);
+  assert.match(detailView, /!isPackCreator \|\| !detail\.active \|\| canEditLive/);
 });
 
 test("Pack Builder preserves card color and animation through owner approval", async () => {
