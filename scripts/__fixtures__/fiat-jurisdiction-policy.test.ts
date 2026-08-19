@@ -137,8 +137,9 @@ test("global enablement is independent from per-location fiat overrides", () => 
   );
 });
 
-test("mandatory policy closes every independently enforced direct route", () => {
+test("mandatory policy keeps geo blocks while leaving crypto deposits open", () => {
   const original = restriction("US-CA");
+  original.lockedDepositsCrypto = ["bitcoin"];
   const enforced = applyMandatoryJurisdictionPolicy(original);
 
   assert.equal(enforced.blocked, true);
@@ -146,9 +147,7 @@ test("mandatory policy closes every independently enforced direct route", () => 
   assert.equal(enforced.digitalWithdrawal, false);
   assert.equal(enforced.giftCardDeposit, false);
   assert.equal(enforced.promoCodeDeposit, false);
-  assert.deepEqual(enforced.lockedDepositsCrypto, [
-    ...CRYPTO_RESTRICTION_TOKENS,
-  ]);
+  assert.deepEqual(enforced.lockedDepositsCrypto, []);
   assert.ok(hasAllWhopFiatDepositLocks(enforced.lockedDepositsFiat));
   assert.deepEqual(enforced.lockedWithdrawalsCrypto, [
     ...CRYPTO_RESTRICTION_TOKENS,

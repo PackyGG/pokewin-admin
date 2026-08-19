@@ -57,7 +57,6 @@ test("mandatory policy cannot be weakened through bulk or per-row actions", () =
     "digital_withdrawal = false",
     "gift_card_deposit = false",
     "promo_code_deposit = false",
-    "locked_deposits_crypto",
     "locked_deposits_fiat",
     "locked_withdrawals_crypto",
   ]) {
@@ -66,6 +65,13 @@ test("mandatory policy cannot be weakened through bulk or per-row actions", () =
   assert.match(geoUi, /allPolicyFullyEnforced/);
   assert.match(geoUi, /disabled=\{policyGeoPending \|\| allPolicyFullyEnforced\}/);
   assert.match(restrictionsUi, /Mandatory legal geo block/);
+  assert.match(actions, /locked_deposits_crypto = ARRAY\[\]::text\[\]/);
+  assert.match(actions, /Crypto deposits cannot be restricted by country or location/);
+  assert.match(restrictionsUi, /Available regardless of location/);
+  assert.doesNotMatch(
+    restrictionsUi,
+    /toggleCoin\("locked_deposits_crypto"/,
+  );
 });
 
 test("ordinary row edits report runtime cache uptake", () => {

@@ -198,9 +198,11 @@ export function hasAllCryptoRestrictionTokens(
 }
 
 /**
- * A mandatory jurisdiction is a full legal exclusion, not only a landing-page
- * redirect. Keep every independently enforced backend capability closed so a
- * stale/missed frontend redirect cannot expose a direct money or code route.
+ * A mandatory jurisdiction stays blocked at the site boundary and on outgoing
+ * money/code routes. Crypto deposits deliberately remain location-independent:
+ * if the site-level redirect is bypassed or stale, the cashier may still show
+ * deposit addresses. Explicit site-wide and per-user crypto locks remain
+ * separate controls.
  */
 export function applyMandatoryJurisdictionPolicy(
   row: CountryRestrictionRow,
@@ -214,10 +216,7 @@ export function applyMandatoryJurisdictionPolicy(
     digitalWithdrawal: false,
     giftCardDeposit: false,
     promoCodeDeposit: false,
-    lockedDepositsCrypto: withRequiredTokens(
-      row.lockedDepositsCrypto,
-      CRYPTO_RESTRICTION_TOKENS,
-    ),
+    lockedDepositsCrypto: [],
     lockedDepositsFiat: withWhopFiatDepositLocks(row.lockedDepositsFiat),
     lockedWithdrawalsCrypto: withRequiredTokens(
       row.lockedWithdrawalsCrypto,
@@ -236,7 +235,7 @@ export function isMandatoryJurisdictionPolicyEnforced(
     !row.digitalWithdrawal &&
     !row.giftCardDeposit &&
     !row.promoCodeDeposit &&
-    hasAllCryptoRestrictionTokens(row.lockedDepositsCrypto) &&
+    row.lockedDepositsCrypto.length === 0 &&
     hasAllWhopFiatDepositLocks(row.lockedDepositsFiat) &&
     hasAllCryptoRestrictionTokens(row.lockedWithdrawalsCrypto)
   );

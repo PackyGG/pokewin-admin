@@ -167,13 +167,20 @@ export async function updateCountryRestrictionArray(
     );
   }
   if (
+    field === "locked_deposits_crypto" &&
+    normalizedValues.length > 0
+  ) {
+    throw new Error(
+      "Crypto deposits cannot be restricted by country or location.",
+    );
+  }
+  if (
     isMandatoryFiatJurisdiction(countryCode) &&
-    (field === "locked_deposits_crypto" ||
-      field === "locked_withdrawals_crypto") &&
+    field === "locked_withdrawals_crypto" &&
     !hasAllCryptoRestrictionTokens(normalizedValues)
   ) {
     throw new Error(
-      "All crypto deposits and withdrawals must stay locked for this legal-policy jurisdiction.",
+      "All crypto withdrawals must stay locked for this legal-policy jurisdiction.",
     );
   }
 
@@ -313,7 +320,7 @@ export async function toggleCountryRestriction(
           digital_withdrawal: false,
           gift_card_deposit: false,
           promo_code_deposit: false,
-          locked_deposits_crypto: [...CRYPTO_RESTRICTION_TOKENS],
+          locked_deposits_crypto: [],
           locked_deposits_fiat: normalizedWhopFiatLocksSql(true),
           locked_withdrawals_crypto: [...CRYPTO_RESTRICTION_TOKENS],
         }
@@ -570,8 +577,7 @@ export async function setMandatoryJurisdictionsGeoBlocked(
         digital_withdrawal = false,
         gift_card_deposit = false,
         promo_code_deposit = false,
-        locked_deposits_crypto =
-          ${pgArrayParam(CRYPTO_RESTRICTION_TOKENS)}::text[],
+        locked_deposits_crypto = ARRAY[]::text[],
         locked_deposits_fiat = ${normalizedWhopFiatLocksSql(true)},
         locked_withdrawals_crypto =
           ${pgArrayParam(CRYPTO_RESTRICTION_TOKENS)}::text[],

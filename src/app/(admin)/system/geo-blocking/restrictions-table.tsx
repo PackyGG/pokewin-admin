@@ -409,13 +409,12 @@ function RowDetail({
               )
             }
           />
-          <CoinLockField
-            label="Locked deposit coins"
-            hint="Crypto currencies users here cannot deposit."
-            values={row.lockedDepositsCrypto}
-            disabled={isPending}
-            onToggleValue={(v) => toggleCoin("locked_deposits_crypto", row.lockedDepositsCrypto, v)}
-          />
+          <div className="rounded-lg border px-3 py-2">
+            <div className="text-sm font-medium">Crypto deposits</div>
+            <div className="text-xs text-muted-foreground">
+              Available regardless of location. Geo blocks still control site access.
+            </div>
+          </div>
         </div>
       </div>
     </div>
