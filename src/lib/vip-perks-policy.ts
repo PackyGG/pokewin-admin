@@ -56,9 +56,13 @@ export function evaluateVipPerksPolicy(input: {
   if (!input.enabled || input.initialThresholdUsd <= 0) return inactive("inactive");
 
   if (!input.initialUnlockedAt) {
-    if (input.now.getTime() >= initialDeadline.getTime()) return inactive("expired");
-    return input.initialWagerUsd >= input.initialThresholdUsd
-      ? { ...inactive("active"), active: true }
+    // The wager query is capped at the deadline. Check its result first so a
+    // delayed poll or brief outage cannot erase an unlock earned on time.
+    if (input.initialWagerUsd >= input.initialThresholdUsd) {
+      return { ...inactive("active"), active: true };
+    }
+    return input.now.getTime() >= initialDeadline.getTime()
+      ? inactive("expired")
       : inactive("pending");
   }
 

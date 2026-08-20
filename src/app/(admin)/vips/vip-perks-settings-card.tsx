@@ -27,7 +27,8 @@ import { updateVipPerksSettingsAction } from "./actions";
 
 export type VipPerksSettingsView = {
   enabled: boolean;
-  initialWagerUsd: number;
+  initialWagerWithoutCreatorCodeUsd: number;
+  initialWagerWithCreatorCodeUsd: number;
   recurringEnabled: boolean;
   recurringWagerUsd: number | null;
 };
@@ -56,8 +57,11 @@ export function VipPerksSettingsCard({
   const [isPending, startTransition] = useTransition();
   const [saved, setSaved] = useState(initial);
   const [enabled, setEnabled] = useState(initial?.enabled ?? false);
-  const [initialWager, setInitialWager] = useState(
-    initial ? String(initial.initialWagerUsd) : "",
+  const [initialWagerWithoutCode, setInitialWagerWithoutCode] = useState(
+    initial ? String(initial.initialWagerWithoutCreatorCodeUsd) : "",
+  );
+  const [initialWagerWithCode, setInitialWagerWithCode] = useState(
+    initial ? String(initial.initialWagerWithCreatorCodeUsd) : "",
   );
   const [recurringEnabled, setRecurringEnabled] = useState(
     initial?.recurringEnabled ?? false,
@@ -95,8 +99,16 @@ export function VipPerksSettingsCard({
   }
 
   function handleSave() {
-    const initialWagerUsd = parseWager(initialWager, "Initial requirement");
-    if (initialWagerUsd === null) return;
+    const initialWagerWithoutCreatorCodeUsd = parseWager(
+      initialWagerWithoutCode,
+      "Standard initial requirement",
+    );
+    if (initialWagerWithoutCreatorCodeUsd === null) return;
+    const initialWagerWithCreatorCodeUsd = parseWager(
+      initialWagerWithCode,
+      "Creator-code initial requirement",
+    );
+    if (initialWagerWithCreatorCodeUsd === null) return;
 
     const recurringWagerUsd = recurringEnabled
       ? parseWager(recurringWager, "Recurring requirement")
@@ -107,14 +119,18 @@ export function VipPerksSettingsCard({
 
     const next = {
       enabled,
-      initialWagerUsd,
+      initialWagerWithoutCreatorCodeUsd,
+      initialWagerWithCreatorCodeUsd,
       recurringEnabled,
       recurringWagerUsd,
     };
     if (
       saved &&
       next.enabled === saved.enabled &&
-      next.initialWagerUsd === saved.initialWagerUsd &&
+      next.initialWagerWithoutCreatorCodeUsd ===
+        saved.initialWagerWithoutCreatorCodeUsd &&
+      next.initialWagerWithCreatorCodeUsd ===
+        saved.initialWagerWithCreatorCodeUsd &&
       next.recurringEnabled === saved.recurringEnabled &&
       next.recurringWagerUsd === saved.recurringWagerUsd
     ) {
@@ -130,7 +146,12 @@ export function VipPerksSettingsCard({
       }
       setSaved(result.data);
       setEnabled(result.data.enabled);
-      setInitialWager(String(result.data.initialWagerUsd));
+      setInitialWagerWithoutCode(
+        String(result.data.initialWagerWithoutCreatorCodeUsd),
+      );
+      setInitialWagerWithCode(
+        String(result.data.initialWagerWithCreatorCodeUsd),
+      );
       setRecurringEnabled(result.data.recurringEnabled);
       setRecurringWager(
         result.data.recurringWagerUsd == null
@@ -193,15 +214,26 @@ export function VipPerksSettingsCard({
           </div>
         )}
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-3">
           <RequirementPanel
             icon={BadgeCheck}
-            eyebrow="First unlock"
-            title="Initial access requirement"
-            description="Starts when the VIP channel is linked. Reaching this weighted wager unlocks the perks role."
-            inputId="vip-initial-wager"
-            value={initialWager}
-            onChange={setInitialWager}
+            eyebrow="First unlock · standard"
+            title="Without a creator code"
+            description="Lifetime cash-eligible weighted wager. The player must reach it within 30 days after their VIP channel is linked."
+            inputId="vip-initial-wager-without-code"
+            value={initialWagerWithoutCode}
+            onChange={setInitialWagerWithoutCode}
+            disabled={isPending}
+          />
+
+          <RequirementPanel
+            icon={BadgeCheck}
+            eyebrow="First unlock · creator"
+            title="With an active creator code"
+            description="The lower lifetime requirement applies only while the player has an active creator code, and is frozen when they unlock."
+            inputId="vip-initial-wager-with-code"
+            value={initialWagerWithCode}
+            onChange={setInitialWagerWithCode}
             disabled={isPending}
           />
 
@@ -265,7 +297,9 @@ export function VipPerksSettingsCard({
         <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <CalendarClock className="size-3.5" aria-hidden />
-            Both qualification windows are fixed at 30 days.
+            Reward-funded wagers never count. Stored Keno and Upgrader weights
+            do count. Initial access has a 30-day deadline; recurring access
+            uses fixed 30-day cycles.
           </div>
           <Button onClick={handleSave} disabled={isPending} className="sm:min-w-36">
             {isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}

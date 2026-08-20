@@ -17,7 +17,8 @@ const MAX_BATCH_SIZE = 100;
 
 export type VipPerksSettings = {
   enabled: boolean;
-  initialWagerUsd: number;
+  initialWagerWithoutCreatorCodeUsd: number;
+  initialWagerWithCreatorCodeUsd: number;
   recurringEnabled: boolean;
   recurringWagerUsd: number | null;
   windowDays: 30;
@@ -35,6 +36,7 @@ export type VipPerksEntitlement = {
   initialUnlockedAt: string | null;
   initialWagerUsd: number;
   initialThresholdUsd: number;
+  initialCreatorCodeApplied: boolean;
   currentCycleStartsAt: string | null;
   currentCycleEndsAt: string | null;
   previousCycleWagerUsd: number;
@@ -46,6 +48,8 @@ export type VipPerksEntitlement = {
 type ConfigRow = {
   enabled: boolean;
   initial_wager_usd: string;
+  initial_wager_without_creator_code_usd: string;
+  initial_wager_with_creator_code_usd: string;
   recurring_enabled: boolean;
   recurring_wager_usd: string | null;
   updated_at: Date | string;
@@ -58,6 +62,9 @@ type EntitlementRow = {
   member_discord_user_id: string | null;
   initial_window_started_at: Date | string;
   initial_unlocked_at: Date | string | null;
+  initial_threshold_usd: string | null;
+  initial_had_creator_code: boolean | null;
+  last_initial_wager_usd: string;
   last_status: VipPerksStatus;
   last_active: boolean;
 };
@@ -65,6 +72,7 @@ type EntitlementRow = {
 type WagerRow = {
   link_id: string;
   initial_wager_usd: string;
+  has_active_creator_code: boolean;
   previous_cycle_wager_usd: string;
   current_cycle_wager_usd: string;
 };
@@ -96,7 +104,12 @@ function naiveUtc(value: Date): string {
 function settingsFromRow(row?: ConfigRow): VipPerksSettings {
   return {
     enabled: row?.enabled ?? false,
-    initialWagerUsd: money(row?.initial_wager_usd),
+    initialWagerWithoutCreatorCodeUsd: money(
+      row?.initial_wager_without_creator_code_usd ?? row?.initial_wager_usd,
+    ),
+    initialWagerWithCreatorCodeUsd: money(
+      row?.initial_wager_with_creator_code_usd ?? row?.initial_wager_usd,
+    ),
     recurringEnabled: row?.recurring_enabled ?? false,
     recurringWagerUsd:
       row?.recurring_wager_usd == null ? null : money(row.recurring_wager_usd),
@@ -107,7 +120,9 @@ function settingsFromRow(row?: ConfigRow): VipPerksSettings {
 
 async function configRow(): Promise<ConfigRow | undefined> {
   const result = await adminDrizzle.execute<ConfigRow>(sql`
-    SELECT enabled, initial_wager_usd, recurring_enabled,
+    SELECT enabled, initial_wager_usd,
+      initial_wager_without_creator_code_usd,
+      initial_wager_with_creator_code_usd, recurring_enabled,
       recurring_wager_usd, updated_at
     FROM vip_perks_config
     WHERE guild_id = ${VIPS_GUILD_ID}
@@ -122,15 +137,18 @@ export async function getVipPerksSettings(): Promise<VipPerksSettings> {
 
 function validateSettings(input: {
   enabled: boolean;
-  initialWagerUsd: number;
+  initialWagerWithoutCreatorCodeUsd: number;
+  initialWagerWithCreatorCodeUsd: number;
   recurringEnabled: boolean;
   recurringWagerUsd: number | null;
 }): void {
-  if (!Number.isFinite(input.initialWagerUsd) || input.initialWagerUsd < 0) {
-    throw new VipPerksError(400, "invalid_initial_wager", "Initial wager must be zero or greater.");
-  }
-  if (input.enabled && input.initialWagerUsd <= 0) {
-    throw new VipPerksError(400, "initial_wager_required", "Set a positive initial wager before enabling VIP perks.");
+  if (
+    !Number.isFinite(input.initialWagerWithoutCreatorCodeUsd)
+    || input.initialWagerWithoutCreatorCodeUsd <= 0
+    || !Number.isFinite(input.initialWagerWithCreatorCodeUsd)
+    || input.initialWagerWithCreatorCodeUsd <= 0
+  ) {
+    throw new VipPerksError(400, "invalid_initial_wager", "Both initial wager tiers must be positive.");
   }
   if (
     input.recurringEnabled
@@ -144,32 +162,41 @@ function validateSettings(input: {
 
 export async function updateVipPerksSettings(input: {
   enabled: boolean;
-  initialWagerUsd: number;
+  initialWagerWithoutCreatorCodeUsd: number;
+  initialWagerWithCreatorCodeUsd: number;
   recurringEnabled: boolean;
   recurringWagerUsd: number | null;
   actorAdminId: string;
 }): Promise<VipPerksSettings> {
   validateSettings(input);
-  const initial = money(input.initialWagerUsd);
+  const initialWithoutCode = money(input.initialWagerWithoutCreatorCodeUsd);
+  const initialWithCode = money(input.initialWagerWithCreatorCodeUsd);
   const recurring = input.recurringEnabled ? money(input.recurringWagerUsd) : null;
   const result = await adminDrizzle.transaction(async (tx) => {
     const updated = await tx.execute<ConfigRow>(sql`
       INSERT INTO vip_perks_config (
-        guild_id, enabled, initial_wager_usd, recurring_enabled,
+        guild_id, enabled, initial_wager_usd,
+        initial_wager_without_creator_code_usd,
+        initial_wager_with_creator_code_usd, recurring_enabled,
         recurring_wager_usd, updated_by_admin_id, updated_at
       ) VALUES (
-        ${VIPS_GUILD_ID}, ${input.enabled}, ${String(initial)},
+        ${VIPS_GUILD_ID}, ${input.enabled}, ${String(initialWithoutCode)},
+        ${String(initialWithoutCode)}, ${String(initialWithCode)},
         ${input.recurringEnabled}, ${recurring == null ? null : String(recurring)},
         ${input.actorAdminId}::uuid, NOW()
       )
       ON CONFLICT (guild_id) DO UPDATE SET
         enabled = EXCLUDED.enabled,
         initial_wager_usd = EXCLUDED.initial_wager_usd,
+        initial_wager_without_creator_code_usd = EXCLUDED.initial_wager_without_creator_code_usd,
+        initial_wager_with_creator_code_usd = EXCLUDED.initial_wager_with_creator_code_usd,
         recurring_enabled = EXCLUDED.recurring_enabled,
         recurring_wager_usd = EXCLUDED.recurring_wager_usd,
         updated_by_admin_id = EXCLUDED.updated_by_admin_id,
         updated_at = NOW()
-      RETURNING enabled, initial_wager_usd, recurring_enabled,
+      RETURNING enabled, initial_wager_usd,
+        initial_wager_without_creator_code_usd,
+        initial_wager_with_creator_code_usd, recurring_enabled,
         recurring_wager_usd, updated_at
     `);
     await tx.execute(sql`
@@ -180,7 +207,8 @@ export async function updateVipPerksSettings(input: {
         'vip_perks_settings_updated',
         ${JSON.stringify({
           enabled: input.enabled,
-          initialWagerUsd: initial,
+          initialWagerWithoutCreatorCodeUsd: initialWithoutCode,
+          initialWagerWithCreatorCodeUsd: initialWithCode,
           recurringEnabled: input.recurringEnabled,
           recurringWagerUsd: recurring,
           windowDays: VIP_PERKS_WINDOW_DAYS,
@@ -201,7 +229,9 @@ async function loadEntitlementRows(params: {
   const result = await adminDrizzle.execute<EntitlementRow>(sql`
     SELECT l.id AS link_id, l.user_id, l.channel_id,
       l.member_discord_user_id, e.initial_window_started_at,
-      e.initial_unlocked_at, e.last_status, e.last_active
+      e.initial_unlocked_at, e.initial_threshold_usd,
+      e.initial_had_creator_code, e.last_initial_wager_usd,
+      e.last_status, e.last_active
     FROM discord_vip_channel_links l
     JOIN vip_perk_entitlements e ON e.link_id = l.id
     WHERE l.guild_id = ${VIPS_GUILD_ID}
@@ -218,7 +248,7 @@ async function loadEntitlementRows(params: {
 type WagerWindow = {
   link_id: string;
   user_id: string;
-  initial_start: string;
+  needs_initial: boolean;
   initial_end: string;
   previous_start: string | null;
   previous_end: string | null;
@@ -238,7 +268,7 @@ async function wagerByWindow(
     const frame = evaluateVipPerksPolicy({
       now,
       enabled: settings.enabled,
-      initialThresholdUsd: settings.initialWagerUsd,
+      initialThresholdUsd: settings.initialWagerWithoutCreatorCodeUsd,
       recurringEnabled: settings.recurringEnabled,
       recurringThresholdUsd: settings.recurringWagerUsd,
       initialWindowStartedAt: start,
@@ -250,7 +280,7 @@ async function wagerByWindow(
     return {
       link_id: row.link_id,
       user_id: row.user_id,
-      initial_start: naiveUtc(start),
+      needs_initial: unlocked === null,
       initial_end: naiveUtc(new Date(Math.min(now.getTime(), frame.initialDeadline.getTime()))),
       previous_start: frame.previousCycleStartsAt ? naiveUtc(frame.previousCycleStartsAt) : null,
       previous_end: frame.previousCycleEndsAt ? naiveUtc(frame.previousCycleEndsAt) : null,
@@ -266,7 +296,7 @@ async function wagerByWindow(
       FROM jsonb_to_recordset(${JSON.stringify(windows)}::jsonb) AS x(
         link_id uuid,
         user_id text,
-        initial_start timestamp,
+        needs_initial boolean,
         initial_end timestamp,
         previous_start timestamp,
         previous_end timestamp,
@@ -277,8 +307,14 @@ async function wagerByWindow(
     SELECT
       w.link_id::text AS link_id,
       COALESCE(SUM(COALESCE(g.weighted_bet_amount, g.bet_amount)) FILTER (
-        WHERE g.created_at >= w.initial_start AND g.created_at < w.initial_end
+        WHERE w.needs_initial AND g.created_at < w.initial_end
       ), 0)::text AS initial_wager_usd,
+      COALESCE(
+        NULLIF(BTRIM(u.affiliate_code), '') IS NOT NULL
+        AND u.affiliate_code_active = true
+        AND (u.affiliate_code_expires_at IS NULL OR u.affiliate_code_expires_at > NOW()),
+        false
+      ) AS has_active_creator_code,
       COALESCE(SUM(COALESCE(g.weighted_bet_amount, g.bet_amount)) FILTER (
         WHERE w.previous_start IS NOT NULL
           AND g.created_at >= w.previous_start AND g.created_at < w.previous_end
@@ -288,21 +324,23 @@ async function wagerByWindow(
           AND g.created_at >= w.current_start AND g.created_at < w.current_end
       ), 0)::text AS current_cycle_wager_usd
     FROM windows w
+    LEFT JOIN "user" u ON u.id = w.user_id
     LEFT JOIN game_sessions g
       ON g.user_id = w.user_id
+      -- This is the canonical cash-eligible marker set by the game backend:
+      -- reward-funded play (rakeback, races, leaderboards, packs, bonuses,
+      -- tips, affiliate rewards, and similar grants) is excluded upstream.
       AND g.race_eligible = true
       AND g.currency = 'real'
-      AND g.created_at >= LEAST(
-        w.initial_start,
-        COALESCE(w.previous_start, w.initial_start),
-        COALESCE(w.current_start, w.initial_start)
+      AND (
+        (w.needs_initial AND g.created_at < w.initial_end)
+        OR (w.previous_start IS NOT NULL
+          AND g.created_at >= w.previous_start AND g.created_at < w.previous_end)
+        OR (w.current_start IS NOT NULL
+          AND g.created_at >= w.current_start AND g.created_at < w.current_end)
       )
-      AND g.created_at < GREATEST(
-        w.initial_end,
-        COALESCE(w.previous_end, w.initial_end),
-        COALESCE(w.current_end, w.initial_end)
-      )
-    GROUP BY w.link_id
+    GROUP BY w.link_id, u.affiliate_code, u.affiliate_code_active,
+      u.affiliate_code_expires_at
   `);
   return new Map(result.rows.map((row) => [row.link_id, row]));
 }
@@ -314,13 +352,23 @@ function toEntitlement(params: {
   now: Date;
 }): VipPerksEntitlement {
   const { row, settings, now } = params;
-  const initialWagerUsd = money(params.wagers?.initial_wager_usd);
+  const initialWagerUsd = row.initial_unlocked_at
+    ? money(row.last_initial_wager_usd)
+    : money(params.wagers?.initial_wager_usd);
+  const initialCreatorCodeApplied = row.initial_had_creator_code
+    ?? params.wagers?.has_active_creator_code
+    ?? false;
+  const initialThresholdUsd = row.initial_threshold_usd == null
+    ? (initialCreatorCodeApplied
+        ? settings.initialWagerWithCreatorCodeUsd
+        : settings.initialWagerWithoutCreatorCodeUsd)
+    : money(row.initial_threshold_usd);
   const previousCycleWagerUsd = money(params.wagers?.previous_cycle_wager_usd);
   const currentCycleWagerUsd = money(params.wagers?.current_cycle_wager_usd);
   const frame = evaluateVipPerksPolicy({
     now,
     enabled: settings.enabled,
-    initialThresholdUsd: settings.initialWagerUsd,
+    initialThresholdUsd,
     recurringEnabled: settings.recurringEnabled,
     recurringThresholdUsd: settings.recurringWagerUsd,
     initialWindowStartedAt: asDate(row.initial_window_started_at),
@@ -341,7 +389,8 @@ function toEntitlement(params: {
       ? asDate(row.initial_unlocked_at).toISOString()
       : null,
     initialWagerUsd,
-    initialThresholdUsd: settings.initialWagerUsd,
+    initialThresholdUsd,
+    initialCreatorCodeApplied,
     currentCycleStartsAt: frame.currentCycleStartsAt?.toISOString() ?? null,
     currentCycleEndsAt: frame.currentCycleEndsAt?.toISOString() ?? null,
     previousCycleWagerUsd,
@@ -366,10 +415,13 @@ async function persistEvaluations(
       // must converge on one unlock and one audit event, not double-log it.
       const lockedResult = await tx.execute<{
         initial_unlocked_at: Date | string | null;
+        initial_threshold_usd: string | null;
+        initial_had_creator_code: boolean | null;
         last_status: VipPerksStatus;
         last_active: boolean;
       }>(sql`
-        SELECT initial_unlocked_at, last_status, last_active
+        SELECT initial_unlocked_at, initial_threshold_usd,
+          initial_had_creator_code, last_status, last_active
         FROM vip_perk_entitlements
         WHERE link_id = ${row.link_id}::uuid
         FOR UPDATE
@@ -383,15 +435,22 @@ async function persistEvaluations(
       if (shouldUnlock) {
         await tx.execute(sql`
           UPDATE vip_perk_entitlements
-          SET initial_unlocked_at = COALESCE(initial_unlocked_at, ${now}), updated_at = NOW()
+          SET initial_unlocked_at = COALESCE(initial_unlocked_at, ${now}),
+            initial_threshold_usd = COALESCE(initial_threshold_usd, ${String(value.initialThresholdUsd)}),
+            initial_had_creator_code = COALESCE(initial_had_creator_code, ${value.initialCreatorCodeApplied}),
+            updated_at = NOW()
           WHERE link_id = ${row.link_id}::uuid
         `);
         row.initial_unlocked_at = now;
+        row.initial_threshold_usd = String(value.initialThresholdUsd);
+        row.initial_had_creator_code = value.initialCreatorCodeApplied;
+        row.last_initial_wager_usd = String(value.initialWagerUsd);
         value = toEntitlement({
           row,
           settings: {
             enabled: true,
-            initialWagerUsd: value.initialThresholdUsd,
+            initialWagerWithoutCreatorCodeUsd: value.initialThresholdUsd,
+            initialWagerWithCreatorCodeUsd: value.initialThresholdUsd,
             recurringEnabled: value.recurringThresholdUsd != null,
             recurringWagerUsd: value.recurringThresholdUsd,
             windowDays: VIP_PERKS_WINDOW_DAYS,
@@ -400,6 +459,7 @@ async function persistEvaluations(
           wagers: {
             link_id: row.link_id,
             initial_wager_usd: String(value.initialWagerUsd),
+            has_active_creator_code: value.initialCreatorCodeApplied,
             previous_cycle_wager_usd: String(value.previousCycleWagerUsd),
             current_cycle_wager_usd: String(value.currentCycleWagerUsd),
           },
@@ -428,6 +488,8 @@ async function persistEvaluations(
               toStatus: value.status,
               toActive: value.active,
               initialUnlocked: shouldUnlock,
+              initialThresholdUsd: value.initialThresholdUsd,
+              initialCreatorCodeApplied: value.initialCreatorCodeApplied,
               linkId: row.link_id,
               source: "evaluation",
             })}::jsonb
@@ -583,6 +645,8 @@ export async function resetVipPerksQualification(input: {
       ON CONFLICT (link_id) DO UPDATE SET
         initial_window_started_at = EXCLUDED.initial_window_started_at,
         initial_unlocked_at = NULL,
+        initial_threshold_usd = NULL,
+        initial_had_creator_code = NULL,
         last_status = 'pending',
         last_active = false,
         last_initial_wager_usd = 0,

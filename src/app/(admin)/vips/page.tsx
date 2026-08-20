@@ -147,7 +147,10 @@ async function VipPerksSettingsSection() {
   const settings: VipPerksSettingsView | null = result.data
     ? {
         enabled: result.data.enabled,
-        initialWagerUsd: result.data.initialWagerUsd,
+        initialWagerWithoutCreatorCodeUsd:
+          result.data.initialWagerWithoutCreatorCodeUsd,
+        initialWagerWithCreatorCodeUsd:
+          result.data.initialWagerWithCreatorCodeUsd,
         recurringEnabled: result.data.recurringEnabled,
         recurringWagerUsd: result.data.recurringWagerUsd,
       }

@@ -14,7 +14,8 @@ import type { VipPerksSettingsView } from "./vip-perks-settings-card";
 const SettingsSchema = z
   .object({
     enabled: z.boolean(),
-    initialWagerUsd: z.number().positive().max(100_000_000),
+    initialWagerWithoutCreatorCodeUsd: z.number().positive().max(100_000_000),
+    initialWagerWithCreatorCodeUsd: z.number().positive().max(100_000_000),
     recurringEnabled: z.boolean(),
     recurringWagerUsd: z.number().positive().max(100_000_000).nullable(),
   })
@@ -52,7 +53,8 @@ export async function updateVipPerksSettingsAction(
     });
     const view: VipPerksSettingsView = {
       enabled: updated.enabled,
-      initialWagerUsd: updated.initialWagerUsd,
+      initialWagerWithoutCreatorCodeUsd: updated.initialWagerWithoutCreatorCodeUsd,
+      initialWagerWithCreatorCodeUsd: updated.initialWagerWithCreatorCodeUsd,
       recurringEnabled: updated.recurringEnabled,
       recurringWagerUsd: updated.recurringWagerUsd,
     };

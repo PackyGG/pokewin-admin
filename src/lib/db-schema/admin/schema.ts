@@ -2139,6 +2139,8 @@ export const vip_perks_config = pgTable("vip_perks_config", {
 	guild_id: text().primaryKey().notNull(),
 	enabled: boolean().default(false).notNull(),
 	initial_wager_usd: numeric({ precision: 20, scale: 2 }).default('0').notNull(),
+	initial_wager_without_creator_code_usd: numeric({ precision: 20, scale: 2 }).default('30000').notNull(),
+	initial_wager_with_creator_code_usd: numeric({ precision: 20, scale: 2 }).default('25000').notNull(),
 	recurring_enabled: boolean().default(false).notNull(),
 	recurring_wager_usd: numeric({ precision: 20, scale: 2 }),
 	updated_by_admin_id: uuid(),
@@ -2148,6 +2150,8 @@ export const vip_perks_config = pgTable("vip_perks_config", {
 	foreignKey({ columns: [table.updated_by_admin_id], foreignColumns: [admin_users.id], name: "vip_perks_config_updated_by_admin_id_fkey" }).onDelete("set null"),
 	check("vip_perks_config_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
 	check("vip_perks_config_initial_wager_check", sql`initial_wager_usd >= 0`),
+	check("vip_perks_config_initial_without_code_check", sql`initial_wager_without_creator_code_usd > 0`),
+	check("vip_perks_config_initial_with_code_check", sql`initial_wager_with_creator_code_usd > 0`),
 	check("vip_perks_config_recurring_wager_check", sql`recurring_wager_usd IS NULL OR recurring_wager_usd > 0`),
 	check("vip_perks_config_recurring_shape_check", sql`NOT recurring_enabled OR recurring_wager_usd IS NOT NULL`),
 ]);
@@ -2156,6 +2160,8 @@ export const vip_perk_entitlements = pgTable("vip_perk_entitlements", {
 	link_id: uuid().primaryKey().notNull(),
 	initial_window_started_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
 	initial_unlocked_at: timestamp({ withTimezone: true, mode: 'string' }),
+	initial_threshold_usd: numeric({ precision: 20, scale: 2 }),
+	initial_had_creator_code: boolean(),
 	last_status: text().default('pending').notNull(),
 	last_active: boolean().default(false).notNull(),
 	last_initial_wager_usd: numeric({ precision: 20, scale: 2 }).default('0').notNull(),
@@ -2168,6 +2174,8 @@ export const vip_perk_entitlements = pgTable("vip_perk_entitlements", {
 	foreignKey({ columns: [table.link_id], foreignColumns: [discord_vip_channel_links.id], name: "vip_perk_entitlements_link_id_fkey" }).onDelete("cascade"),
 	check("vip_perk_entitlements_status_check", sql`last_status = ANY (ARRAY['pending'::text, 'active'::text, 'expired'::text, 'recurring_due'::text, 'inactive'::text])`),
 	check("vip_perk_entitlements_wager_check", sql`last_initial_wager_usd >= 0 AND last_previous_cycle_wager_usd >= 0 AND last_current_cycle_wager_usd >= 0`),
+	check("vip_perk_entitlements_initial_threshold_check", sql`initial_threshold_usd IS NULL OR initial_threshold_usd > 0`),
+	check("vip_perk_entitlements_initial_tier_shape_check", sql`(initial_threshold_usd IS NULL) = (initial_had_creator_code IS NULL)`),
 ]);
 
 export const vip_perk_reset_operations = pgTable("vip_perk_reset_operations", {

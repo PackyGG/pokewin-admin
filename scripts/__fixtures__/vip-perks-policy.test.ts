@@ -30,6 +30,14 @@ test("initial qualification is fixed to the original 30-day window", () => {
     evaluateVipPerksPolicy({ ...base, now: at(VIP_PERKS_WINDOW_MS) }).status,
     "expired",
   );
+  assert.equal(
+    evaluateVipPerksPolicy({
+      ...base,
+      now: at(VIP_PERKS_WINDOW_MS + 1),
+      initialWagerUsd: 10_000,
+    }).status,
+    "active",
+  );
 });
 
 test("disabled or invalid global config fails closed", () => {

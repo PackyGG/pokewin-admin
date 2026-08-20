@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("VIP perks API is scoped, bounded, real-money weighted, and fail-closed", async () => {
-  const [service, policy, sync, status, scopes, endpoints, migration, compute] =
+  const [service, policy, sync, status, scopes, endpoints, migration, tierMigration, compute] =
     await Promise.all([
       read("src/lib/vip-perks.ts"),
       read("src/lib/vip-perks-policy.ts"),
@@ -14,6 +14,7 @@ test("VIP perks API is scoped, bounded, real-money weighted, and fail-closed", a
       read("src/lib/api-auth/scopes.ts"),
       read("src/lib/api-auth/endpoints.ts"),
       read("drizzle/admin/migrations/20260820_vip_perks_entitlements.sql"),
+      read("drizzle/admin/migrations/20260820_vip_perks_creator_code_thresholds.sql"),
       read("src/lib/creator-vip/compute.ts"),
     ]);
 
@@ -21,6 +22,13 @@ test("VIP perks API is scoped, bounded, real-money weighted, and fail-closed", a
   assert.match(service, /COALESCE\(g\.weighted_bet_amount, g\.bet_amount\)/);
   assert.match(service, /g\.race_eligible = true/);
   assert.match(service, /g\.currency = 'real'/);
+  assert.match(service, /WHERE w\.needs_initial AND g\.created_at < w\.initial_end/);
+  assert.doesNotMatch(service, /g\.created_at >= w\.initial_start/);
+  assert.match(service, /u\.affiliate_code_active = true/);
+  assert.match(service, /u\.affiliate_code_expires_at > NOW\(\)/);
+  assert.match(service, /initialWagerWithoutCreatorCodeUsd/);
+  assert.match(service, /initialWagerWithCreatorCodeUsd/);
+  assert.match(service, /initialCreatorCodeApplied/);
   assert.match(service, /pgArrayParam\(params\.userIds \?\? \[\]\)/);
   assert.match(service, /MAX_BATCH_SIZE = 100/);
   assert.match(service, /isVipPerksActive/);
@@ -42,6 +50,9 @@ test("VIP perks API is scoped, bounded, real-money weighted, and fail-closed", a
   assert.match(endpoints, /\/api\/v1\/discord\/vips\/perks\/status/);
   assert.match(migration, /initial_window_started_at/);
   assert.match(migration, /discord:vips:link/);
+  assert.match(tierMigration, /DEFAULT 30000/);
+  assert.match(tierMigration, /DEFAULT 25000/);
+  assert.match(tierMigration, /initial_had_creator_code/);
   assert.match(compute, /const isVipNow = isVipPerksActive/);
   assert.match(compute, /VIP perks are not active for this account/);
 });
