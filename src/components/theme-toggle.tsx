@@ -4,20 +4,20 @@ import { useTheme } from "next-themes";
 import { Sun, Moon, Sparkles, Sparkle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { updatePreferences } from "@/app/(admin)/profile/preferences-actions";
 import type { AdminPreferences } from "@/lib/admin-preferences-types";
+import { saveThemePreference } from "@/lib/theme-preference-client";
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
 
   async function pick(next: AdminPreferences["theme"]) {
-    const previous = theme;
+    // Applying a visual preference must never depend on a network round-trip.
+    // In particular, long-open tabs can outlive a production deployment.
     setTheme(next);
     try {
-      await updatePreferences({ theme: next });
-    } catch (err) {
-      if (previous) setTheme(previous);
-      toast.error(err instanceof Error ? err.message : "Could not save theme");
+      await saveThemePreference(next);
+    } catch {
+      toast.warning("Theme applied on this device; account sync failed");
     }
   }
 

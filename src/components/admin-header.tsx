@@ -39,6 +39,7 @@ import { switchDbEnv } from "@/lib/actions/db-env";
 import { ROLE_COLORS } from "@/lib/constants";
 import { TIMEZONE_GROUPS } from "@/lib/timezones";
 import { updatePreferences } from "@/app/(admin)/profile/preferences-actions";
+import { saveThemePreference } from "@/lib/theme-preference-client";
 import {
   ProfileDialog,
   type ProfileDialogSection,
@@ -102,9 +103,9 @@ function ThemeSubmenu() {
   ) {
     setTheme(next);
     try {
-      await updatePreferences({ theme: next });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not save theme");
+      await saveThemePreference(next);
+    } catch {
+      toast.warning("Theme applied on this device; account sync failed");
     }
   }
 
