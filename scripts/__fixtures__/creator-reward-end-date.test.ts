@@ -18,6 +18,12 @@ test("creator reward end dates are persisted and enforced", () => {
   assert.match(actions, /End date must be in the future/);
   assert.match(actions, /ends_at: endsAt\?\.toISOString\(\) \?\? null/);
   assert.match(actions, /Extend its end date before activating it/);
+  assert.match(
+    actions,
+    /const syncedWindowIds = await adminDrizzle\.transaction\(async \(tx\) => \{[\s\S]*?FOR UPDATE[\s\S]*?update\(creator_reward_programs\)[\s\S]*?update\(creator_reward_program_windows\)[\s\S]*?eq\(creator_reward_program_windows\.ended_at, priorEndsAt\)/,
+    "an end-date edit must atomically move the matching scheduled accrual-window boundary",
+  );
+  assert.match(actions, /synced_accrual_window_ids:/);
 
   const compute = read("src/lib/creator-vip/compute.ts");
   assert.match(compute, /blockedReason: "This program has ended\."/);

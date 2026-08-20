@@ -609,22 +609,58 @@ export async function updateCreatorRewardProgram(input: {
   );
   if (!codesResult.ok) return { success: false, error: codesResult.error };
 
-  await adminDrizzle
-    .update(creator_reward_programs)
-    .set({
-      name,
-      codes: codesResult.codes,
-      threshold_usd: d.thresholdUsd != null ? String(d.thresholdUsd) : null,
-      reward_usd: d.rewardUsd != null ? String(d.rewardUsd) : null,
-      vip_reward_usd: d.vipRewardUsd != null ? String(d.vipRewardUsd) : null,
-      lossback_pct: d.lossbackPct != null ? String(d.lossbackPct) : null,
-      min_deposit_usd: d.minDepositUsd != null ? String(d.minDepositUsd) : null,
-      max_reward_per_user_usd:
-        d.maxRewardPerUserUsd != null ? String(d.maxRewardPerUserUsd) : null,
-      ends_at: endsAt?.toISOString() ?? null,
-      updated_at: new Date().toISOString(),
-    })
-    .where(eq(creator_reward_programs.id, existing.id));
+  const syncedWindowIds = await adminDrizzle.transaction(async (tx) => {
+    const lockedProgram = await tx.execute<{ ends_at: string | null }>(sql`
+      SELECT ends_at::text
+      FROM creator_reward_programs
+      WHERE id = ${existing.id}::uuid
+      FOR UPDATE
+    `);
+    const priorEndsAt = lockedProgram.rows[0]?.ends_at ?? null;
+
+    await tx
+      .update(creator_reward_programs)
+      .set({
+        name,
+        codes: codesResult.codes,
+        threshold_usd: d.thresholdUsd != null ? String(d.thresholdUsd) : null,
+        reward_usd: d.rewardUsd != null ? String(d.rewardUsd) : null,
+        vip_reward_usd: d.vipRewardUsd != null ? String(d.vipRewardUsd) : null,
+        lossback_pct: d.lossbackPct != null ? String(d.lossbackPct) : null,
+        min_deposit_usd:
+          d.minDepositUsd != null ? String(d.minDepositUsd) : null,
+        max_reward_per_user_usd:
+          d.maxRewardPerUserUsd != null
+            ? String(d.maxRewardPerUserUsd)
+            : null,
+        ends_at: endsAt?.toISOString() ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(creator_reward_programs.id, existing.id));
+
+    if (
+      !priorEndsAt ||
+      new Date(priorEndsAt).getTime() === (endsAt?.getTime() ?? null)
+    ) {
+      return [];
+    }
+
+    // Deal-created programs have a finite accrual window whose end initially
+    // equals the program end. Keep that scheduled boundary in sync when an
+    // operator extends, shortens, or removes the end date. Paused windows end
+    // at their actual pause instant and therefore do not match `ends_at`; they
+    // must never be reopened by an unrelated terms edit.
+    return tx
+      .update(creator_reward_program_windows)
+      .set({ ended_at: endsAt?.toISOString() ?? null })
+      .where(
+        and(
+          eq(creator_reward_program_windows.program_id, existing.id),
+          eq(creator_reward_program_windows.ended_at, priorEndsAt),
+        ),
+      )
+      .returning({ id: creator_reward_program_windows.id });
+  });
 
   // Before/after in one event: an operator asking "why did this program start
   // paying double?" gets the answer from the audit row without diffing two.
@@ -655,6 +691,7 @@ export async function updateCreatorRewardProgram(input: {
         min_deposit_usd: d.minDepositUsd,
         max_reward_per_user_usd: d.maxRewardPerUserUsd,
         ends_at: endsAt?.toISOString() ?? null,
+        synced_accrual_window_ids: syncedWindowIds.map((row) => row.id),
       },
     },
   });
