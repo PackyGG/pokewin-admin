@@ -151,6 +151,8 @@ async function VipPerksSettingsSection() {
           result.data.initialWagerWithoutCreatorCodeUsd,
         initialWagerWithCreatorCodeUsd:
           result.data.initialWagerWithCreatorCodeUsd,
+        initialWagerCountingStartedAt:
+          result.data.initialWagerCountingStartedAt,
         recurringEnabled: result.data.recurringEnabled,
         recurringWagerUsd: result.data.recurringWagerUsd,
       }

@@ -22,8 +22,8 @@ test("VIP perks API is scoped, bounded, real-money weighted, and fail-closed", a
   assert.match(service, /COALESCE\(g\.weighted_bet_amount, g\.bet_amount\)/);
   assert.match(service, /g\.race_eligible = true/);
   assert.match(service, /g\.currency = 'real'/);
-  assert.match(service, /WHERE w\.needs_initial AND g\.created_at < w\.initial_end/);
-  assert.doesNotMatch(service, /g\.created_at >= w\.initial_start/);
+  assert.match(service, /g\.created_at >= w\.initial_start AND g\.created_at < w\.initial_end/);
+  assert.match(service, /initialWagerCountingStartedAt/);
   assert.match(service, /u\.affiliate_code_active = true/);
   assert.match(service, /u\.affiliate_code_expires_at > NOW\(\)/);
   assert.match(service, /initialWagerWithoutCreatorCodeUsd/);

@@ -34,7 +34,7 @@ type ActionResult<T = undefined> =
   | { success: false; error: string };
 
 export async function updateVipPerksSettingsAction(
-  input: VipPerksSettingsView,
+  input: Omit<VipPerksSettingsView, "initialWagerCountingStartedAt">,
 ): Promise<ActionResult<VipPerksSettingsView>> {
   await requirePageAccess("/vips");
   const session = await requireAdmin();
@@ -55,6 +55,7 @@ export async function updateVipPerksSettingsAction(
       enabled: updated.enabled,
       initialWagerWithoutCreatorCodeUsd: updated.initialWagerWithoutCreatorCodeUsd,
       initialWagerWithCreatorCodeUsd: updated.initialWagerWithCreatorCodeUsd,
+      initialWagerCountingStartedAt: updated.initialWagerCountingStartedAt,
       recurringEnabled: updated.recurringEnabled,
       recurringWagerUsd: updated.recurringWagerUsd,
     };

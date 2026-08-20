@@ -19,6 +19,7 @@ export type VipPerksSettings = {
   enabled: boolean;
   initialWagerWithoutCreatorCodeUsd: number;
   initialWagerWithCreatorCodeUsd: number;
+  initialWagerCountingStartedAt: string;
   recurringEnabled: boolean;
   recurringWagerUsd: number | null;
   windowDays: 30;
@@ -32,6 +33,7 @@ export type VipPerksEntitlement = {
   status: VipPerksStatus;
   active: boolean;
   initialWindowStartedAt: string;
+  initialWagerCountingStartedAt: string;
   initialDeadline: string;
   initialUnlockedAt: string | null;
   initialWagerUsd: number;
@@ -50,6 +52,7 @@ type ConfigRow = {
   initial_wager_usd: string;
   initial_wager_without_creator_code_usd: string;
   initial_wager_with_creator_code_usd: string;
+  initial_wager_counting_started_at: Date | string;
   recurring_enabled: boolean;
   recurring_wager_usd: string | null;
   updated_at: Date | string;
@@ -110,6 +113,9 @@ function settingsFromRow(row?: ConfigRow): VipPerksSettings {
     initialWagerWithCreatorCodeUsd: money(
       row?.initial_wager_with_creator_code_usd ?? row?.initial_wager_usd,
     ),
+    initialWagerCountingStartedAt: row
+      ? asDate(row.initial_wager_counting_started_at).toISOString()
+      : "2026-07-23T11:27:00.000Z",
     recurringEnabled: row?.recurring_enabled ?? false,
     recurringWagerUsd:
       row?.recurring_wager_usd == null ? null : money(row.recurring_wager_usd),
@@ -122,7 +128,8 @@ async function configRow(): Promise<ConfigRow | undefined> {
   const result = await adminDrizzle.execute<ConfigRow>(sql`
     SELECT enabled, initial_wager_usd,
       initial_wager_without_creator_code_usd,
-      initial_wager_with_creator_code_usd, recurring_enabled,
+      initial_wager_with_creator_code_usd,
+      initial_wager_counting_started_at, recurring_enabled,
       recurring_wager_usd, updated_at
     FROM vip_perks_config
     WHERE guild_id = ${VIPS_GUILD_ID}
@@ -196,7 +203,8 @@ export async function updateVipPerksSettings(input: {
         updated_at = NOW()
       RETURNING enabled, initial_wager_usd,
         initial_wager_without_creator_code_usd,
-        initial_wager_with_creator_code_usd, recurring_enabled,
+        initial_wager_with_creator_code_usd,
+        initial_wager_counting_started_at, recurring_enabled,
         recurring_wager_usd, updated_at
     `);
     await tx.execute(sql`
@@ -249,6 +257,7 @@ type WagerWindow = {
   link_id: string;
   user_id: string;
   needs_initial: boolean;
+  initial_start: string;
   initial_end: string;
   previous_start: string | null;
   previous_end: string | null;
@@ -281,6 +290,7 @@ async function wagerByWindow(
       link_id: row.link_id,
       user_id: row.user_id,
       needs_initial: unlocked === null,
+      initial_start: naiveUtc(asDate(settings.initialWagerCountingStartedAt)),
       initial_end: naiveUtc(new Date(Math.min(now.getTime(), frame.initialDeadline.getTime()))),
       previous_start: frame.previousCycleStartsAt ? naiveUtc(frame.previousCycleStartsAt) : null,
       previous_end: frame.previousCycleEndsAt ? naiveUtc(frame.previousCycleEndsAt) : null,
@@ -297,6 +307,7 @@ async function wagerByWindow(
         link_id uuid,
         user_id text,
         needs_initial boolean,
+        initial_start timestamp,
         initial_end timestamp,
         previous_start timestamp,
         previous_end timestamp,
@@ -307,7 +318,8 @@ async function wagerByWindow(
     SELECT
       w.link_id::text AS link_id,
       COALESCE(SUM(COALESCE(g.weighted_bet_amount, g.bet_amount)) FILTER (
-        WHERE w.needs_initial AND g.created_at < w.initial_end
+        WHERE w.needs_initial
+          AND g.created_at >= w.initial_start AND g.created_at < w.initial_end
       ), 0)::text AS initial_wager_usd,
       COALESCE(
         NULLIF(BTRIM(u.affiliate_code), '') IS NOT NULL
@@ -333,7 +345,8 @@ async function wagerByWindow(
       AND g.race_eligible = true
       AND g.currency = 'real'
       AND (
-        (w.needs_initial AND g.created_at < w.initial_end)
+        (w.needs_initial
+          AND g.created_at >= w.initial_start AND g.created_at < w.initial_end)
         OR (w.previous_start IS NOT NULL
           AND g.created_at >= w.previous_start AND g.created_at < w.previous_end)
         OR (w.current_start IS NOT NULL
@@ -384,6 +397,7 @@ function toEntitlement(params: {
     status: frame.status,
     active: frame.active,
     initialWindowStartedAt: asDate(row.initial_window_started_at).toISOString(),
+    initialWagerCountingStartedAt: settings.initialWagerCountingStartedAt,
     initialDeadline: frame.initialDeadline.toISOString(),
     initialUnlockedAt: row.initial_unlocked_at
       ? asDate(row.initial_unlocked_at).toISOString()
@@ -451,6 +465,7 @@ async function persistEvaluations(
             enabled: true,
             initialWagerWithoutCreatorCodeUsd: value.initialThresholdUsd,
             initialWagerWithCreatorCodeUsd: value.initialThresholdUsd,
+            initialWagerCountingStartedAt: value.initialWagerCountingStartedAt,
             recurringEnabled: value.recurringThresholdUsd != null,
             recurringWagerUsd: value.recurringThresholdUsd,
             windowDays: VIP_PERKS_WINDOW_DAYS,

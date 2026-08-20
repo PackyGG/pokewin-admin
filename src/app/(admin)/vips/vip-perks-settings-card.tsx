@@ -29,11 +29,21 @@ export type VipPerksSettingsView = {
   enabled: boolean;
   initialWagerWithoutCreatorCodeUsd: number;
   initialWagerWithCreatorCodeUsd: number;
+  initialWagerCountingStartedAt: string;
   recurringEnabled: boolean;
   recurringWagerUsd: number | null;
 };
 
 const MAX_WAGER_USD = 100_000_000;
+
+function formatBootstrapDate(value: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(value));
+}
 
 function parseWager(value: string, label: string): number | null {
   const wager = Number(value);
@@ -298,8 +308,11 @@ export function VipPerksSettingsCard({
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <CalendarClock className="size-3.5" aria-hidden />
             Reward-funded wagers never count. Stored Keno and Upgrader weights
-            do count. Initial access has a 30-day deadline; recurring access
-            uses fixed 30-day cycles.
+            do count. Initial totals start on{" "}
+            {formatBootstrapDate(initial.initialWagerCountingStartedAt)}
+            {" and accumulate forward; they are not full historical or rolling totals. "}
+            Initial access has a 30-day deadline; recurring access uses fixed
+            30-day cycles.
           </div>
           <Button onClick={handleSave} disabled={isPending} className="sm:min-w-36">
             {isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}

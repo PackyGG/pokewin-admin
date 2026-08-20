@@ -2141,6 +2141,7 @@ export const vip_perks_config = pgTable("vip_perks_config", {
 	initial_wager_usd: numeric({ precision: 20, scale: 2 }).default('0').notNull(),
 	initial_wager_without_creator_code_usd: numeric({ precision: 20, scale: 2 }).default('30000').notNull(),
 	initial_wager_with_creator_code_usd: numeric({ precision: 20, scale: 2 }).default('25000').notNull(),
+	initial_wager_counting_started_at: timestamp({ withTimezone: true, mode: 'string' }).default(sql`'2026-07-23 11:27:00+00'::timestamp with time zone`).notNull(),
 	recurring_enabled: boolean().default(false).notNull(),
 	recurring_wager_usd: numeric({ precision: 20, scale: 2 }),
 	updated_by_admin_id: uuid(),
