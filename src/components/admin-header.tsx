@@ -314,6 +314,7 @@ export function AdminHeader({
   // Hidden-form ref so the dropdown's "Log out" menu item can submit the
   // existing server action without a visible icon button.
   const logoutFormRef = React.useRef<HTMLFormElement>(null);
+  const didSeedThemeRef = React.useRef(false);
 
   // Profile dialog (replaces the old /profile route). Controlled open state
   // + which section to land on — "Change password" opens straight at the
@@ -324,8 +325,13 @@ export function AdminHeader({
 
   // next-themes persists to localStorage, which is isolated per subdomain.
   // The ADMIN-DB preference is the cross-subdomain source of truth, so apply
-  // the server-loaded value whenever a shell mounts on a different origin.
+  // the server-loaded value once when a shell mounts on a different origin.
+  // Do not keep re-applying it after `setTheme`: next-themes may refresh its
+  // context value during a selection, which previously re-ran this effect and
+  // immediately replaced the user's click with the stale server prop.
   React.useEffect(() => {
+    if (didSeedThemeRef.current) return;
+    didSeedThemeRef.current = true;
     setTheme(preferences.theme);
   }, [preferences.theme, setTheme]);
 

@@ -30,6 +30,15 @@ test("theme UI does not revert a valid local choice when account sync fails", ()
   }
 });
 
+test("the server-loaded theme seeds the shell once and cannot overwrite clicks", () => {
+  const source = readFileSync("src/components/admin-header.tsx", "utf8");
+  assert.match(source, /const didSeedThemeRef = React\.useRef\(false\)/);
+  assert.match(
+    source,
+    /if \(didSeedThemeRef\.current\) return;\s*didSeedThemeRef\.current = true;\s*setTheme\(preferences\.theme\)/,
+  );
+});
+
 test("theme endpoint validates origin, session, and theme before writing", () => {
   const source = readFileSync(
     "src/app/api/profile/preferences/theme/route.ts",
