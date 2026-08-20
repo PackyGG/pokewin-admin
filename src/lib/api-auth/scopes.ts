@@ -65,6 +65,12 @@ export const API_SCOPES = {
       "Preview a Packy user and link that user to the current channel in the VIPs Discord server. Reads the user from the production mirror and writes the durable channel mapping only to the admin database.",
     access: "admin-write",
   },
+  "discord:vips:perks": {
+    label: "Synchronize VIP perk access",
+    description:
+      "Evaluate linked VIP members against global weighted-wager requirements and return the desired Discord perk-role state. Reads eligible wager from the production mirror and writes only entitlement snapshots and audit transitions to the admin database.",
+    access: "admin-write",
+  },
   "discord:reminders": {
     label: "Schedule Discord reminders",
     description:

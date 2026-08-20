@@ -232,6 +232,20 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/vips/perks/sync",
+    summary:
+      "Body { guildId, cursor?, limit? }. Evaluates a bounded keyset page of linked VIP members and returns each member's desired perk-role state plus the next cursor. Fail-closed when requirements are disabled or invalid.",
+    scopes: ["discord:vips:perks"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/vips/perks/status",
+    summary:
+      "Body { guildId, userId }. Evaluates and returns the backend-authoritative VIP perk entitlement for one linked Packy user.",
+    scopes: ["discord:vips:perks"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/reminders",
     summary:
       "Body { interactionId, guildId, sourceChannelId, userId }. Idempotently schedules a one-hour reminder; the destination and due time are derived server-side.",

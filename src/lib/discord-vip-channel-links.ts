@@ -289,6 +289,18 @@ export async function saveVipChannelLink(input: {
       `);
     }
 
+    // Membership and perk access are separate, but every durable link owns a
+    // qualification clock. Preserve the original link timestamp forever;
+    // channel/member updates must not silently grant another 30 days.
+    await tx.execute(sql`
+      INSERT INTO vip_perk_entitlements (link_id, initial_window_started_at)
+      SELECT id, created_at
+      FROM discord_vip_channel_links
+      WHERE guild_id = ${input.guildId}
+        AND user_id = ${input.userId}
+      ON CONFLICT (link_id) DO NOTHING
+    `);
+
     const vipTagResult = await tx.execute<{ id: string }>(sql`
       INSERT INTO admin_user_tags (target_user_id, tag)
       VALUES (${input.userId}, 'vip')

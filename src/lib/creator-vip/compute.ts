@@ -16,7 +16,6 @@ import {
 } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
-  admin_user_tags,
   creator_reward_claims,
   creator_reward_program_windows,
   creator_reward_programs,
@@ -25,6 +24,7 @@ import { user as mainUsers } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { postgresTimestamp } from "@/lib/postgres-runtime";
 import { toNumber } from "@/lib/utils/decimal";
+import { isVipPerksActive } from "@/lib/vip-perks";
 
 import {
   BASIS_HOLDING_STATUSES,
@@ -109,29 +109,10 @@ const toCents = (usd: number): number => Math.round(usd * 100);
 const fromCents = (cents: number): number => cents / 100;
 
 /**
- * Does this player hold the `vip` tag RIGHT NOW?
- *
- * Deliberately a live read on every eligibility check, never cached and never
- * copied onto the claim as a source of truth. VIP is an `admin_user_tags` row
- * that staff can remove at any moment; a cached flag would keep paying the
- * uplift to someone who has already lost it. The lookup is a point read on
- * the (target_user_id, tag) unique pair.
+ * Backend-authoritative perk access, evaluated live. The Admin `vip` tag is
+ * CRM membership only; it cannot unlock payout-bearing VIP benefits.
  */
-async function isVipNow(userId: string): Promise<boolean> {
-  const row = (
-    await adminDrizzle
-      .select({ id: admin_user_tags.id })
-      .from(admin_user_tags)
-      .where(
-        and(
-          eq(admin_user_tags.target_user_id, userId),
-          eq(admin_user_tags.tag, "vip"),
-        ),
-      )
-      .limit(1)
-  )[0];
-  return row !== undefined;
-}
+const isVipNow = isVipPerksActive;
 
 /**
  * Account standing + the code the player is CURRENTLY on, re-read live on
@@ -889,9 +870,9 @@ export async function computeEntitlement(
     facts?.isVip ?? isVipNow(userId),
   ]);
 
-  // The rate is decided HERE, live, from the tag as it stands this instant —
-  // so losing VIP drops the player back to the standard rate on their very
-  // next check, with no migration or cleanup.
+  // The rate is decided HERE from live backend entitlement state. Losing
+  // perk access drops the player back to the standard rate on the next check;
+  // the CRM `vip` tag alone never authorizes the uplift.
   const vipRewardCents =
     program.vip_reward_usd == null
       ? null
@@ -1047,6 +1028,14 @@ export async function computeLossbackEntitlement(
   if (standing.locked)
     return { ...empty, blockedReason: "This account is locked." };
 
+  const vip = facts?.isVip ?? (await isVipNow(userId));
+  if (!vip) {
+    return {
+      ...empty,
+      blockedReason: "VIP perks are not active for this account.",
+    };
+  }
+
   // Same switch rule as the wager leg: leaving for another creator's code
   // forfeits it, an expired code does not.
   const upperCodes = program.codes.map((c) => c.toUpperCase());
@@ -1086,6 +1075,7 @@ export async function computeLossbackEntitlement(
   return enforceOfferExpiry(
     {
       ...empty,
+      isVip: true,
       ftd: { ...ftd, payoutUsd: payout },
       units: payout > 0 ? 1 : 0,
       amountUsd: payout,
