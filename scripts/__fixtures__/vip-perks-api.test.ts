@@ -30,6 +30,13 @@ test("VIP perks API is scoped, bounded, real-money weighted, and fail-closed", a
   assert.match(sync, /scopes: \["discord:vips:perks"\]/);
   assert.match(sync, /maxDuration = 120/);
   assert.match(status, /scopes: \["discord:vips:perks"\]/);
+  assert.match(status, /channelId: DiscordIdSchema/);
+  assert.match(status, /discordUserId: DiscordIdSchema/);
+  assert.doesNotMatch(status, /userId: z\.string/);
+  assert.match(status, /getVipPerksStatusForDiscordMember\(parsed\.data\)/);
+  assert.match(status, /memberSafeEntitlement/);
+  assert.match(service, /member_discord_user_id = \$\{input\.discordUserId\}/);
+  assert.match(service, /evaluateRows\(before, true\)/);
   assert.match(scopes, /"discord:vips:perks"/);
   assert.match(endpoints, /\/api\/v1\/discord\/vips\/perks\/sync/);
   assert.match(endpoints, /\/api\/v1\/discord\/vips\/perks\/status/);

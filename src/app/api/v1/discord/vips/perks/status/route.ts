@@ -3,7 +3,7 @@ import { z } from "zod";
 import { DiscordIdSchema, jsonBody } from "@/app/api/v1/discord/creator-setups/_shared";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 import { VIPS_GUILD_ID } from "@/lib/discord-vip-channel-links";
-import { getVipPerksForUsers, VipPerksError } from "@/lib/vip-perks";
+import { getVipPerksStatusForDiscordMember } from "@/lib/vip-perks";
 import { perksError } from "../_shared";
 
 export const runtime = "nodejs";
@@ -12,7 +12,8 @@ export const maxDuration = 120;
 
 const BodySchema = z.object({
   guildId: DiscordIdSchema,
-  userId: z.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/),
+  channelId: DiscordIdSchema,
+  discordUserId: DiscordIdSchema,
 });
 
 export const POST = withApiKey(
@@ -28,9 +29,14 @@ export const POST = withApiKey(
       return apiError(403, "wrong_guild", "VIP perks are not enabled in this server.");
     }
     try {
-      const entitlement = (await getVipPerksForUsers([parsed.data.userId])).get(parsed.data.userId);
-      if (!entitlement) throw new VipPerksError(404, "vip_link_not_found", "That user has no VIP channel link.");
-      return Response.json({ data: entitlement });
+      const entitlement = await getVipPerksStatusForDiscordMember(parsed.data);
+      const {
+        userId: _userId,
+        discordUserId: _discordUserId,
+        channelId: _channelId,
+        ...memberSafeEntitlement
+      } = entitlement;
+      return Response.json({ data: memberSafeEntitlement });
     } catch (error) {
       return perksError(error);
     }

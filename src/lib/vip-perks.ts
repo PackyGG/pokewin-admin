@@ -469,6 +469,53 @@ export async function getVipPerksForUsers(
   return new Map(values.map((value) => [value.userId, value]));
 }
 
+/**
+ * Evaluates the entitlement owned by one Discord member in their exact linked
+ * VIP channel. The caller never supplies or learns the internal Packy user id.
+ *
+ * Unlike the Admin roster read, this persists transitions: `/perks` is an
+ * explicit member check, so meeting the initial requirement should unlock the
+ * backend entitlement immediately instead of waiting for the next role-sync
+ * poll. Reload after a first unlock so the response includes the newly anchored
+ * recurring cycle rather than the pre-transition null dates.
+ */
+export async function getVipPerksStatusForDiscordMember(input: {
+  guildId: string;
+  channelId: string;
+  discordUserId: string;
+}): Promise<VipPerksEntitlement> {
+  const link = await adminDrizzle.execute<{ user_id: string }>(sql`
+    SELECT user_id
+    FROM discord_vip_channel_links
+    WHERE guild_id = ${input.guildId}
+      AND channel_id = ${input.channelId}
+      AND member_discord_user_id = ${input.discordUserId}
+    LIMIT 1
+  `);
+  const userId = link.rows[0]?.user_id;
+  if (!userId) {
+    throw new VipPerksError(
+      404,
+      "vip_channel_not_linked",
+      "Run this command as the linked VIP member in your linked VIP channel.",
+    );
+  }
+
+  const before = await loadEntitlementRows({ userIds: [userId] });
+  const [value] = await evaluateRows(before, true);
+  if (!value) {
+    throw new VipPerksError(404, "vip_link_not_found", "That VIP link has no perk entitlement.");
+  }
+  if (value.active && value.initialUnlockedAt === null) {
+    const [refreshed] = await evaluateRows(
+      await loadEntitlementRows({ userIds: [userId] }),
+      false,
+    );
+    if (refreshed) return refreshed;
+  }
+  return value;
+}
+
 export async function isVipPerksActive(userId: string): Promise<boolean> {
   try {
     const values = await evaluateRows(

@@ -241,7 +241,7 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/vips/perks/status",
     summary:
-      "Body { guildId, userId }. Evaluates and returns the backend-authoritative VIP perk entitlement for one linked Packy user.",
+      "Body { guildId, channelId, discordUserId }. Evaluates and returns the backend-authoritative VIP perk entitlement only when that Discord member owns the exact linked VIP channel. Internal Packy and Discord identifiers are omitted from the response.",
     scopes: ["discord:vips:perks"],
   },
   {
