@@ -28,6 +28,11 @@ import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime, formatNumber } from "@/lib/utils/format";
 import { VIPS_GUILD_ID } from "@/lib/discord-vip-channel-links";
 import {
+  getVipPerksForUsers,
+  getVipPerksSettings,
+  type VipPerksEntitlement,
+} from "@/lib/vip-perks";
+import {
   getVipBotStats,
   getVipLinkOperations,
   getVipOrphanLinks,
@@ -36,6 +41,14 @@ import {
   type VipRosterFilter,
   type VipRosterRow,
 } from "@/lib/queries/vips";
+import {
+  VipPerksCell,
+  type VipPerksRosterView,
+} from "./vip-perks-cell";
+import {
+  VipPerksSettingsCard,
+  type VipPerksSettingsView,
+} from "./vip-perks-settings-card";
 
 export const metadata = { title: "VIPs" };
 
@@ -109,6 +122,10 @@ export default async function VipsPage({
         <VipStatsSection />
       </Suspense>
 
+      <Suspense fallback={<VipPerksSettingsSkeleton />}>
+        <VipPerksSettingsSection />
+      </Suspense>
+
       <Suspense key={`${filter}-${offset}`} fallback={<VipsListSkeleton />}>
         <VipsListSection offset={offset} filter={filter} />
       </Suspense>
@@ -117,6 +134,28 @@ export default async function VipsPage({
         <BotActivitySection />
       </Suspense>
     </div>
+  );
+}
+
+async function VipPerksSettingsSection() {
+  const result = await safeQuery(
+    () => getVipPerksSettings(),
+    null,
+    "vips.perksSettings",
+    VIPS_SIDE_TIMEOUT_MS,
+  );
+  const settings: VipPerksSettingsView | null = result.data
+    ? {
+        enabled: result.data.enabled,
+        initialWagerUsd: result.data.initialWagerUsd,
+        recurringEnabled: result.data.recurringEnabled,
+        recurringWagerUsd: result.data.recurringWagerUsd,
+      }
+    : null;
+  return (
+    <FadeIn>
+      <VipPerksSettingsCard initial={settings} />
+    </FadeIn>
   );
 }
 
@@ -305,6 +344,14 @@ async function VipsListSection({
   );
   const { items, total } = result.data;
   const listFailed = result.error !== null;
+  const perksResult = await safeQuery(
+    () => getVipPerksForUsers(items.map((item) => item.userId)),
+    new Map<string, VipPerksEntitlement>(),
+    "vips.perksRoster",
+    VIPS_LIST_TIMEOUT_MS,
+  );
+  const perksByUserId = perksResult.data;
+  const perksFailed = perksResult.error !== null;
 
   return (
     <FadeIn className="space-y-3">
@@ -348,6 +395,23 @@ async function VipsListSection({
         </div>
       )}
 
+      {perksFailed && items.some((item) => item.discord !== null) && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
+        >
+          <AlertTriangle
+            aria-hidden
+            className="mt-0.5 size-4 shrink-0 text-amber-500"
+          />
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            Perk eligibility is temporarily unavailable. Account and Discord
+            link data is still current; refresh to retry the wager progress.
+          </p>
+        </div>
+      )}
+
       <div className="rounded-2xl border bg-card p-4">
         <div className="flex items-center justify-between">
           <span className="text-sm font-semibold">
@@ -376,11 +440,12 @@ async function VipsListSection({
           </div>
         ) : (
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[1180px] text-sm">
+            <table className="w-full min-w-[1440px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">
                   <th className="pb-2 pr-4 font-medium">Player</th>
                   <th className="pb-2 pr-4 font-medium">Discord</th>
+                  <th className="pb-2 pr-4 font-medium">Perk access</th>
                   <th className="pb-2 pr-4 font-medium">Lifetime PnL</th>
                   <th className="pb-2 pr-4 font-medium">Deposits</th>
                   <th className="pb-2 pr-4 font-medium">Withdrawals</th>
@@ -416,6 +481,15 @@ async function VipsListSection({
                     </td>
                     <td className="py-3 pr-4">
                       <DiscordCell discord={row.discord} />
+                    </td>
+                    <td className="py-3 pr-4">
+                      <VipPerksCell
+                        perks={toVipPerksRosterView(
+                          perksByUserId.get(row.userId) ?? null,
+                        )}
+                        userId={row.userId}
+                        playerLabel={row.username ?? row.userId}
+                      />
                     </td>
                     <td className="py-3 pr-4">
                       <PnlCell value={row.pnl} />
@@ -461,6 +535,43 @@ async function VipsListSection({
       </div>
     </FadeIn>
   );
+}
+
+function toVipPerksRosterView(
+  entitlement: VipPerksEntitlement | null,
+): VipPerksRosterView | null {
+  if (!entitlement) return null;
+  const hasRecurringCycle =
+    entitlement.initialUnlockedAt !== null &&
+    entitlement.recurringThresholdUsd !== null &&
+    entitlement.currentCycleStartsAt !== null;
+  const currentWagerUsd = hasRecurringCycle
+    ? entitlement.currentCycleWagerUsd
+    : entitlement.initialWagerUsd;
+  const requirementWagerUsd = hasRecurringCycle
+    ? entitlement.recurringThresholdUsd ?? 0
+    : entitlement.initialThresholdUsd;
+
+  return {
+    status: entitlement.status,
+    currentWagerUsd,
+    requirementWagerUsd,
+    progressPct:
+      requirementWagerUsd > 0
+        ? (currentWagerUsd / requirementWagerUsd) * 100
+        : 0,
+    windowStartedAt: hasRecurringCycle
+      ? entitlement.currentCycleStartsAt
+      : entitlement.initialUnlockedAt === null
+        ? entitlement.initialWindowStartedAt
+        : null,
+    windowEndsAt: hasRecurringCycle
+      ? entitlement.currentCycleEndsAt
+      : entitlement.initialUnlockedAt === null
+        ? entitlement.initialDeadline
+        : null,
+    unlockedAt: entitlement.initialUnlockedAt,
+  };
 }
 
 function PaginationFooter({
@@ -693,6 +804,22 @@ function VipsListSkeleton() {
             <Skeleton key={i} className="h-12 w-full rounded" />
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function VipPerksSettingsSkeleton() {
+  return (
+    <div className="rounded-2xl border bg-card p-5">
+      <div className="flex items-center justify-between">
+        <Skeleton className="h-5 w-40 rounded" />
+        <Skeleton className="h-9 w-32 rounded-xl" />
+      </div>
+      <Skeleton className="mt-3 h-3 w-full max-w-xl rounded" />
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        <Skeleton className="h-44 rounded-xl" />
+        <Skeleton className="h-44 rounded-xl" />
       </div>
     </div>
   );
