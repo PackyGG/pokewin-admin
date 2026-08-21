@@ -17,6 +17,7 @@
 //     `pageKey`, which reproduces today's behavior exactly.
 //
 import { EXCLUDED_USERS_ACCESS_ALLOWLIST } from "@/lib/excluded-users/access-shared";
+import { EOS_TEST_USERNAMES } from "@/lib/eos-test-access-shared";
 // This file is imported from both a Client Component (palette + sidebar) and
 // a Server Component (docs page), so it must stay dependency-free — no
 // `"use client"`, no server-only modules. Icons are referenced as string
@@ -540,6 +541,20 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     keywords: ["discord", "xp", "ranks", "roles", "leaderboard", "moderation", "filter", "mee6"],
     inSidebar: true,
     inPalette: true,
+  },
+  {
+    // Private EOS outcome controls. The strict allowlist mirrors the route's
+    // server-side guard, so no generic admin or owner bypass reveals the link.
+    id: "nav.system.eos",
+    group: "System",
+    label: "EOS",
+    href: "/eos",
+    pageKey: "/eos",
+    icon: "Dices",
+    usernameAllowlist: [...EOS_TEST_USERNAMES],
+    strictUsernameAllowlist: true,
+    inSidebar: true,
+    inPalette: false,
   },
   {
     // Excluded Users — sidebar-only, explicit username allowlist. Not in ADMIN_PAGES
