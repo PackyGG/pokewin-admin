@@ -169,7 +169,7 @@ test("the Games overview is the default and reuses one canonical gaming read", (
   );
   assert.match(
     component,
-    /GGR \/ hold/,
+    />\s*GGR\s*</,
     "every game row must render its directly attributed GGR and hold",
   );
   assert.doesNotMatch(
