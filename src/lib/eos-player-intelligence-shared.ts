@@ -5,7 +5,7 @@ import type { DbEnv } from "@/lib/db-env";
 export const eosPlayerPeriodSchema = z.enum(["24h", "7d", "30d"]);
 export const eosPlayerCurrencySchema = z.enum(["real", "coin"]);
 export const eosPlayerSortSchema = z.enum([
-  "luck",
+  "profit",
   "battles",
   "volume",
   "largest",
@@ -14,7 +14,7 @@ export const eosPlayerSortSchema = z.enum([
 export const eosPlayerIntelligenceInputSchema = z.object({
   period: eosPlayerPeriodSchema.default("7d"),
   currency: eosPlayerCurrencySchema.default("real"),
-  sort: eosPlayerSortSchema.default("luck"),
+  sort: eosPlayerSortSchema.default("profit"),
   minBattles: z.number().int().min(1).max(100).default(5),
   minBattleValue: z.number().min(0).max(1_000_000).default(0),
   limit: z.number().int().min(10).max(100).default(50),
@@ -22,7 +22,7 @@ export const eosPlayerIntelligenceInputSchema = z.object({
 
 export type EosPlayerIntelligenceInput = z.infer<typeof eosPlayerIntelligenceInputSchema>;
 
-export type EosPlayerSignal = {
+export type EosPlayerImpact = {
   userId: string;
   username: string | null;
   role: string;
@@ -30,11 +30,6 @@ export type EosPlayerSignal = {
   wins: number;
   losses: number;
   winRate: number;
-  luckEligibleBattles: number;
-  luckWins: number;
-  expectedWins: number;
-  expectedWinRate: number;
-  luckScore: number | null;
   totalCreatorCost: number;
   averageCreatorCost: number;
   largestCreatorCost: number;
@@ -42,7 +37,6 @@ export type EosPlayerSignal = {
   estimatedPayout: number;
   estimatedNetPnl: number;
   lastBattleAt: string;
-  signal: "strong" | "elevated" | "none";
 };
 
 export type EosPlayerIntelligence = {
@@ -54,5 +48,7 @@ export type EosPlayerIntelligence = {
   minBattles: number;
   matchingPlayers: number;
   matchingBattles: number;
-  rows: EosPlayerSignal[];
+  playersUp: number;
+  totalPlayerProfit: number;
+  rows: EosPlayerImpact[];
 };

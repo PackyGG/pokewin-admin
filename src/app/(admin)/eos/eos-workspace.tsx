@@ -101,7 +101,7 @@ export function EosWorkspace({
             <UserRoundCog className="size-4" />Per-user
           </TabsTrigger>
           <TabsTrigger value="signals" className="px-4">
-            <Radar className="size-4" />Player signals
+            <Radar className="size-4" />Player impact
           </TabsTrigger>
           <TabsTrigger value="overview" className="px-4">
             <BarChart3 className="size-4" />Impact overview

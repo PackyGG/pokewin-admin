@@ -305,7 +305,10 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
                 </TabsContent>
                 <TabsContent value="history" className="space-y-3 pt-2">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs text-muted-foreground">Recent {environment} EOS decisions. Stored for 30 days.</p>
+                    <p className="text-xs text-muted-foreground">
+                      Recent {environment} EOS decisions for battles this player created. Stored
+                      for 30 days from when tracking began; no historical backfill.
+                    </p>
                     <Button type="button" size="sm" variant="outline" disabled={isHistoryPending} onClick={() => loadHistory(selected.userId)}>
                       {isHistoryPending && <Loader2 className="size-4 animate-spin" />}Refresh
                     </Button>
@@ -317,7 +320,11 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
                     <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading battle history</div>
                   )}
                   {history?.length === 0 && (
-                    <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">No auditable EOS battles yet. New battles will appear here.</div>
+                    <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                      No recorded EOS decisions for this creator yet. History starts with new
+                      battles they create after tracking was enabled; joined battles and older
+                      flow steps cannot be backfilled.
+                    </div>
                   )}
                   {history?.map((entry) => {
                     const wins = entry.candidates.filter((candidate) => candidate.creatorWonBattle).length;

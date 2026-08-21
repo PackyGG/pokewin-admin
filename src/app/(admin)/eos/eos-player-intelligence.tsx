@@ -4,14 +4,13 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import {
   Activity,
-  AlertTriangle,
   ArrowUpRight,
   BarChart3,
   CircleDollarSign,
   Loader2,
   Search,
-  Sparkles,
   Target,
+  TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -38,16 +37,16 @@ import type { EosUserConfig } from "@/lib/antifraud/eos-test-config-api";
 import type {
   EosPlayerIntelligence,
   EosPlayerIntelligenceInput,
-  EosPlayerSignal,
+  EosPlayerImpact,
 } from "@/lib/eos-player-intelligence-shared";
 import { cn } from "@/lib/utils";
 import { loadEosPlayerIntelligence } from "./actions";
 
 const SORT_LABELS: Record<EosPlayerIntelligenceInput["sort"], string> = {
-  luck: "Luck signal",
+  profit: "Highest player profit",
   battles: "Most battles",
-  volume: "Highest volume",
-  largest: "Largest battle",
+  volume: "Highest $ volume",
+  largest: "Biggest battle",
 };
 
 function percent(value: number) {
@@ -63,18 +62,6 @@ function amount(value: number, currency: EosPlayerIntelligence["currency"]) {
   }).format(value)} ${currency}`;
 }
 
-function signalBadge(signal: EosPlayerSignal["signal"]) {
-  if (signal === "strong") return <Badge variant="destructive">Strong signal</Badge>;
-  if (signal === "elevated") {
-    return (
-      <Badge className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300">
-        Elevated
-      </Badge>
-    );
-  }
-  return <Badge variant="outline">Normal range</Badge>;
-}
-
 export function EosPlayerIntelligencePanel({
   active,
   configuredUsers,
@@ -82,19 +69,18 @@ export function EosPlayerIntelligencePanel({
 }: {
   active: boolean;
   configuredUsers: EosUserConfig[];
-  onConfigure: (player: EosPlayerSignal) => void;
+  onConfigure: (player: EosPlayerImpact) => void;
 }) {
   const [filters, setFilters] = useState<EosPlayerIntelligenceInput>({
     period: "7d",
     currency: "real",
-    sort: "luck",
+    sort: "profit",
     minBattles: 5,
     minBattleValue: 0,
     limit: 50,
   });
   const [data, setData] = useState<EosPlayerIntelligence | null>(null);
   const [query, setQuery] = useState("");
-  const [signalView, setSignalView] = useState<"all" | "flagged">("all");
   const [isPending, startTransition] = useTransition();
   const attemptedInitialLoad = useRef(false);
   const configuredById = useMemo(
@@ -129,8 +115,7 @@ export function EosPlayerIntelligencePanel({
     return needle.length === 0
       || row.userId.toLowerCase().includes(needle)
       || row.username?.toLowerCase().includes(needle);
-  }).filter((row) => signalView === "all" || row.signal !== "none") ?? [];
-  const signaled = data?.rows.filter((row) => row.signal !== "none").length ?? 0;
+  }) ?? [];
 
   return (
     <div className="space-y-4">
@@ -138,13 +123,12 @@ export function EosPlayerIntelligencePanel({
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <Sparkles className="size-4 text-primary" />
-              <h2 className="font-semibold">EOS-targetable creator signals</h2>
+              <TrendingUp className="size-4 text-primary" />
+              <h2 className="font-semibold">Highest-impact battle creators</h2>
             </div>
             <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
-              Ranks completed battles created by each player. Luck compares observed wins with
-              equal-team expectations; group and jackpot battles stay in activity totals but
-              are excluded from the statistical score.
+              Ranks players by estimated profit against the site, battle count, dollar volume,
+              or biggest battle. Only completed battles created by the player are included.
             </p>
           </div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
@@ -233,8 +217,8 @@ export function EosPlayerIntelligencePanel({
           {[
             [Activity, "Matching creators", data.matchingPlayers.toLocaleString()],
             [Target, "Completed battles", data.matchingBattles.toLocaleString()],
-            [AlertTriangle, "Elevated signals", signaled.toLocaleString()],
-            [CircleDollarSign, "Ranked currency", data.currency === "real" ? "Real balance" : "Coins"],
+            [TrendingUp, "Creators up vs site", data.playersUp.toLocaleString()],
+            [CircleDollarSign, "Player profit vs site", amount(data.totalPlayerProfit, data.currency)],
           ].map(([Icon, label, value]) => {
             const MetricIcon = Icon as typeof Activity;
             return (
@@ -258,21 +242,12 @@ export function EosPlayerIntelligencePanel({
             <div>
               <CardTitle className="text-base">Creator ranking</CardTitle>
               <p className="mt-1 text-xs text-muted-foreground">
-                A signal is a review lead, not proof of abuse or manipulation.
+                Positive P&amp;L means the player is up against the site in the selected window.
+                Payout remains an estimate based on committed battle settlement values.
               </p>
             </div>
             <div className="flex w-full gap-2 sm:w-auto">
-              <Select
-                value={signalView}
-                onValueChange={(value) => value && setSignalView(value as "all" | "flagged")}
-              >
-                <SelectTrigger className="w-36" aria-label="Filter luck signals"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All creators</SelectItem>
-                  <SelectItem value="flagged">Signals only</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="relative min-w-0 flex-1 sm:w-64">
+              <div className="relative min-w-0 flex-1 sm:w-72">
                 <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={query}
@@ -302,12 +277,12 @@ export function EosPlayerIntelligencePanel({
                 <TableHeader>
                   <TableRow>
                     <TableHead>Creator</TableHead>
-                    <TableHead>Luck signal</TableHead>
+                    <TableHead className="text-right">Player P&amp;L</TableHead>
                     <TableHead className="text-right">Wins</TableHead>
                     <TableHead className="text-right">Battles</TableHead>
-                    <TableHead className="text-right">Total cost</TableHead>
-                    <TableHead className="text-right">Largest</TableHead>
-                    <TableHead className="text-right">Est. P&amp;L</TableHead>
+                    <TableHead className="text-right">Battle volume</TableHead>
+                    <TableHead className="text-right">Average</TableHead>
+                    <TableHead className="text-right">Biggest battle</TableHead>
                     <TableHead><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -331,39 +306,30 @@ export function EosPlayerIntelligencePanel({
                             <p className="truncate font-mono text-[10px] text-muted-foreground">{row.userId}</p>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="space-y-1">
-                            {signalBadge(row.signal)}
-                            <p className={cn(
-                              "text-[10px] tabular-nums text-muted-foreground",
-                              row.signal !== "none" && "font-medium text-foreground",
-                            )}>
-                              {row.luckScore === null ? "Not comparable" : `z ${row.luckScore.toFixed(2)}`}
-                              {` · ${row.luckWins}/${row.luckEligibleBattles} vs ${row.expectedWins.toFixed(1)} expected`}
-                            </p>
-                          </div>
+                        <TableCell className={cn(
+                          "text-right font-semibold tabular-nums",
+                          row.estimatedNetPnl > 0 && "text-destructive",
+                          row.estimatedNetPnl < 0 && "text-emerald-600 dark:text-emerald-400",
+                        )}>
+                          {amount(row.estimatedNetPnl, data.currency)}
+                          <span className="block text-[10px] font-normal text-muted-foreground">
+                            payout {amount(row.estimatedPayout, data.currency)}
+                          </span>
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           <span className="font-medium">{percent(row.winRate)}</span>
                           <span className="block text-[10px] text-muted-foreground">
-                            {row.wins}–{row.losses} · expected {percent(row.expectedWinRate)}
+                            {row.wins}–{row.losses}
                           </span>
                         </TableCell>
                         <TableCell className="text-right font-medium tabular-nums">{row.battleCount}</TableCell>
                         <TableCell className="text-right tabular-nums">{amount(row.totalCreatorCost, data.currency)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{amount(row.averageCreatorCost, data.currency)}</TableCell>
                         <TableCell className="text-right tabular-nums">
                           {amount(row.largestCreatorCost, data.currency)}
                           <span className="block text-[10px] text-muted-foreground">
                             pot {amount(row.largestPotValue, data.currency)}
                           </span>
-                        </TableCell>
-                        <TableCell className={cn(
-                          "text-right font-medium tabular-nums",
-                          row.estimatedNetPnl > 0 && "text-emerald-600 dark:text-emerald-400",
-                          row.estimatedNetPnl < 0 && "text-destructive",
-                        )}>
-                          {amount(row.estimatedNetPnl, data.currency)}
-                          <span className="block text-[10px] font-normal text-muted-foreground">estimated</span>
                         </TableCell>
                         <TableCell>
                           <div className="flex justify-end gap-1">

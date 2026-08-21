@@ -23,7 +23,7 @@ test("EOS creator intelligence is bounded, environment routed, and currency sepa
   assert.match(querySource, /b\.currency::text = \$2/);
   assert.match(querySource, /bp\.user_id = b\.user_id/);
   assert.match(querySource, /bp\.bot_id IS NULL/);
-  assert.match(querySource, /b\.mode NOT IN \('group', 'jackpot'\)/);
+  assert.match(querySource, /estimated_net_pnl DESC/);
   assert.match(querySource, /LIMIT \$5/);
   assert.doesNotMatch(querySource, /currency.*(?:both|all)/i);
 });
@@ -34,7 +34,7 @@ test("EOS creator intelligence filters are closed and access gated", () => {
     {
       period: "7d",
       currency: "real",
-      sort: "luck",
+      sort: "profit",
       minBattles: 5,
       minBattleValue: 0,
       limit: 50,
