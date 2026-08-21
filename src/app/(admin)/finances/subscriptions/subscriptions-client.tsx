@@ -39,6 +39,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -66,7 +68,14 @@ import type {
 } from "@/lib/queries/finance-costs";
 import { formatCurrency } from "@/lib/utils/format";
 
-import { SubscriptionBrand } from "./subscription-brand";
+import { SUBSCRIPTION_SERVICES, SubscriptionBrand } from "./subscription-brand";
+
+const CUSTOM_SERVICE = "__custom__";
+
+function initialService(item?: SubscriptionListItem): string {
+  if (!item) return "";
+  return SUBSCRIPTION_SERVICES.includes(item.name) ? item.name : CUSTOM_SERVICE;
+}
 
 const EMPTY_SUBSCRIPTION: SubscriptionInput = {
   name: "",
@@ -82,6 +91,7 @@ function subscriptionInput(item: SubscriptionListItem): SubscriptionInput {
 
 function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
   const [open, setOpen] = useState(false);
+  const [service, setService] = useState(() => initialService(item));
   const [form, setForm] = useState<SubscriptionInput>(() =>
     item ? subscriptionInput(item) : EMPTY_SUBSCRIPTION,
   );
@@ -89,10 +99,26 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
   const router = useRouter();
 
   useEffect(() => {
-    if (open) setForm(item ? subscriptionInput(item) : EMPTY_SUBSCRIPTION);
+    if (!open) return;
+    setService(initialService(item));
+    setForm(item ? subscriptionInput(item) : EMPTY_SUBSCRIPTION);
   }, [item, open]);
 
-  const valid = form.name.trim() && form.amount > 0;
+  const valid = Boolean(service && form.name.trim() && form.amount > 0);
+
+  function selectService(value: string | null) {
+    if (!value) return;
+    setService(value);
+    setForm((current) => ({
+      ...current,
+      name:
+        value === CUSTOM_SERVICE
+          ? item && initialService(item) === CUSTOM_SERVICE
+            ? item.name
+            : ""
+          : value,
+    }));
+  }
 
   function submit() {
     startTransition(async () => {
@@ -141,38 +167,72 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
           </>
         )}
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto p-0 sm:max-w-lg">
-        <div className="border-b bg-card px-5 py-4">
-          <DialogHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex size-9 items-center justify-center rounded-xl bg-violet-500/10">
-                <CalendarClock className="size-4 text-violet-500" />
-              </div>
-              <div>
-                <DialogTitle>
-                  {item ? "Edit subscription" : "Add subscription"}
-                </DialogTitle>
-                <p className="text-xs text-muted-foreground">
-                  Track a recurring monthly commitment.
-                </p>
-              </div>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <div className="flex items-start gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-violet-500/10">
+              <CalendarClock className="size-4 text-violet-500" />
             </div>
-          </DialogHeader>
-        </div>
-
-        <div className="grid gap-4 px-5 py-5 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-end">
-          <div className="space-y-1.5">
-            <Label htmlFor="subscription-name">Name</Label>
-            <Input
-              id="subscription-name"
-              value={form.name}
-              onChange={(event) =>
-                setForm({ ...form, name: event.target.value })
-              }
-              placeholder="e.g. Sentry Business"
-              maxLength={160}
-            />
+            <div className="space-y-1">
+              <DialogTitle>
+                {item ? "Edit subscription" : "Add subscription"}
+              </DialogTitle>
+              <DialogDescription>
+                Choose the service and enter its monthly cost.
+              </DialogDescription>
+            </div>
           </div>
+        </DialogHeader>
+
+        <div className="grid gap-4 py-1">
+          <div className="space-y-1.5">
+            <Label htmlFor="subscription-service">Service</Label>
+            <Select value={service || null} onValueChange={selectService}>
+              <SelectTrigger id="subscription-service" className="w-full">
+                <SelectValue placeholder="Choose a service">
+                  {(value: string) =>
+                    value === CUSTOM_SERVICE ? (
+                      "Other service"
+                    ) : (
+                      <span className="flex items-center gap-2">
+                        <SubscriptionBrand name={value} size="sm" />
+                        {value}
+                      </span>
+                    )
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {SUBSCRIPTION_SERVICES.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    <SubscriptionBrand name={name} size="sm" />
+                    {name}
+                  </SelectItem>
+                ))}
+                <SelectItem value={CUSTOM_SERVICE}>
+                  <SubscriptionBrand name="Other" size="sm" />
+                  Other service
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {service === CUSTOM_SERVICE ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="subscription-name">Custom service name</Label>
+              <Input
+                id="subscription-name"
+                value={form.name}
+                onChange={(event) =>
+                  setForm({ ...form, name: event.target.value })
+                }
+                placeholder="Enter service name"
+                maxLength={160}
+                autoFocus
+              />
+            </div>
+          ) : null}
+
           <div className="space-y-1.5">
             <Label htmlFor="subscription-amount">Monthly amount (USD)</Label>
             <Input
@@ -189,9 +249,9 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
           </div>
         </div>
 
-        <div className="flex flex-col-reverse gap-2 border-t bg-muted/30 px-5 py-4 sm:flex-row sm:justify-end">
+        <DialogFooter>
           <Button
-            variant="ghost"
+            variant="outline"
             onClick={() => setOpen(false)}
             disabled={isPending}
           >
@@ -207,7 +267,7 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
             )}
             {isPending ? "Saving…" : item ? "Save changes" : "Add subscription"}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -173,27 +173,42 @@ const BRANDS: Brand[] = [
   },
 ];
 
-export function SubscriptionBrand({ name }: { name: string }) {
+export const SUBSCRIPTION_SERVICES = BRANDS.map((brand) => brand.label);
+
+export function SubscriptionBrand({
+  name,
+  size = "default",
+}: {
+  name: string;
+  size?: "default" | "sm";
+}) {
   const brand = BRANDS.find((candidate) => candidate.pattern.test(name));
   const Icon = brand?.icon;
+  const compact = size === "sm";
 
   return (
     <div
       className={cn(
-        "flex size-9 shrink-0 items-center justify-center rounded-xl border border-current/10",
+        "flex shrink-0 items-center justify-center border border-current/10",
+        compact ? "size-6 rounded-md" : "size-9 rounded-xl",
         brand?.className ?? "bg-muted text-muted-foreground",
       )}
       title={brand?.label ?? "Subscription"}
       aria-hidden="true"
     >
       {Icon ? (
-        <Icon className="size-[18px]" />
+        <Icon className={compact ? "size-3.5" : "size-[18px]"} />
       ) : brand?.mark ? (
-        <span className="text-[11px] font-bold tracking-tight">
+        <span
+          className={cn(
+            "font-bold tracking-tight",
+            compact ? "text-[9px]" : "text-[11px]",
+          )}
+        >
           {brand.mark}
         </span>
       ) : (
-        <Building2 className="size-4" />
+        <Building2 className={compact ? "size-3" : "size-4"} />
       )}
     </div>
   );

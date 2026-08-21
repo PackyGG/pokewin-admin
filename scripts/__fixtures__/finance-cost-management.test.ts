@@ -73,6 +73,10 @@ test("cost forms expose safe CRUD and recurring status controls", () => {
     /subscription-category|subscription-notes/,
   );
   assert.doesNotMatch(subscriptions, /item\.(?:category|notes)/);
+  assert.match(subscriptions, /SUBSCRIPTION_SERVICES\.map/);
+  assert.match(subscriptions, /<SelectItem value=\{CUSTOM_SERVICE\}>/);
+  assert.match(subscriptions, /<DialogFooter>/);
+  assert.doesNotMatch(subscriptions, /sm:grid-cols-\[minmax/);
 });
 
 test("subscriptions match common vendors to branded logos", () => {
@@ -99,5 +103,6 @@ test("subscriptions match common vendors to branded logos", () => {
   ]) {
     assert.match(brands, new RegExp(`label: "${vendor}"`));
   }
+  assert.match(brands, /export const SUBSCRIPTION_SERVICES/);
   assert.match(client, /<SubscriptionBrand name=\{item\.name\} \/>/);
 });
