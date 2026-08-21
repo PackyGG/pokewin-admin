@@ -1,18 +1,30 @@
-import { CheckCircle2, Globe2, RadioTower, Users } from "lucide-react";
+import { Suspense } from "react";
+import { BarChart3, CheckCircle2, Globe2, RadioTower, Users } from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   getEosTestConfig,
+  getEosTestOverview,
   listEosUserConfigs,
 } from "@/lib/antifraud/eos-test-config-api";
-import { readDbEnvFromCookie } from "@/lib/db-env";
+import { readDbEnvFromCookie, type DbEnv } from "@/lib/db-env";
 import { requireEosTestAccess } from "@/lib/eos-test-access";
+import { logError } from "@/lib/errors/logger";
 import { EosTestConfigCard } from "./eos-test-config-card";
+import { EosOverview } from "./eos-overview";
 import { EosUserSequences } from "./eos-user-sequences";
 
 export const metadata = { title: "EOS Battle Testing" };
+
+async function EosOverviewSection({ environment }: { environment: DbEnv }) {
+  const overview = await getEosTestOverview(environment).catch((error) => {
+    logError("eos.overview", "EOS control overview failed", error);
+    return null;
+  });
+  return <EosOverview overview={overview} />;
+}
 
 export default async function EosPage() {
   await requireEosTestAccess();
@@ -53,12 +65,15 @@ export default async function EosPage() {
         )}
       </div>
       <Tabs defaultValue="global" className="gap-4">
-        <TabsList className="h-10 w-full justify-start sm:w-fit">
+        <TabsList className="h-10 w-full justify-start overflow-x-auto sm:w-fit">
           <TabsTrigger value="users" className="px-4">
             <Users className="size-4" />Per-user flows
           </TabsTrigger>
           <TabsTrigger value="global" className="px-4">
             <Globe2 className="size-4" />Global controls
+          </TabsTrigger>
+          <TabsTrigger value="overview" className="px-4">
+            <BarChart3 className="size-4" />Overview
           </TabsTrigger>
         </TabsList>
         <TabsContent value="users">
@@ -70,6 +85,17 @@ export default async function EosPage() {
         </TabsContent>
         <TabsContent value="global">
           <EosTestConfigCard initial={config} />
+        </TabsContent>
+        <TabsContent value="overview">
+          <Suspense
+            fallback={(
+              <div className="rounded-xl border bg-card p-8 text-center text-sm text-muted-foreground">
+                Loading EOS impact overview…
+              </div>
+            )}
+          >
+            <EosOverviewSection environment={environment} />
+          </Suspense>
         </TabsContent>
       </Tabs>
     </div>

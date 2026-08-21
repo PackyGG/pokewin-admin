@@ -84,6 +84,31 @@ export type BattleTestSelectionAuditInput = Omit<
   "battleId" | "createdAt" | "selectedAt"
 >;
 
+export type BattleTestOverviewPeriod = {
+  period: "24h" | "7d" | "30d";
+  currency: "real" | "coin";
+  battleCount: number;
+  steeredBattles: number;
+  matchedBattles: number;
+  fallbackBattles: number;
+  targetUnavailableBattles: number;
+  rangeUnavailableBattles: number;
+  forceLossBattles: number;
+  creatorWinsAvoided: number;
+  selectedWins: number;
+  selectedLosses: number;
+  selectedCreatorProfitLoss: number;
+  randomBaselineCreatorProfitLoss: number;
+  estimatedCreatorProfitReduction: number;
+};
+
+export type BattleTestOverview = {
+  environment: BattleTestEnvironment;
+  generatedAt: string;
+  trackingStartedAt: string | null;
+  periods: BattleTestOverviewPeriod[];
+};
+
 export type BattleTestConfig = {
   environment?: BattleTestEnvironment;
   userOnlyLoses: boolean;
@@ -137,6 +162,7 @@ export interface BattleTestConfigSource {
     userId: string,
     limit: number,
   ): Promise<BattleTestSelectionAudit[]>;
+  getOverview?(): Promise<BattleTestOverview>;
   deleteUser?(userId: string): Promise<void>;
   consumeUserInstruction?(
     userId: string,
@@ -657,6 +683,158 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
         ...audit,
       }] : [];
     });
+  }
+
+  async getOverview(): Promise<BattleTestOverview> {
+    const result = await this.pool.query<{
+      period: BattleTestOverviewPeriod["period"];
+      currency: BattleTestOverviewPeriod["currency"];
+      tracking_started_at: Date | string | null;
+      battle_count: string;
+      steered_battles: string;
+      matched_battles: string;
+      fallback_battles: string;
+      target_unavailable_battles: string;
+      range_unavailable_battles: string;
+      force_loss_battles: string;
+      creator_wins_avoided: string;
+      selected_wins: string;
+      selected_losses: string;
+      selected_creator_profit_loss: string;
+      random_baseline_creator_profit_loss: string;
+      estimated_creator_profit_reduction: string;
+    }>(
+      `WITH raw AS (
+         SELECT s.selected_at AS occurred_at,
+                s.audit->>'controlKind' AS control_kind,
+                s.audit->>'currency' AS currency,
+                s.audit->>'fallbackReason' AS fallback_reason,
+                CASE WHEN jsonb_typeof(s.audit#>'{selected,creatorWonBattle}') = 'boolean'
+                  THEN (s.audit#>>'{selected,creatorWonBattle}')::boolean END AS selected_win,
+                CASE WHEN jsonb_typeof(s.audit#>'{selected,creatorProfitLoss}') = 'number'
+                  THEN (s.audit#>>'{selected,creatorProfitLoss}')::numeric END AS selected_profit,
+                CASE WHEN jsonb_typeof(baseline.value->'creatorProfitLoss') = 'number'
+                  THEN (baseline.value->>'creatorProfitLoss')::numeric END AS baseline_profit,
+                CASE WHEN jsonb_typeof(baseline.value->'creatorWonBattle') = 'boolean'
+                  THEN (baseline.value->>'creatorWonBattle')::boolean END AS baseline_win
+         FROM battle_test_eos_selections s
+         JOIN LATERAL (
+           SELECT candidate AS value
+           FROM jsonb_array_elements(
+             CASE WHEN jsonb_typeof(s.audit->'candidates') = 'array'
+               THEN s.audit->'candidates' ELSE '[]'::jsonb END
+           ) AS candidate
+           WHERE jsonb_typeof(candidate->'blockNumber') = 'number'
+             AND jsonb_typeof(candidate->'creatorProfitLoss') = 'number'
+             AND candidate->'blockNumber' = s.audit->'randomBlockNumber'
+           LIMIT 1
+         ) baseline ON true
+         WHERE s.environment = $1
+           AND s.audit IS NOT NULL AND s.response IS NOT NULL
+           AND s.selected_at IS NOT NULL
+           AND s.selected_at >= now() - interval '30 days'
+           AND s.audit->>'version' = '1'
+           AND s.audit->>'controlKind' IN (
+             'user_rule', 'global_rule', 'user_force_losses',
+             'global_force_losses', 'legacy_global_losses', 'random'
+           )
+           AND s.audit->>'currency' IN ('real', 'coin')
+           AND jsonb_typeof(s.audit->'randomBlockNumber') = 'number'
+       ), valid AS (
+         SELECT * FROM raw
+         WHERE selected_win IS NOT NULL
+           AND selected_profit IS NOT NULL
+           AND baseline_profit IS NOT NULL
+           AND baseline_win IS NOT NULL
+       ), periods(period, since_at, sort_order) AS (
+         VALUES
+           ('24h'::text, now() - interval '24 hours', 1),
+           ('7d'::text, now() - interval '7 days', 2),
+           ('30d'::text, now() - interval '30 days', 3)
+       ), currencies(currency) AS (
+         VALUES ('real'::text), ('coin'::text)
+       )
+       SELECT periods.period, currencies.currency,
+              (SELECT min(occurred_at) FROM valid) AS tracking_started_at,
+              count(valid.occurred_at)::text AS battle_count,
+              count(*) FILTER (WHERE valid.control_kind <> 'random')::text AS steered_battles,
+              count(*) FILTER (
+                WHERE valid.control_kind <> 'random' AND valid.fallback_reason IS NULL
+              )::text AS matched_battles,
+              count(*) FILTER (
+                WHERE valid.control_kind <> 'random'
+                  AND valid.fallback_reason IS NOT NULL
+              )::text AS fallback_battles,
+              count(*) FILTER (
+                WHERE valid.control_kind <> 'random'
+                  AND valid.fallback_reason = 'target_unavailable'
+              )::text AS target_unavailable_battles,
+              count(*) FILTER (
+                WHERE valid.control_kind <> 'random'
+                  AND valid.fallback_reason = 'range_unavailable'
+              )::text AS range_unavailable_battles,
+              count(*) FILTER (
+                WHERE valid.control_kind IN (
+                  'user_force_losses', 'global_force_losses', 'legacy_global_losses'
+                )
+              )::text AS force_loss_battles,
+              count(*) FILTER (
+                WHERE valid.control_kind <> 'random'
+                  AND valid.baseline_win AND NOT valid.selected_win
+              )::text AS creator_wins_avoided,
+              count(*) FILTER (
+                WHERE valid.control_kind <> 'random' AND valid.selected_win
+              )::text AS selected_wins,
+              count(*) FILTER (
+                WHERE valid.control_kind <> 'random' AND NOT valid.selected_win
+              )::text AS selected_losses,
+              coalesce(sum(valid.selected_profit) FILTER (
+                WHERE valid.control_kind <> 'random'
+              ), 0)::text AS selected_creator_profit_loss,
+              coalesce(sum(valid.baseline_profit) FILTER (
+                WHERE valid.control_kind <> 'random'
+              ), 0)::text AS random_baseline_creator_profit_loss,
+              coalesce(sum(valid.baseline_profit - valid.selected_profit) FILTER (
+                WHERE valid.control_kind <> 'random'
+              ), 0)::text AS estimated_creator_profit_reduction
+       FROM periods
+       CROSS JOIN currencies
+       LEFT JOIN valid ON valid.occurred_at >= periods.since_at
+         AND valid.currency = currencies.currency
+       GROUP BY periods.period, periods.sort_order, currencies.currency
+       ORDER BY periods.sort_order, currencies.currency`,
+      [this.environment],
+    );
+    const asNumber = (value: string): number => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return {
+      environment: this.environment,
+      generatedAt: new Date().toISOString(),
+      trackingStartedAt: result.rows[0]?.tracking_started_at
+        ? new Date(result.rows[0].tracking_started_at).toISOString()
+        : null,
+      periods: result.rows.map((row) => ({
+        period: row.period,
+        currency: row.currency,
+        battleCount: asNumber(row.battle_count),
+        steeredBattles: asNumber(row.steered_battles),
+        matchedBattles: asNumber(row.matched_battles),
+        fallbackBattles: asNumber(row.fallback_battles),
+        targetUnavailableBattles: asNumber(row.target_unavailable_battles),
+        rangeUnavailableBattles: asNumber(row.range_unavailable_battles),
+        forceLossBattles: asNumber(row.force_loss_battles),
+        creatorWinsAvoided: asNumber(row.creator_wins_avoided),
+        selectedWins: asNumber(row.selected_wins),
+        selectedLosses: asNumber(row.selected_losses),
+        selectedCreatorProfitLoss: asNumber(row.selected_creator_profit_loss),
+        randomBaselineCreatorProfitLoss: asNumber(row.random_baseline_creator_profit_loss),
+        estimatedCreatorProfitReduction: asNumber(
+          row.estimated_creator_profit_reduction,
+        ),
+      })),
+    };
   }
 
   async saveBattleSelection(

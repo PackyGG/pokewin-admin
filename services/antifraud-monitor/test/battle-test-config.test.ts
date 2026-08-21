@@ -500,3 +500,63 @@ test("an override instruction remains stable on a durable retry", async () => {
     statement.includes("SELECT force_all_losses")
   ), false);
 });
+
+test("EOS control overview is environment scoped and maps separated currencies", async () => {
+  const calls: Array<{ text: string; params: unknown[] }> = [];
+  const trackingStartedAt = new Date("2026-08-21T00:00:00.000Z");
+  const pool = {
+    async query(text: string, params: unknown[] = []) {
+      calls.push({ text, params });
+      return {
+        rows: [{
+          period: "24h",
+          currency: "real",
+          tracking_started_at: trackingStartedAt,
+          battle_count: "12",
+          steered_battles: "10",
+          matched_battles: "8",
+          fallback_battles: "2",
+          target_unavailable_battles: "1",
+          range_unavailable_battles: "1",
+          force_loss_battles: "3",
+          creator_wins_avoided: "4",
+          selected_wins: "2",
+          selected_losses: "8",
+          selected_creator_profit_loss: "-42.50",
+          random_baseline_creator_profit_loss: "15.25",
+          estimated_creator_profit_reduction: "57.75",
+        }],
+      };
+    },
+  };
+  const store = new PgBattleTestConfigStore(pool as never, "prod");
+
+  const overview = await store.getOverview();
+
+  assert.equal(overview.environment, "prod");
+  assert.equal(overview.trackingStartedAt, trackingStartedAt.toISOString());
+  assert.deepEqual(overview.periods[0], {
+    period: "24h",
+    currency: "real",
+    battleCount: 12,
+    steeredBattles: 10,
+    matchedBattles: 8,
+    fallbackBattles: 2,
+    targetUnavailableBattles: 1,
+    rangeUnavailableBattles: 1,
+    forceLossBattles: 3,
+    creatorWinsAvoided: 4,
+    selectedWins: 2,
+    selectedLosses: 8,
+    selectedCreatorProfitLoss: -42.5,
+    randomBaselineCreatorProfitLoss: 15.25,
+    estimatedCreatorProfitReduction: 57.75,
+  });
+  assert.deepEqual(calls[0]!.params, ["prod"]);
+  assert.match(calls[0]!.text, /s\.environment = \$1/);
+  assert.match(calls[0]!.text, /s\.audit IS NOT NULL AND s\.response IS NOT NULL/);
+  assert.match(calls[0]!.text, /s\.selected_at >= now\(\) - interval '30 days'/);
+  assert.match(calls[0]!.text, /valid\.control_kind <> 'random'/);
+  assert.match(calls[0]!.text, /valid\.baseline_profit - valid\.selected_profit/);
+  assert.match(calls[0]!.text, /valid\.currency = currencies\.currency/);
+});

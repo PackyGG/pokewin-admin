@@ -101,14 +101,42 @@ const userSelectionSchema = z.object({
   candidates: z.array(userSelectionCandidateSchema).length(5),
 });
 
+const overviewPeriodSchema = z.object({
+  period: z.enum(["24h", "7d", "30d"]),
+  currency: z.enum(["real", "coin"]),
+  battleCount: z.number().int().nonnegative(),
+  steeredBattles: z.number().int().nonnegative(),
+  matchedBattles: z.number().int().nonnegative(),
+  fallbackBattles: z.number().int().nonnegative(),
+  targetUnavailableBattles: z.number().int().nonnegative(),
+  rangeUnavailableBattles: z.number().int().nonnegative(),
+  forceLossBattles: z.number().int().nonnegative(),
+  creatorWinsAvoided: z.number().int().nonnegative(),
+  selectedWins: z.number().int().nonnegative(),
+  selectedLosses: z.number().int().nonnegative(),
+  selectedCreatorProfitLoss: z.number(),
+  randomBaselineCreatorProfitLoss: z.number(),
+  estimatedCreatorProfitReduction: z.number(),
+});
+
+const overviewSchema = z.object({
+  environment: z.enum(["dev", "prod"]),
+  generatedAt: z.string(),
+  trackingStartedAt: z.string().nullable(),
+  periods: z.array(overviewPeriodSchema),
+});
+
 export type EosTestConfig = z.infer<typeof configSchema>;
 export type EosUserRule = z.infer<typeof eosUserRuleSchema>;
 export type EosUserConfig = z.infer<typeof userConfigSchema>;
 export type EosUserSelection = z.infer<typeof userSelectionSchema>;
+export type EosTestOverview = z.infer<typeof overviewSchema>;
+export type EosTestOverviewPeriod = z.infer<typeof overviewPeriodSchema>;
 
 const TIMEOUT_MS = 5_000;
 const PATH = "/v1/testing/eos-random-block/config";
 const USERS_PATH = `${PATH}/users`;
+const OVERVIEW_PATH = `${PATH}/overview`;
 const ENVIRONMENT_HEADER = "x-pokewin-environment";
 
 function connection(): { baseUrl: string; token: string } {
@@ -120,7 +148,7 @@ function connection(): { baseUrl: string; token: string } {
   return { baseUrl, token };
 }
 
-function serviceError(response: Response, subject: "global" | "user"): Error {
+function serviceError(response: Response, subject: "global" | "user" | "overview"): Error {
   if (response.status === 401 || response.status === 403) {
     return new Error("The EOS control credentials were rejected.");
   }
@@ -133,11 +161,12 @@ function serviceError(response: Response, subject: "global" | "user"): Error {
   if (response.status >= 500) {
     return new Error("The EOS control service is temporarily unavailable.");
   }
-  return new Error(
-    subject === "global"
-      ? "The EOS global flow could not be loaded or saved."
-      : "The EOS user flow could not be loaded or saved.",
-  );
+  if (subject === "global") {
+    return new Error("The EOS global flow could not be loaded or saved.");
+  }
+  return new Error(subject === "user"
+    ? "The EOS user flow could not be loaded or saved."
+    : "The EOS control overview could not be loaded.");
 }
 
 async function request(
@@ -220,6 +249,38 @@ async function userRequest<T>(
     return schema.parse(await response.json());
   } catch {
     throw new Error("The EOS user flow service returned an invalid response.");
+  }
+}
+
+export async function getEosTestOverview(
+  environment: DbEnv,
+): Promise<EosTestOverview> {
+  const { baseUrl, token } = connection();
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${OVERVIEW_PATH}`, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+        [ENVIRONMENT_HEADER]: environment,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch {
+    throw new Error("The EOS control overview service did not respond.");
+  }
+  if (!response.ok) {
+    throw serviceError(response, "overview");
+  }
+  try {
+    const data = z.object({ data: overviewSchema }).parse(await response.json()).data;
+    if (data.environment !== environment) {
+      throw new Error("The EOS control overview returned the wrong environment.");
+    }
+    return data;
+  } catch {
+    throw new Error("The EOS control overview service returned an invalid response.");
   }
 }
 

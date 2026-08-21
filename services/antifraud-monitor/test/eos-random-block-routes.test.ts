@@ -12,6 +12,7 @@ import {
   EOS_CHAIN_INFO_PATH,
   EOS_ENVIRONMENT_HEADER,
   EOS_RANDOM_BLOCK_CONFIG_PATH,
+  EOS_RANDOM_BLOCK_OVERVIEW_PATH,
   EOS_RANDOM_BLOCK_PATH,
   EOS_RANDOM_BLOCK_USER_CONFIG_PATH,
   isUnauthenticatedEosRandomBlockRequest,
@@ -1022,6 +1023,14 @@ test("authenticated EOS config routes require and select the environment header"
     async set() {
       throw new Error("not used");
     },
+    async getOverview() {
+      return {
+        environment,
+        generatedAt: "2026-08-22T00:00:00.000Z",
+        trackingStartedAt: null,
+        periods: [],
+      };
+    },
   });
   const app = Fastify({ logger: false });
   await registerEosRandomBlockRoutes(app, undefined, undefined, undefined, {
@@ -1054,6 +1063,14 @@ test("authenticated EOS config routes require and select the environment header"
     });
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().data.environment, environment);
+
+    const overview = await app.inject({
+      method: "GET",
+      url: EOS_RANDOM_BLOCK_OVERVIEW_PATH,
+      headers: { [EOS_ENVIRONMENT_HEADER]: environment },
+    });
+    assert.equal(overview.statusCode, 200);
+    assert.equal(overview.json().data.environment, environment);
   }
   await app.close();
 });

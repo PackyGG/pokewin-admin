@@ -23,6 +23,8 @@ export const EOS_RANDOM_BLOCK_PATH = "/v1/testing/eos-random-block";
 export const EOS_RANDOM_BLOCK_CONFIG_PATH = `${EOS_RANDOM_BLOCK_PATH}/config`;
 export const EOS_RANDOM_BLOCK_USER_CONFIG_PATH =
   `${EOS_RANDOM_BLOCK_CONFIG_PATH}/users`;
+export const EOS_RANDOM_BLOCK_OVERVIEW_PATH =
+  `${EOS_RANDOM_BLOCK_CONFIG_PATH}/overview`;
 export const EOS_CHAIN_INFO_PATH = "/v1/chain/get_info";
 export const EOS_CHAIN_BLOCK_PATH = "/v1/chain/get_block";
 export const EOS_ENVIRONMENT_HEADER = "x-pokewin-environment";
@@ -662,6 +664,15 @@ export async function registerEosRandomBlockRoutes(
       )
     : testConfig ? [testConfig] : [];
   if (routedConfigs.length > 0) {
+    app.get(EOS_RANDOM_BLOCK_OVERVIEW_PATH, async (request, reply) => {
+      const resolution = resolveEnvironment(request, "config");
+      if (!resolution.ok) return sendEnvironmentError(reply, resolution);
+      const selectedConfig = resolution.resources.testConfig!;
+      if (!selectedConfig.getOverview) {
+        return reply.code(503).send({ error: "environment_unavailable" });
+      }
+      return { data: await selectedConfig.getOverview() };
+    });
     app.get(EOS_RANDOM_BLOCK_CONFIG_PATH, async (request, reply) => {
       const resolution = resolveEnvironment(request, "config");
       if (!resolution.ok) return sendEnvironmentError(reply, resolution);
