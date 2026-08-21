@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import { RadioTower } from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
-import { Badge } from "@/components/ui/badge";
 import {
   getEosTestConfig,
   getEosTestOverview,
@@ -31,30 +30,13 @@ export default async function EosPage() {
     getEosTestConfig(environment),
     listEosUserConfigs(environment),
   ]);
-  const environmentLabel = environment === "prod"
-    ? "Normal · production"
-    : "Development";
 
   return (
     <div className="space-y-5">
       <SectionHeading
         icon={RadioTower}
-        title={
-          <>
-            EOS battle testing
-            <Badge variant="outline" className="text-[10px] uppercase">
-              Private
-            </Badge>
-            <Badge variant="secondary" className="text-[10px] uppercase">
-              {environmentLabel} controls
-            </Badge>
-          </>
-        }
+        title="EOS battle testing"
       />
-      <p className="-mt-3 max-w-4xl text-sm text-muted-foreground">
-        Design global and personal EOS outcome flows, investigate unusual creator activity,
-        and measure control impact. The dashboard&apos;s data toggle currently targets {environmentLabel.toLowerCase()}.
-      </p>
       <EosWorkspace
         environment={environment}
         config={config}

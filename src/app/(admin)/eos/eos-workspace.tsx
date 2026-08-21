@@ -93,7 +93,7 @@ export function EosWorkspace({
       </div>
 
       <Tabs value={tab} onValueChange={setTab} className="gap-4">
-        <TabsList className="h-10 w-full justify-start overflow-x-auto sm:w-fit">
+        <TabsList className="no-scrollbar h-10 w-full justify-start overflow-x-auto sm:w-fit">
           <TabsTrigger value="global" className="px-4">
             <Globe2 className="size-4" />Global
           </TabsTrigger>
