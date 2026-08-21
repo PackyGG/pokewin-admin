@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import {
+  BarChart3,
   Dices,
   LineChart,
   Package,
@@ -34,6 +35,7 @@ import { DoubleDownLogSection } from "../insights/double-down/log-section";
 import { DoubleDownChartsSection } from "../insights/double-down/charts-section";
 import { PacksBattlesTab } from "./tab-packs";
 import { UpgraderCharts } from "./upgrader-charts";
+import { GamesOverview } from "./games-overview";
 import type { AnalyticsPeriod } from "./types";
 import { KenoTabNav } from "../keno/_components/keno-tab-nav";
 import { KenoOverviewTab } from "../keno/_components/overview-tab";
@@ -44,13 +46,14 @@ import type { KenoTab } from "../keno/tabs";
 const LOG_PER_PAGE = 25;
 
 /**
- * The five things a player can actually put money into.
+ * Overview plus the five things a player can actually put money into.
  *
  * Packs and battles were briefly dropped here (2026-07-23) alongside the Top
  * Performers tab and restored the same day — they are the two biggest modes
  * on the site, so a "Games" tab without them answered almost nothing.
  */
 export const GAME_VIEWS = [
+  "overview",
   "packs",
   "battles",
   "upgrader",
@@ -62,10 +65,11 @@ export type GameView = (typeof GAME_VIEWS)[number];
 export function parseGameView(value: string | undefined): GameView {
   return (GAME_VIEWS as readonly string[]).includes(value ?? "")
     ? (value as GameView)
-    : "packs";
+    : "overview";
 }
 
 const VIEW_META: { value: GameView; label: string; icon: typeof Dices }[] = [
+  { value: "overview", label: "Overview", icon: BarChart3 },
   { value: "packs", label: "Packs", icon: Package },
   { value: "battles", label: "Battles", icon: Swords },
   { value: "upgrader", label: "Upgrader", icon: ArrowUpCircle },
@@ -129,6 +133,19 @@ export function GamesTab({
         ))}
       </div>
 
+      {view === "overview" && (
+        <Suspense
+          key={`overview-${period}`}
+          fallback={
+            <div className="space-y-4">
+              <KpiStripSkeleton count={4} />
+              <Skeleton className="h-96 w-full rounded-xl" />
+            </div>
+          }
+        >
+          <GamesOverview period={period} />
+        </Suspense>
+      )}
       {view === "packs" && (
         <PacksBattlesTab period={period} sortKey={packsSort} view="packs" />
       )}

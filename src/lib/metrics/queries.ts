@@ -178,10 +178,16 @@ export type GamingLegs = {
   upgraderBets: number;
   /** Pack wager only, already included in `wager`. */
   packWager: number;
+  /** Pack-opening wager event count, already included in `bets`. */
+  packBets: number;
   /** Battle wager only, already included in `wager`. */
   battleWager: number;
+  /** Battle wager/sponsorship event count, already included in `bets`. */
+  battleBets: number;
   /** Keno wager only, already included in `wager`. */
   kenoWager: number;
+  /** Keno bet count, already included in `bets`. */
+  kenoBets: number;
   /** Keno payout only, already included in `battleRefund`. */
   kenoPayout: number;
   /**
@@ -246,8 +252,11 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
       battle_refund: string;
       bets: string;
       pack_wager: string;
+      pack_bets: string;
       battle_wager: string;
+      battle_bets: string;
       keno_wager: string;
+      keno_bets: string;
       keno_payout: string;
     };
     type InvRow = { inv_payout: string };
@@ -273,8 +282,11 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
            COALESCE(SUM(CASE WHEN type::text IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
            COALESCE(SUM(CASE WHEN type::text IN ${WAGER_TYPES_SQL} THEN 1 ELSE 0 END), 0)::text AS bets,
            COALESCE(SUM(CASE WHEN type::text = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
+           COALESCE(SUM(CASE WHEN type::text = 'pack_opening' THEN 1 ELSE 0 END), 0)::text AS pack_bets,
            COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
+           COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') THEN 1 ELSE 0 END), 0)::text AS battle_bets,
            COALESCE(SUM(CASE WHEN type::text = 'keno_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS keno_wager,
+           COALESCE(SUM(CASE WHEN type::text = 'keno_bet' THEN 1 ELSE 0 END), 0)::text AS keno_bets,
            COALESCE(SUM(CASE WHEN type::text = 'keno_payout' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS keno_payout
          FROM ledger_transactions
          WHERE status = 'completed'
@@ -333,8 +345,11 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
     const ledgerGamingPayout = toNumber(ledger[0]?.battle_refund);
     const ledgerBets = toNumber(ledger[0]?.bets);
     const packWager = toNumber(ledger[0]?.pack_wager);
+    const packBets = toNumber(ledger[0]?.pack_bets);
     const battleWager = toNumber(ledger[0]?.battle_wager);
+    const battleBets = toNumber(ledger[0]?.battle_bets);
     const kenoWager = toNumber(ledger[0]?.keno_wager);
+    const kenoBets = toNumber(ledger[0]?.keno_bets);
     const kenoPayout = toNumber(ledger[0]?.keno_payout);
     const inventoryPayout = toNumber(inv[0]?.inv_payout);
 
@@ -365,8 +380,11 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
       upgraderPayout,
       upgraderBets,
       packWager,
+      packBets,
       battleWager,
+      battleBets,
       kenoWager,
+      kenoBets,
       kenoPayout,
       // Double Down-only slices (already included above; do not re-add).
       ddWager,

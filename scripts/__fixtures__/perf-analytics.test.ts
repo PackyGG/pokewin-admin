@@ -115,6 +115,33 @@ test("the Games sub-views only read what they render", () => {
   );
 });
 
+test("the Games overview is the default and reuses one canonical gaming read", () => {
+  const tab = source("src/app/(admin)/analytics/tab-games.tsx");
+  const overview = source("src/lib/queries/analytics-games-overview.ts");
+  const body = functionBody(overview, "getGamesOverview");
+
+  assert.match(
+    tab,
+    /GAME_VIEWS\s*=\s*\[\s*"overview"/,
+    "Overview must be the first Games sub-view",
+  );
+  assert.match(
+    tab,
+    /:\s*"overview";/,
+    "invalid or absent game views must land on Overview",
+  );
+  assert.equal(
+    (body.match(/getGamingLegs\(/g) ?? []).length,
+    1,
+    "the mode mix and headline must come from one canonical gaming read",
+  );
+  assert.doesNotMatch(
+    body,
+    /queryRows|queryMainRows/,
+    "the overview reshaper must not add a second direct database scan",
+  );
+});
+
 test("getPackProfitability can skip the half that is not rendered", () => {
   const packs = source("src/lib/queries/analytics-packs.ts");
   assert.match(
