@@ -31,13 +31,15 @@ test("Finances sits below Players and exposes its management pages", () => {
   );
 });
 
-test("finance profit periods are closed and default safely to 24h", () => {
+test("finance profit periods start at one week and default safely to it", () => {
   assert.deepEqual(
     FINANCE_PERIODS.map((period) => period.value),
-    ["24h", "3d", "7d", "14d", "30d"],
+    ["7d", "14d", "30d"],
   );
-  assert.equal(parseFinancePeriod(undefined), "24h");
-  assert.equal(parseFinancePeriod("unexpected"), "24h");
+  assert.equal(parseFinancePeriod(undefined), "7d");
+  assert.equal(parseFinancePeriod("unexpected"), "7d");
+  assert.equal(parseFinancePeriod("24h"), "7d");
+  assert.equal(parseFinancePeriod("3d"), "7d");
   assert.equal(parseFinancePeriod("14d"), "14d");
   assert.equal(
     FINANCE_PERIODS.find((period) => period.value === "7d")?.label,

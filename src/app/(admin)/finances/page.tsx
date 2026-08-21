@@ -198,7 +198,7 @@ function FinancesOverview({ period }: { period: FinancePeriod }) {
               items={FINANCE_PERIODS}
               current={period}
               paramKey="period"
-              defaultValue="24h"
+              defaultValue="7d"
               ariaNoun="profit period"
               className="self-start"
               spinnerSize={12}
