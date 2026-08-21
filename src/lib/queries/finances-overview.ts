@@ -1,9 +1,9 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
+import { eq, gte, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import { salary_employees } from "@/lib/db-schema/admin/schema";
+import { expenses, salary_employees } from "@/lib/db-schema/admin/schema";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   FINANCE_PERIODS,
@@ -47,6 +47,7 @@ export type ActualExpenseSummary = {
   total: number;
   rewardsAndAffiliatePrizes: number;
   creatorPrograms: number;
+  operatingExpenses: number;
 };
 
 /** Active salary commitments, including the run rate for the selected window. */
@@ -86,9 +87,16 @@ export async function getActualExpenseSummary(
   now: Date = new Date(),
 ): Promise<ActualExpenseSummary> {
   const since = financePeriodSince(period, now);
-  const [reward, creators] = await Promise.all([
+  const expenseDate = since.toISOString().slice(0, 10);
+  const [reward, creators, operatingRows] = await Promise.all([
     getRewardCost({ since }),
     getCreatorCostsSince(since),
+    adminDrizzle
+      .select({
+        total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)::text`,
+      })
+      .from(expenses)
+      .where(gte(expenses.date, expenseDate)),
   ]);
 
   const rewardsAndAffiliatePrizes =
@@ -96,10 +104,12 @@ export async function getActualExpenseSummary(
     Math.max(0, reward.rainWinTotal - reward.rainTipTotal);
   const creatorPrograms =
     creators.creatorWithdrawals + creators.tips + creators.sponsoredBattles;
+  const operatingExpenses = toNumber(operatingRows[0]?.total);
 
   return {
-    total: rewardsAndAffiliatePrizes + creatorPrograms,
+    total: rewardsAndAffiliatePrizes + creatorPrograms + operatingExpenses,
     rewardsAndAffiliatePrizes,
     creatorPrograms,
+    operatingExpenses,
   };
 }

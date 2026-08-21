@@ -61,13 +61,13 @@ export default async function FinancesPage({ searchParams }: PageProps) {
         icon={Wallet}
         title="Finances overview"
         action={
-          <Link
-            href="/salaries"
-            className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-          >
-            Manage salaries
-            <ArrowRight className="size-3.5" aria-hidden />
-          </Link>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <FinanceLink href="/finances/expenses">Expenses</FinanceLink>
+            <FinanceLink href="/finances/subscriptions">
+              Subscriptions
+            </FinanceLink>
+            <FinanceLink href="/salaries">Salaries</FinanceLink>
+          </div>
         }
       />
 
@@ -80,6 +80,24 @@ export default async function FinancesPage({ searchParams }: PageProps) {
         <FinancesOverview period={period} />
       </Suspense>
     </div>
+  );
+}
+
+function FinanceLink({
+  href,
+  children,
+}: {
+  href: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+    >
+      {children}
+      <ArrowRight className="size-3.5" aria-hidden />
+    </Link>
   );
 }
 
@@ -483,11 +501,19 @@ async function ActualExpensesCard({
                 label="Creator programs"
                 value={formatCurrency(expenses.creatorPrograms)}
               />
+              <div className="col-span-2">
+                <SalaryDetail
+                  icon={Receipt}
+                  label="One-time operating expenses"
+                  value={formatCurrency(expenses.operatingExpenses)}
+                />
+              </div>
             </div>
 
             <p className="text-xs leading-relaxed text-muted-foreground">
               Actual reward payouts, net house-funded rain, creator deal
-              payouts, tips, and sponsored battles. No salary run rate.
+              payouts, tips, sponsored battles, and logged one-time expenses. No
+              salary or subscription run rate.
             </p>
           </>
         ) : (

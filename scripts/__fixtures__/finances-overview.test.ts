@@ -13,7 +13,7 @@ import { getSidebarGroups } from "@/lib/nav-config";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
-test("Finances sits below Players and contains Overview before Salaries", () => {
+test("Finances sits below Players and exposes its management pages", () => {
   const groups = getSidebarGroups();
   const playersIndex = groups.findIndex((group) => group.label === "Players");
   const financesIndex = groups.findIndex((group) => group.label === "Finances");
@@ -24,6 +24,8 @@ test("Finances sits below Players and contains Overview before Salaries", () => 
     finances?.items.map((item) => [item.label, item.href]),
     [
       ["Overview", "/finances"],
+      ["Expenses", "/finances/expenses"],
+      ["Subscriptions", "/finances/subscriptions"],
       ["Salaries", "/salaries"],
     ],
   );
@@ -81,6 +83,8 @@ test("finance overview is owner-gated and reuses canonical profit math", () => {
   assert.match(page, /getActualExpenseSummary\(period, now\)/);
   assert.match(page, /expenses\.rewardsAndAffiliatePrizes/);
   assert.match(page, /expenses\.creatorPrograms/);
+  assert.match(page, /expenses\.operatingExpenses/);
+  assert.match(query, /\.from\(expenses\)/);
   assert.match(query, /getRewardCost\(\{ since \}\)/);
   assert.match(query, /getCreatorCostsSince\(since\)/);
 });
