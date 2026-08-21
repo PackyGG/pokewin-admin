@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   CalendarClock,
+  ChevronsUpDown,
   CircleDollarSign,
   Loader2,
   PauseCircle,
@@ -37,6 +38,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -47,6 +56,11 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -70,13 +84,6 @@ import { formatCurrency } from "@/lib/utils/format";
 
 import { SUBSCRIPTION_SERVICES, SubscriptionBrand } from "./subscription-brand";
 
-const CUSTOM_SERVICE = "__custom__";
-
-function initialService(item?: SubscriptionListItem): string {
-  if (!item) return "";
-  return SUBSCRIPTION_SERVICES.includes(item.name) ? item.name : CUSTOM_SERVICE;
-}
-
 const EMPTY_SUBSCRIPTION: SubscriptionInput = {
   name: "",
   amount: 0,
@@ -91,7 +98,7 @@ function subscriptionInput(item: SubscriptionListItem): SubscriptionInput {
 
 function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
   const [open, setOpen] = useState(false);
-  const [service, setService] = useState(() => initialService(item));
+  const [servicesOpen, setServicesOpen] = useState(false);
   const [form, setForm] = useState<SubscriptionInput>(() =>
     item ? subscriptionInput(item) : EMPTY_SUBSCRIPTION,
   );
@@ -100,25 +107,11 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
 
   useEffect(() => {
     if (!open) return;
-    setService(initialService(item));
+    setServicesOpen(false);
     setForm(item ? subscriptionInput(item) : EMPTY_SUBSCRIPTION);
   }, [item, open]);
 
-  const valid = Boolean(service && form.name.trim() && form.amount > 0);
-
-  function selectService(value: string | null) {
-    if (!value) return;
-    setService(value);
-    setForm((current) => ({
-      ...current,
-      name:
-        value === CUSTOM_SERVICE
-          ? item && initialService(item) === CUSTOM_SERVICE
-            ? item.name
-            : ""
-          : value,
-    }));
-  }
+  const valid = Boolean(form.name.trim() && form.amount > 0);
 
   function submit() {
     startTransition(async () => {
@@ -187,51 +180,71 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
         <div className="grid gap-4 py-1">
           <div className="space-y-1.5">
             <Label htmlFor="subscription-service">Service</Label>
-            <Select value={service || null} onValueChange={selectService}>
-              <SelectTrigger id="subscription-service" className="w-full">
-                <SelectValue placeholder="Choose a service">
-                  {(value: string) =>
-                    value === CUSTOM_SERVICE ? (
-                      "Other service"
-                    ) : (
-                      <span className="flex items-center gap-2">
-                        <SubscriptionBrand name={value} size="sm" />
-                        {value}
-                      </span>
-                    )
-                  }
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {SUBSCRIPTION_SERVICES.map((name) => (
-                  <SelectItem key={name} value={name}>
-                    <SubscriptionBrand name={name} size="sm" />
-                    {name}
-                  </SelectItem>
-                ))}
-                <SelectItem value={CUSTOM_SERVICE}>
-                  <SubscriptionBrand name="Other" size="sm" />
-                  Other service
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {service === CUSTOM_SERVICE ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="subscription-name">Custom service name</Label>
+            <div className="flex h-9 items-center rounded-lg border border-input bg-transparent transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50 dark:bg-input/30">
+              {form.name ? (
+                <div className="ml-2.5">
+                  <SubscriptionBrand name={form.name} size="sm" />
+                </div>
+              ) : null}
               <Input
-                id="subscription-name"
+                id="subscription-service"
                 value={form.name}
                 onChange={(event) =>
                   setForm({ ...form, name: event.target.value })
                 }
-                placeholder="Enter service name"
+                placeholder="Type a service or choose one"
                 maxLength={160}
-                autoFocus
+                className="h-full flex-1 border-0 bg-transparent px-2.5 shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
               />
+              <Popover open={servicesOpen} onOpenChange={setServicesOpen}>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="mr-1 shrink-0 text-muted-foreground"
+                      aria-label="Open service list"
+                    />
+                  }
+                >
+                  <ChevronsUpDown className="size-4" />
+                </PopoverTrigger>
+                <PopoverContent
+                  align="end"
+                  className="w-[calc(100vw-2rem)] max-w-[26rem] p-0"
+                >
+                  <Command>
+                    <CommandInput placeholder="Search services…" />
+                    <CommandList>
+                      <CommandEmpty>
+                        No service found. Type it manually.
+                      </CommandEmpty>
+                      <CommandGroup heading="Services">
+                        {SUBSCRIPTION_SERVICES.map((name) => (
+                          <CommandItem
+                            key={name}
+                            value={name}
+                            data-checked={form.name === name}
+                            onSelect={() => {
+                              setForm((current) => ({ ...current, name }));
+                              setServicesOpen(false);
+                            }}
+                          >
+                            <SubscriptionBrand name={name} size="sm" />
+                            {name}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
-          ) : null}
+            <p className="text-xs text-muted-foreground">
+              Type any company name, or use the dropdown to pick a service.
+            </p>
+          </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="subscription-amount">Monthly amount (USD)</Label>

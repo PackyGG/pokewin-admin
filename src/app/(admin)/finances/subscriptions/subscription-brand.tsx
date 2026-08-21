@@ -1,21 +1,35 @@
 import type { IconType } from "react-icons";
-import { FaAws } from "react-icons/fa6";
+import { FaAws, FaSlack } from "react-icons/fa6";
 import {
+  SiAuth0,
+  SiClerk,
   SiCloudflare,
+  SiCloudinary,
+  SiDatadog,
   SiDigitalocean,
   SiDiscord,
   SiDropbox,
   SiFigma,
   SiGithub,
   SiGoogle,
+  SiGithubcopilot,
   SiHetzner,
+  SiHubspot,
   SiIntercom,
+  SiJira,
   SiLinear,
+  SiMailgun,
+  SiMongodb,
+  SiNeon,
   SiNotion,
+  SiPostgresql,
   SiRailway,
+  SiResend,
   SiSentry,
   SiShopify,
   SiStripe,
+  SiSupabase,
+  SiUpstash,
   SiVercel,
   SiX,
   SiZoom,
@@ -32,6 +46,17 @@ type Brand = {
   className: string;
 };
 
+const ImageKitIcon: IconType = ({ className }) => (
+  <svg className={className} viewBox="0 0 512 512" fill="none">
+    <path
+      fill="currentColor"
+      fillRule="evenodd"
+      d="M226.05 147.5c-6.78-7.34-10.16-15.81-10.16-27.1.56-10.73 4-19.2 11.29-27.11C235.08 86 243.55 82 254.85 82s19.15 4 26.53 11.29c7.91 7.91 11.86 16.38 11.86 27.11 0 11.29-4.52 19.76-11.86 27.1a38.79 38.79 0 0 1-27.66 10.73c-10.72 0-20.33-3.39-27.67-10.73Zm110.1 193.67c-38.39 104.46-184.07 132.69-157-2.82l31.62-153h66.63c-15.24 81.87-26.54 131.56-37.83 188.59-11.29 58.16 61 15.25 77.36-32.18l19.19-.57Z"
+      clipRule="evenodd"
+    />
+  </svg>
+);
+
 const BRANDS: Brand[] = [
   {
     label: "Linear",
@@ -40,10 +65,22 @@ const BRANDS: Brand[] = [
     className: "bg-[#5e6ad2]/12 text-[#5e6ad2]",
   },
   {
+    label: "Google Cloud",
+    pattern: /\b(google cloud|gcp)\b/i,
+    icon: SiGoogle,
+    className: "bg-[#4285f4]/12 text-[#4285f4]",
+  },
+  {
     label: "Google",
     pattern: /\b(google|gmail|workspace)\b/i,
     icon: SiGoogle,
     className: "bg-[#4285f4]/12 text-[#4285f4]",
+  },
+  {
+    label: "GitHub Copilot",
+    pattern: /\bgithub copilot\b/i,
+    icon: SiGithubcopilot,
+    className: "bg-foreground/10 text-foreground",
   },
   {
     label: "GitHub",
@@ -64,8 +101,8 @@ const BRANDS: Brand[] = [
     className: "bg-foreground/10 text-foreground",
   },
   {
-    label: "Whop",
-    pattern: /\bwhop\b/i,
+    label: "Whop.com",
+    pattern: /\bwhop(?:\.com)?\b/i,
     mark: "W",
     className: "bg-[#ff6243]/14 text-[#ff6243]",
   },
@@ -82,6 +119,12 @@ const BRANDS: Brand[] = [
     className: "bg-[#d50c2d]/12 text-[#d50c2d]",
   },
   {
+    label: "TwitterAPI.io",
+    pattern: /\btwitter\s?api(?:\.io)?\b/i,
+    mark: "TAPI",
+    className: "bg-[#1d9bf0]/14 text-[#1d9bf0]",
+  },
+  {
     label: "X / Twitter",
     pattern: /^(x|twitter)\b|\b(x premium|x pro)\b/i,
     icon: SiX,
@@ -90,8 +133,8 @@ const BRANDS: Brand[] = [
   {
     label: "ImageKit",
     pattern: /\b(image\s?kit|imgaekit)\b/i,
-    mark: "IK",
-    className: "bg-[#7b61ff]/14 text-[#7255f3] dark:text-[#927fff]",
+    icon: ImageKitIcon,
+    className: "bg-[#0450d5] text-white",
   },
   {
     label: "Adobe Photoshop",
@@ -170,6 +213,96 @@ const BRANDS: Brand[] = [
     pattern: /\bzoom\b/i,
     icon: SiZoom,
     className: "bg-[#0b5cff]/12 text-[#0b5cff]",
+  },
+  {
+    label: "OpenAI / ChatGPT",
+    pattern: /\b(openai|chatgpt)\b/i,
+    mark: "AI",
+    className: "bg-foreground/10 text-foreground",
+  },
+  {
+    label: "Slack",
+    pattern: /\bslack\b/i,
+    icon: FaSlack,
+    className: "bg-[#4a154b]/12 text-[#611f69] dark:text-[#e5a5e6]",
+  },
+  {
+    label: "Datadog",
+    pattern: /\bdatadog\b/i,
+    icon: SiDatadog,
+    className: "bg-[#632ca6]/12 text-[#632ca6] dark:text-[#a879dd]",
+  },
+  {
+    label: "MongoDB",
+    pattern: /\bmongo(?:db)?\b/i,
+    icon: SiMongodb,
+    className: "bg-[#47a248]/12 text-[#47a248]",
+  },
+  {
+    label: "Supabase",
+    pattern: /\bsupabase\b/i,
+    icon: SiSupabase,
+    className: "bg-[#3ecf8e]/12 text-[#2da771] dark:text-[#3ecf8e]",
+  },
+  {
+    label: "PostgreSQL",
+    pattern: /\b(postgres|postgresql)\b/i,
+    icon: SiPostgresql,
+    className: "bg-[#4169e1]/12 text-[#4169e1]",
+  },
+  {
+    label: "Cloudinary",
+    pattern: /\bcloudinary\b/i,
+    icon: SiCloudinary,
+    className: "bg-[#3448c5]/12 text-[#3448c5] dark:text-[#7584ed]",
+  },
+  {
+    label: "Auth0",
+    pattern: /\bauth0\b/i,
+    icon: SiAuth0,
+    className: "bg-[#eb5424]/12 text-[#eb5424]",
+  },
+  {
+    label: "Clerk",
+    pattern: /\bclerk\b/i,
+    icon: SiClerk,
+    className: "bg-[#6c47ff]/12 text-[#6c47ff]",
+  },
+  {
+    label: "Neon",
+    pattern: /\bneon\b/i,
+    icon: SiNeon,
+    className: "bg-[#00e599]/12 text-[#00a875] dark:text-[#00e599]",
+  },
+  {
+    label: "Upstash",
+    pattern: /\bupstash\b/i,
+    icon: SiUpstash,
+    className: "bg-[#00e9a3]/12 text-[#00a878] dark:text-[#00e9a3]",
+  },
+  {
+    label: "Resend",
+    pattern: /\bresend\b/i,
+    icon: SiResend,
+    className: "bg-foreground/10 text-foreground",
+  },
+  {
+    label: "Mailgun",
+    pattern: /\bmailgun\b/i,
+    icon: SiMailgun,
+    className: "bg-[#f06b66]/12 text-[#e3514b] dark:text-[#f48782]",
+  },
+  {
+    label: "HubSpot",
+    pattern: /\bhubspot\b/i,
+    icon: SiHubspot,
+    className: "bg-[#ff7a59]/12 text-[#ff6842]",
+  },
+  {
+    label: "Jira",
+    pattern: /\b(jira|atlassian)\b/i,
+    icon: SiJira,
+    className: "bg-[#0052cc]/12 text-[#1868db]",
   },
 ];
 

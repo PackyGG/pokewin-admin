@@ -74,7 +74,9 @@ test("cost forms expose safe CRUD and recurring status controls", () => {
   );
   assert.doesNotMatch(subscriptions, /item\.(?:category|notes)/);
   assert.match(subscriptions, /SUBSCRIPTION_SERVICES\.map/);
-  assert.match(subscriptions, /<SelectItem value=\{CUSTOM_SERVICE\}>/);
+  assert.match(subscriptions, /placeholder="Type a service or choose one"/);
+  assert.match(subscriptions, /aria-label="Open service list"/);
+  assert.match(subscriptions, /<CommandInput placeholder="Search services…"/);
   assert.match(subscriptions, /<DialogFooter className="static mx-0/);
   assert.doesNotMatch(subscriptions, /sm:grid-cols-\[minmax/);
 });
@@ -93,16 +95,26 @@ test("subscriptions match common vendors to branded logos", () => {
     "GitHub",
     "AWS",
     "Vercel",
-    "Whop",
+    "Whop.com",
     "CoinGecko",
     "Hetzner",
     "ImageKit",
     "Adobe Photoshop",
     "Intercom",
     "X / Twitter",
+    "TwitterAPI.io",
+    "OpenAI / ChatGPT",
+    "Slack",
+    "Datadog",
+    "Supabase",
+    "Cloudinary",
+    "Auth0",
+    "Clerk",
+    "Resend",
   ]) {
     assert.match(brands, new RegExp(`label: "${vendor}"`));
   }
+  assert.match(brands, /const ImageKitIcon: IconType/);
   assert.match(brands, /export const SUBSCRIPTION_SERVICES/);
   assert.match(client, /<SubscriptionBrand name=\{item\.name\} \/>/);
 });
