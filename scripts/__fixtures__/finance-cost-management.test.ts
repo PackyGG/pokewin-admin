@@ -68,4 +68,9 @@ test("cost forms expose safe CRUD and recurring status controls", () => {
   );
   assert.match(subscriptions, /deleteSubscription\(item\.id\)/);
   assert.match(subscriptions, /AlertDialogTitle>Delete this subscription/);
+  assert.doesNotMatch(
+    subscriptions,
+    /subscription-category|subscription-notes/,
+  );
+  assert.doesNotMatch(subscriptions, /item\.(?:category|notes)/);
 });

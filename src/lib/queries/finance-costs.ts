@@ -25,8 +25,6 @@ export type SubscriptionListItem = {
   id: string;
   name: string;
   amount: number;
-  category: string;
-  notes: string | null;
   isActive: boolean;
   createdBy: string;
 };
@@ -117,8 +115,6 @@ export async function getSubscriptionPageData(): Promise<SubscriptionPageData> {
         id: recurring_expenses.id,
         name: recurring_expenses.name,
         amount: recurring_expenses.amount,
-        category: recurring_expenses.category,
-        notes: recurring_expenses.notes,
         isActive: recurring_expenses.is_active,
         createdBy: admin_users.username,
       })

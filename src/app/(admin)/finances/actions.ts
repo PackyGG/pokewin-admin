@@ -45,8 +45,6 @@ const expenseSchema = z.object({
 const subscriptionSchema = z.object({
   name: trimmedText("Name", 160),
   amount: amountSchema,
-  category: trimmedText("Category", 80),
-  notes: z.string().trim().max(2_000, "Notes are too long").optional(),
 });
 
 const idSchema = z.string().uuid("Invalid record id");
@@ -171,8 +169,8 @@ export async function createSubscription(
     .values({
       name: parsed.data.name,
       amount: String(parsed.data.amount),
-      category: parsed.data.category,
-      notes: parsed.data.notes || null,
+      category: "subscriptions",
+      notes: null,
       is_active: true,
       created_by_id: session.userId,
       updated_at: new Date().toISOString(),
@@ -208,8 +206,6 @@ export async function updateSubscription(
     .set({
       name: parsed.data.name,
       amount: String(parsed.data.amount),
-      category: parsed.data.category,
-      notes: parsed.data.notes || null,
       updated_at: new Date().toISOString(),
     })
     .where(eq(recurring_expenses.id, parsedId.data))

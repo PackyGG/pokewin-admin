@@ -22,10 +22,6 @@ import {
   updateSubscription,
   type SubscriptionInput,
 } from "@/app/(admin)/finances/actions";
-import {
-  EXPENSE_CATEGORIES,
-  expenseCategoryLabel,
-} from "@/app/(admin)/finances/cost-constants";
 import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
@@ -65,7 +61,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import type {
   SubscriptionListItem,
   SubscriptionPageData,
@@ -75,16 +70,12 @@ import { formatCurrency } from "@/lib/utils/format";
 const EMPTY_SUBSCRIPTION: SubscriptionInput = {
   name: "",
   amount: 0,
-  category: "software",
-  notes: "",
 };
 
 function subscriptionInput(item: SubscriptionListItem): SubscriptionInput {
   return {
     name: item.name,
     amount: item.amount,
-    category: item.category,
-    notes: item.notes ?? "",
   };
 }
 
@@ -100,7 +91,7 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
     if (open) setForm(item ? subscriptionInput(item) : EMPTY_SUBSCRIPTION);
   }, [item, open]);
 
-  const valid = form.name.trim() && form.amount > 0 && form.category.trim();
+  const valid = form.name.trim() && form.amount > 0;
 
   function submit() {
     startTransition(async () => {
@@ -169,7 +160,7 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
         </div>
 
         <div className="grid gap-4 px-5 py-5 sm:grid-cols-2">
-          <div className="space-y-1.5 sm:col-span-2">
+          <div className="space-y-1.5">
             <Label htmlFor="subscription-name">Name</Label>
             <Input
               id="subscription-name"
@@ -193,39 +184,6 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
                 setForm({ ...form, amount: Number(event.target.value) })
               }
               placeholder="0.00"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="subscription-category">Category</Label>
-            <Input
-              id="subscription-category"
-              list="subscription-categories"
-              value={form.category}
-              onChange={(event) =>
-                setForm({ ...form, category: event.target.value })
-              }
-              placeholder="Choose or type a category"
-              maxLength={80}
-            />
-            <datalist id="subscription-categories">
-              {EXPENSE_CATEGORIES.map((category) => (
-                <option key={category.value} value={category.value}>
-                  {category.label}
-                </option>
-              ))}
-            </datalist>
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="subscription-notes">Notes</Label>
-            <Textarea
-              id="subscription-notes"
-              value={form.notes ?? ""}
-              onChange={(event) =>
-                setForm({ ...form, notes: event.target.value })
-              }
-              placeholder="Plan, renewal date, account owner… (optional)"
-              maxLength={2000}
-              rows={3}
             />
           </div>
         </div>
@@ -361,12 +319,7 @@ export function SubscriptionsClient({ data }: { data: SubscriptionPageData }) {
     return data.items.filter((item) => {
       if (status === "active" && !item.isActive) return false;
       if (status === "paused" && item.isActive) return false;
-      return (
-        !query ||
-        [item.name, item.category, item.notes].some((value) =>
-          value?.toLowerCase().includes(query),
-        )
-      );
+      return !query || item.name.toLowerCase().includes(query);
     });
   }, [data.items, search, status]);
 
@@ -441,7 +394,6 @@ export function SubscriptionsClient({ data }: { data: SubscriptionPageData }) {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Subscription</TableHead>
-                    <TableHead>Category</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Monthly</TableHead>
                     <TableHead className="hidden text-right md:table-cell">
@@ -458,14 +410,9 @@ export function SubscriptionsClient({ data }: { data: SubscriptionPageData }) {
                     >
                       <TableCell>
                         <p className="font-medium">{item.name}</p>
-                        <p className="max-w-72 truncate text-xs text-muted-foreground">
-                          {item.notes || `Added by ${item.createdBy}`}
+                        <p className="text-xs text-muted-foreground">
+                          Added by {item.createdBy}
                         </p>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">
-                          {expenseCategoryLabel(item.category)}
-                        </Badge>
                       </TableCell>
                       <TableCell>
                         <Badge variant={item.isActive ? "default" : "outline"}>
