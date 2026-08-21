@@ -4,7 +4,6 @@ import {
   CircleDollarSign,
   Dices,
   Grid3X3,
-  Info,
   Package,
   Scale,
   Swords,
@@ -102,7 +101,13 @@ export async function GamesOverview({
   const topTwoWager = data.modes
     .slice(0, 2)
     .reduce((sum, mode) => sum + mode.wager, 0);
-  const adjustmentIsMaterial = Math.abs(data.attributionAdjustment) >= 0.01;
+  const strongestGgrMode =
+    attributedWager > 0
+      ? data.modes.reduce<GameModeOverviewRow | null>(
+          (best, mode) => (!best || mode.ggr > best.ggr ? mode : best),
+          null,
+        )
+      : null;
 
   const tiles = [
     {
@@ -170,7 +175,7 @@ export async function GamesOverview({
         <section className="rounded-xl border bg-card p-4 sm:p-5">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <div>
-              <h3 className="font-semibold">Wager by game mode</h3>
+              <h3 className="font-semibold">Performance by game mode</h3>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 Ranked by directly attributable wager
               </p>
@@ -223,9 +228,39 @@ export async function GamesOverview({
                           style={{ width: `${Math.max(0, Math.min(100, share))}%` }}
                         />
                       </div>
-                      <div className="mt-1.5 flex justify-between text-[11px] text-muted-foreground">
-                        <span>{formatNumber(mode.events)} events</span>
-                        <span>{formatCurrency(average)} avg wager</span>
+                      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-[11px] sm:grid-cols-4">
+                        <div>
+                          <p className="text-muted-foreground">Events</p>
+                          <p className="font-medium tabular-nums">
+                            {formatNumber(mode.events)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Avg wager</p>
+                          <p className="font-medium tabular-nums">
+                            {formatCurrency(average)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Paid out</p>
+                          <p className="font-medium tabular-nums">
+                            {formatCurrency(mode.payout)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">GGR / hold</p>
+                          <p
+                            className={cn(
+                              "font-semibold tabular-nums",
+                              mode.ggr >= 0
+                                ? "text-emerald-500"
+                                : "text-rose-500",
+                            )}
+                          >
+                            {signedCurrency(mode.ggr)} ·{" "}
+                            {percentage(mode.ggr, mode.wager).toFixed(1)}%
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -254,6 +289,26 @@ export async function GamesOverview({
               </div>
               <div>
                 <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  Highest GGR
+                </dt>
+                <dd className="mt-1 text-sm font-semibold">
+                  {strongestGgrMode?.label ?? "No wagers"}
+                  {strongestGgrMode ? (
+                    <span
+                      className={cn(
+                        "ml-1 font-normal tabular-nums",
+                        strongestGgrMode.ggr >= 0
+                          ? "text-emerald-500"
+                          : "text-rose-500",
+                      )}
+                    >
+                      · {signedCurrency(strongestGgrMode.ggr)}
+                    </span>
+                  ) : null}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">
                   Top-two concentration
                 </dt>
                 <dd className="mt-1 text-sm font-semibold tabular-nums">
@@ -274,30 +329,6 @@ export async function GamesOverview({
                 </dd>
               </div>
             </dl>
-          </div>
-
-          <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
-            <div className="flex items-start gap-2.5">
-              <Info className="mt-0.5 size-4 shrink-0 text-blue-500" aria-hidden />
-              <div className="space-y-2 text-xs leading-relaxed text-muted-foreground">
-                <p>
-                  Wager is net cash staked. Borrowed play is included at its
-                  net amount; reward and daily packs are excluded.
-                </p>
-                <p>
-                  Staff, creator accounts, and blacklisted users are excluded.
-                  GGR is wager minus measured gaming payouts—not final profit.
-                </p>
-                {adjustmentIsMaterial ? (
-                  <p>
-                    The canonical headline includes a{" "}
-                    {signedCurrency(data.attributionAdjustment)} weighted
-                    settlement adjustment that is not assigned to a single
-                    mode.
-                  </p>
-                ) : null}
-              </div>
-            </div>
           </div>
         </aside>
       </div>

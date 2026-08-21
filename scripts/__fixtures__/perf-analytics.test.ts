@@ -118,6 +118,10 @@ test("the Games sub-views only read what they render", () => {
 test("the Games overview is the default and reuses one canonical gaming read", () => {
   const tab = source("src/app/(admin)/analytics/tab-games.tsx");
   const overview = source("src/lib/queries/analytics-games-overview.ts");
+  const metrics = source("src/lib/metrics/queries.ts");
+  const component = source(
+    "src/app/(admin)/analytics/games-overview.tsx",
+  );
   const body = functionBody(overview, "getGamesOverview");
 
   assert.match(
@@ -139,6 +143,39 @@ test("the Games overview is the default and reuses one canonical gaming read", (
     body,
     /queryRows|queryMainRows/,
     "the overview reshaper must not add a second direct database scan",
+  );
+  for (const payout of [
+    "packPayout",
+    "battlePayout",
+    "upgraderPayout",
+    "ddPayout",
+    "kenoPayout",
+  ]) {
+    assert.match(
+      body,
+      new RegExp(`payout:\\s*legs\\.${payout}`),
+      `the overview must expose ${payout} for per-mode GGR`,
+    );
+  }
+  assert.match(
+    metrics,
+    /source_type::text = 'pack'[\s\S]{0,120}AS pack_payout/,
+    "pack GGR must use the pack-only inventory payout leg",
+  );
+  assert.match(
+    metrics,
+    /'battle_refund','battle_excess_to_voucher'[\s\S]{0,120}AS battle_payout/,
+    "battle GGR must include both canonical cash/voucher settlement legs",
+  );
+  assert.match(
+    component,
+    /GGR \/ hold/,
+    "every game row must render its directly attributed GGR and hold",
+  );
+  assert.doesNotMatch(
+    component,
+    /Wager is net cash staked|Staff, creator accounts/,
+    "the removed scope explainer must stay out of the Games overview",
   );
 });
 

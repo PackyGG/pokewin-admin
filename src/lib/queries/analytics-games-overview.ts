@@ -11,6 +11,8 @@ export type GameModeOverviewRow = {
   description: string;
   wager: number;
   events: number;
+  payout: number;
+  ggr: number;
 };
 
 export type GamesOverviewData = {
@@ -19,7 +21,6 @@ export type GamesOverviewData = {
   ggr: number;
   bets: number;
   organicWager: number;
-  attributionAdjustment: number;
   modes: GameModeOverviewRow[];
 };
 
@@ -53,6 +54,8 @@ export async function getGamesOverview(
       description: "Solo pack openings",
       wager: legs.packWager,
       events: legs.packBets,
+      payout: legs.packPayout,
+      ggr: legs.packWager - legs.packPayout,
     },
     {
       key: "battles",
@@ -60,6 +63,8 @@ export async function getGamesOverview(
       description: "Battle entries and sponsorships",
       wager: legs.battleWager,
       events: legs.battleBets,
+      payout: legs.battlePayout,
+      ggr: legs.battleWager - legs.battlePayout,
     },
     {
       key: "upgrader",
@@ -67,6 +72,8 @@ export async function getGamesOverview(
       description: "Item upgrade attempts",
       wager: legs.upgraderWager,
       events: legs.upgraderBets,
+      payout: legs.upgraderPayout,
+      ggr: legs.upgraderWager - legs.upgraderPayout,
     },
     {
       key: "double-down",
@@ -74,6 +81,8 @@ export async function getGamesOverview(
       description: "Resolved re-staked battle wins",
       wager: legs.ddWager,
       events: legs.ddBets,
+      payout: legs.ddPayout,
+      ggr: legs.ddWager - legs.ddPayout,
     },
     {
       key: "keno",
@@ -81,11 +90,12 @@ export async function getGamesOverview(
       description: "Completed Keno bets",
       wager: legs.kenoWager,
       events: legs.kenoBets,
+      payout: legs.kenoPayout,
+      ggr: legs.kenoWager - legs.kenoPayout,
     },
   ];
   modes.sort((a, b) => b.wager - a.wager);
 
-  const attributedWager = modes.reduce((sum, mode) => sum + mode.wager, 0);
   const gamingPayout = legs.inventoryPayout + legs.battleRefund + legs.ddPayout;
 
   return {
@@ -94,7 +104,6 @@ export async function getGamesOverview(
     ggr: legs.wager - gamingPayout,
     bets: legs.bets,
     organicWager: legs.organicWager,
-    attributionAdjustment: legs.wager - attributedWager,
     modes,
   };
 }
