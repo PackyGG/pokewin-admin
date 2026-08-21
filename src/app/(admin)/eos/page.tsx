@@ -49,7 +49,7 @@ export default async function EosPage() {
           <Badge variant="destructive">All-battles loss override active</Badge>
         )}
       </div>
-      <Tabs defaultValue="users" className="gap-4">
+      <Tabs defaultValue="global" className="gap-4">
         <TabsList className="h-10 w-full justify-start sm:w-fit">
           <TabsTrigger value="users" className="px-4">
             <Users className="size-4" />Per-user flows
