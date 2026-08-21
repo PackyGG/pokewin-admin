@@ -32,11 +32,13 @@ import {
   parseFinancePeriod,
   type FinancePeriod,
 } from "@/lib/finances/periods";
+import { calculateWeeklyProfit } from "@/lib/finances/weekly-profit";
 import { houseAmountTextClass } from "@/lib/house-pov";
 import {
   getActualExpenseSummary,
   getFinanceProfit,
   getSalaryExpenseSummary,
+  getWeeklyOperatingExpenseSummary,
 } from "@/lib/queries/finances-overview";
 import { requireMotha } from "@/lib/salary/motha-gate";
 import { cn } from "@/lib/utils";
@@ -104,15 +106,16 @@ function FinanceLink({
 type FinanceProfitData = Awaited<ReturnType<typeof getFinanceProfit>>;
 type SalarySummaryData = Awaited<ReturnType<typeof getSalaryExpenseSummary>>;
 type ExpenseSummaryData = Awaited<ReturnType<typeof getActualExpenseSummary>>;
+type WeeklyOperatingExpenseData = Awaited<
+  ReturnType<typeof getWeeklyOperatingExpenseSummary>
+>;
 
 /** `safeQuery` never rejects — it resolves to `{ data, error }` — so its
  *  promises are safe to create here and await inside the children. */
 type QueryResult<T> = Promise<{ data: T | null }>;
 
 /**
- * Starts all four reads in parallel (exactly as the previous single
- * `Promise.all` did — same queries, same count) but gives each tile its
- * OWN Suspense boundary.
+ * Starts the reads in parallel but gives each tile its OWN Suspense boundary.
  *
  * Why: the four legs have wildly different costs. The salary summary is a
  * single Admin-DB aggregate; the actual-expense summary fans out over
@@ -138,7 +141,7 @@ function FinancesOverview({ period }: { period: FinancePeriod }) {
   // the Profit card want the identical number — share the one promise
   // rather than paying a second P&L read against the globally capped
   // mirror pool.
-  const weeklyProfitPromise =
+  const weeklyCashProfitPromise =
     period === "7d"
       ? profitPromise
       : safeQuery(
@@ -151,6 +154,21 @@ function FinancesOverview({ period }: { period: FinancePeriod }) {
     () => getSalaryExpenseSummary(period),
     null,
     `finances.salaryExpenses.${period}`,
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const weeklySalaryPromise =
+    period === "7d"
+      ? salaryPromise
+      : safeQuery(
+          () => getSalaryExpenseSummary("7d"),
+          null,
+          "finances.salaryExpenses.7d",
+          REWARD_QUERY_TIMEOUT_MS,
+        );
+  const weeklyOperatingExpensePromise = safeQuery(
+    () => getWeeklyOperatingExpenseSummary(now),
+    null,
+    "finances.weeklyOperatingExpenses",
     REWARD_QUERY_TIMEOUT_MS,
   );
   const expensePromise = safeQuery(
@@ -168,7 +186,12 @@ function FinancesOverview({ period }: { period: FinancePeriod }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Suspense fallback={<FinanceCardSkeleton />}>
-        <WeeklyProfitCard promise={weeklyProfitPromise} weekRange={weekRange} />
+        <WeeklyProfitCard
+          cashProfitPromise={weeklyCashProfitPromise}
+          salaryPromise={weeklySalaryPromise}
+          operatingExpensePromise={weeklyOperatingExpensePromise}
+          weekRange={weekRange}
+        />
       </Suspense>
 
       {/* Profit card — the header, INCLUDING the period chips, is static.
@@ -232,13 +255,30 @@ function FinancesOverview({ period }: { period: FinancePeriod }) {
 }
 
 async function WeeklyProfitCard({
-  promise,
+  cashProfitPromise,
+  salaryPromise,
+  operatingExpensePromise,
   weekRange,
 }: {
-  promise: QueryResult<FinanceProfitData>;
+  cashProfitPromise: QueryResult<FinanceProfitData>;
+  salaryPromise: QueryResult<SalarySummaryData>;
+  operatingExpensePromise: QueryResult<WeeklyOperatingExpenseData>;
   weekRange: string;
 }) {
-  const { data: weeklyProfit } = await promise;
+  // All three reads were started by the synchronous parent, so these awaits
+  // do not serialize their database work.
+  const { data: cashProfit } = await cashProfitPromise;
+  const { data: salary } = await salaryPromise;
+  const { data: operatingExpenses } = await operatingExpensePromise;
+  const weeklyProfit =
+    cashProfit && salary && operatingExpenses
+      ? calculateWeeklyProfit({
+          cashProfit: cashProfit.pnl,
+          salaryExpense: salary.periodExpense,
+          monthlySubscriptions: operatingExpenses.monthlySubscriptions,
+          oneTimeExpenses: operatingExpenses.oneTimeExpenses,
+        })
+      : null;
 
   return (
     <Card className="min-h-[310px]">
@@ -247,7 +287,7 @@ async function WeeklyProfitCard({
           <BadgeDollarSign
             className={cn(
               "size-4",
-              weeklyProfit && weeklyProfit.pnl < 0
+              weeklyProfit && weeklyProfit.netProfit < 0
                 ? "text-rose-500"
                 : "text-emerald-500",
             )}
@@ -263,26 +303,49 @@ async function WeeklyProfitCard({
           <>
             <div>
               <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                {weeklyProfit.pnl >= 0
+                {weeklyProfit.netProfit >= 0
                   ? "Profit this week to date"
                   : "Loss this week to date"}
               </p>
               <p
                 className={cn(
                   "mt-1 text-4xl font-bold tracking-tight tabular-nums sm:text-5xl",
-                  houseAmountTextClass(weeklyProfit.pnl),
+                  houseAmountTextClass(weeklyProfit.netProfit),
                 )}
               >
-                {weeklyProfit.pnl >= 0 ? "+" : "−"}
+                {weeklyProfit.netProfit >= 0 ? "+" : "−"}
                 <AnimatedNumber
-                  value={Math.abs(weeklyProfit.pnl)}
+                  value={Math.abs(weeklyProfit.netProfit)}
                   format="currency"
                 />
               </p>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <ProfitDetail
+                label="Cash profit"
+                value={weeklyProfit.cashProfit}
+                tone={weeklyProfit.cashProfit >= 0 ? "positive" : "negative"}
+                signed
+              />
+              <ProfitDetail
+                label="Salaries"
+                value={weeklyProfit.salaryExpense}
+                tone="negative"
+              />
+              <ProfitDetail
+                label="Subscriptions"
+                value={weeklyProfit.subscriptionExpense}
+                tone="negative"
+              />
+              <ProfitDetail
+                label="Logged expenses"
+                value={weeklyProfit.oneTimeExpenses}
+                tone="negative"
+              />
+            </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Current Monday–Sunday accounting week using the same
-              balance-sheet definition as the Profit card.
+              Cash profit minus weekly salary accrual, one quarter of active
+              monthly subscriptions, and expenses logged this week.
             </p>
           </>
         ) : (

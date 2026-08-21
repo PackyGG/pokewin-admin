@@ -1,9 +1,13 @@
 import "server-only";
 
-import { eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import { expenses, salary_employees } from "@/lib/db-schema/admin/schema";
+import {
+  expenses,
+  recurring_expenses,
+  salary_employees,
+} from "@/lib/db-schema/admin/schema";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   FINANCE_PERIODS,
@@ -50,6 +54,11 @@ export type ActualExpenseSummary = {
   operatingExpenses: number;
 };
 
+export type WeeklyOperatingExpenseSummary = {
+  monthlySubscriptions: number;
+  oneTimeExpenses: number;
+};
+
 /** Active salary commitments, including the run rate for the selected window. */
 export async function getSalaryExpenseSummary(
   period: FinancePeriod,
@@ -76,6 +85,33 @@ export async function getSalaryExpenseSummary(
   };
 }
 
+/** Admin-owned overhead used to turn weekly cash profit into net P&L. */
+export async function getWeeklyOperatingExpenseSummary(
+  now: Date = new Date(),
+): Promise<WeeklyOperatingExpenseSummary> {
+  const since = financePeriodSince("7d", now);
+  const startDate = since.toISOString().slice(0, 10);
+  const throughDate = now.toISOString().slice(0, 10);
+  const [expenseRows, subscriptionRows] = await Promise.all([
+    adminDrizzle
+      .select({
+        total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)::text`,
+      })
+      .from(expenses)
+      .where(and(gte(expenses.date, startDate), lte(expenses.date, throughDate))),
+    adminDrizzle
+      .select({
+        total: sql<string>`COALESCE(SUM(${recurring_expenses.amount}) FILTER (WHERE ${recurring_expenses.is_active}), 0)::text`,
+      })
+      .from(recurring_expenses),
+  ]);
+
+  return {
+    monthlySubscriptions: toNumber(subscriptionRows[0]?.total),
+    oneTimeExpenses: toNumber(expenseRows[0]?.total),
+  };
+}
+
 /**
  * Actual reward and creator-program costs recognized inside the selected
  * window. Affiliate commissions and leaderboard prizes already live
@@ -88,6 +124,7 @@ export async function getActualExpenseSummary(
 ): Promise<ActualExpenseSummary> {
   const since = financePeriodSince(period, now);
   const expenseDate = since.toISOString().slice(0, 10);
+  const throughDate = now.toISOString().slice(0, 10);
   const [reward, creators, operatingRows] = await Promise.all([
     getRewardCost({ since }),
     getCreatorCostsSince(since),
@@ -96,7 +133,9 @@ export async function getActualExpenseSummary(
         total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)::text`,
       })
       .from(expenses)
-      .where(gte(expenses.date, expenseDate)),
+      .where(
+        and(gte(expenses.date, expenseDate), lte(expenses.date, throughDate)),
+      ),
   ]);
 
   const rewardsAndAffiliatePrizes =

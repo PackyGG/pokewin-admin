@@ -9,6 +9,7 @@ import {
   financeWeekDateRange,
   parseFinancePeriod,
 } from "@/lib/finances/periods";
+import { calculateWeeklyProfit } from "@/lib/finances/weekly-profit";
 import { getSidebarGroups } from "@/lib/nav-config";
 
 const read = (path: string) => readFileSync(path, "utf8");
@@ -69,6 +70,24 @@ test("the 7d finance period is the current Monday-Sunday UTC week", () => {
   );
 });
 
+test("weekly P&L deducts salaries, one quarter of subscriptions, and logged expenses", () => {
+  assert.deepEqual(
+    calculateWeeklyProfit({
+      cashProfit: 10_000,
+      salaryExpense: 1_500,
+      monthlySubscriptions: 800,
+      oneTimeExpenses: 300,
+    }),
+    {
+      cashProfit: 10_000,
+      salaryExpense: 1_500,
+      subscriptionExpense: 200,
+      oneTimeExpenses: 300,
+      netProfit: 8_000,
+    },
+  );
+});
+
 test("finance overview is owner-gated and reuses canonical profit math", () => {
   const page = read("src/app/(admin)/finances/page.tsx");
   const query = read("src/lib/queries/finances-overview.ts");
@@ -80,9 +99,18 @@ test("finance overview is owner-gated and reuses canonical profit math", () => {
   assert.match(page, /value=\{salaries\.periodExpense\}/);
   assert.match(query, /monthly \* \(hours \/ \(30 \* 24\)\)/);
   assert.match(page, /Weekly P&amp;L/);
-  assert.match(page, /Current Monday–Sunday accounting week/);
+  assert.match(
+    page,
+    /Cash profit minus weekly salary accrual, one quarter of active/,
+  );
   assert.match(query, /financePeriodSince\(period, now\)/);
   assert.match(page, /getActualExpenseSummary\(period, now\)/);
+  assert.match(page, /getWeeklyOperatingExpenseSummary\(now\)/);
+  assert.match(page, /monthlySubscriptions: operatingExpenses\.monthlySubscriptions/);
+  assert.match(page, /oneTimeExpenses: operatingExpenses\.oneTimeExpenses/);
+  assert.match(query, /\.from\(recurring_expenses\)/);
+  assert.match(query, /recurring_expenses\.is_active/);
+  assert.match(query, /lte\(expenses\.date, throughDate\)/);
   assert.match(page, /expenses\.rewardsAndAffiliatePrizes/);
   assert.match(page, /expenses\.creatorPrograms/);
   assert.match(page, /expenses\.operatingExpenses/);
