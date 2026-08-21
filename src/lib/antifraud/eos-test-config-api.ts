@@ -1,6 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
+import type { DbEnv } from "@/lib/db-env";
 
 export const eosUserRuleSchema = z.object({
   target: z.enum(["loss", "win", "any"]),
@@ -63,6 +64,7 @@ export type EosUserConfig = z.infer<typeof userConfigSchema>;
 const TIMEOUT_MS = 5_000;
 const PATH = "/v1/testing/eos-random-block/config";
 const USERS_PATH = `${PATH}/users`;
+const ENVIRONMENT_HEADER = "x-pokewin-environment";
 
 function connection(): { baseUrl: string; token: string } {
   const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
@@ -93,7 +95,10 @@ function serviceError(response: Response, subject: "global" | "user"): Error {
   );
 }
 
-async function request(init?: RequestInit): Promise<EosTestConfig> {
+async function request(
+  environment: DbEnv,
+  init?: RequestInit,
+): Promise<EosTestConfig> {
   const { baseUrl, token } = connection();
   let response: Response;
   try {
@@ -102,6 +107,7 @@ async function request(init?: RequestInit): Promise<EosTestConfig> {
       headers: {
         accept: "application/json",
         authorization: `Bearer ${token}`,
+        [ENVIRONMENT_HEADER]: environment,
         ...(init?.body ? { "content-type": "application/json" } : {}),
       },
       cache: "no-store",
@@ -114,17 +120,21 @@ async function request(init?: RequestInit): Promise<EosTestConfig> {
     throw serviceError(response, "global");
   }
   try {
-    return z.object({ data: configSchema }).parse(await response.json()).data;
+    const data = z.object({ data: configSchema }).parse(await response.json()).data;
+    if (data.environment !== environment) {
+      throw new Error("The EOS control service returned the wrong environment.");
+    }
+    return data;
   } catch {
     throw new Error("The EOS control service returned an invalid response.");
   }
 }
 
-export function getEosTestConfig(): Promise<EosTestConfig> {
-  return request();
+export function getEosTestConfig(environment: DbEnv): Promise<EosTestConfig> {
+  return request(environment);
 }
 
-export function updateEosTestConfig(input: {
+export function updateEosTestConfig(environment: DbEnv, input: {
   rules: EosUserRule[];
   persistent: boolean;
   randomized: boolean;
@@ -132,10 +142,11 @@ export function updateEosTestConfig(input: {
   forceAllLosses: boolean;
   actor: string;
 }): Promise<EosTestConfig> {
-  return request({ method: "PUT", body: JSON.stringify(input) });
+  return request(environment, { method: "PUT", body: JSON.stringify(input) });
 }
 
 async function userRequest<T>(
+  environment: DbEnv,
   path: string,
   schema: z.ZodType<T>,
   init?: RequestInit,
@@ -148,6 +159,7 @@ async function userRequest<T>(
       headers: {
         accept: "application/json",
         authorization: `Bearer ${token}`,
+        [ENVIRONMENT_HEADER]: environment,
         ...(init?.body ? { "content-type": "application/json" } : {}),
       },
       cache: "no-store",
@@ -166,15 +178,19 @@ async function userRequest<T>(
   }
 }
 
-export async function listEosUserConfigs(): Promise<EosUserConfig[]> {
+export async function listEosUserConfigs(environment: DbEnv): Promise<EosUserConfig[]> {
   const result = await userRequest(
+    environment,
     USERS_PATH,
     z.object({ data: z.array(userConfigSchema) }),
   );
+  if (result.data.some((entry) => entry.environment !== environment)) {
+    throw new Error("The EOS user flow service returned the wrong environment.");
+  }
   return result.data;
 }
 
-export async function updateEosUserConfig(input: {
+export async function updateEosUserConfig(environment: DbEnv, input: {
   userId: string;
   username: string | null;
   rules: EosUserRule[];
@@ -184,6 +200,7 @@ export async function updateEosUserConfig(input: {
   actor: string;
 }): Promise<EosUserConfig> {
   const result = await userRequest(
+    environment,
     `${USERS_PATH}/${encodeURIComponent(input.userId)}`,
     z.object({ data: userConfigSchema }),
     {
@@ -198,10 +215,16 @@ export async function updateEosUserConfig(input: {
       }),
     },
   );
+  if (result.data.environment !== environment) {
+    throw new Error("The EOS user flow service returned the wrong environment.");
+  }
   return result.data;
 }
 
-export async function deleteEosUserConfig(userId: string): Promise<void> {
+export async function deleteEosUserConfig(
+  environment: DbEnv,
+  userId: string,
+): Promise<void> {
   const { baseUrl, token } = connection();
   let response: Response;
   try {
@@ -209,7 +232,10 @@ export async function deleteEosUserConfig(userId: string): Promise<void> {
       `${baseUrl}${USERS_PATH}/${encodeURIComponent(userId)}`,
       {
         method: "DELETE",
-        headers: { authorization: `Bearer ${token}` },
+        headers: {
+          authorization: `Bearer ${token}`,
+          [ENVIRONMENT_HEADER]: environment,
+        },
         cache: "no-store",
         signal: AbortSignal.timeout(TIMEOUT_MS),
       },

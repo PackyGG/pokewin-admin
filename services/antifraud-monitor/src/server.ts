@@ -154,6 +154,7 @@ const SECRET_VALUES = [
   config.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL,
   config.BATTLE_TEST_DEV_DATABASE_URL,
   config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER,
+  config.BATTLE_TEST_PROD_SERVER_SEED_PEPPER,
   config.ANTIFRAUD_MIGRATION_DATABASE_URL,
   config.ANTIFRAUD_DATABASE_URL,
   config.REDIS_URL,
@@ -212,10 +213,10 @@ const app = Fastify({
 });
 const db = createDatabases(config);
 const migrationDb = createMigrationDatabase(config);
-const battleTestConfig = new PgBattleTestConfigStore(
-  db.antifraud,
-  config.BATTLE_TEST_ENVIRONMENT,
-);
+const battleTestConfigs = {
+  dev: new PgBattleTestConfigStore(db.antifraud, "dev"),
+  prod: new PgBattleTestConfigStore(db.antifraud, "prod"),
+};
 const live = new LiveBus(config.REDIS_URL, app.log, {
   // Durable publish fallback: frames Redis rejects are parked in the
   // Antifraud-DB live_outbox and republished by the bus drain loop.
@@ -2304,19 +2305,29 @@ await registerFiatEligibilityOverrideRoutes(app, db);
 await registerEosRandomBlockRoutes(
   app,
   undefined,
-  config.BATTLE_TEST_ENVIRONMENT === "prod"
-    && config.BATTLE_TEST_PROD_SERVER_SEED_PEPPER
-    ? new BattleOutcomeSimulator(
-        db.source,
-        config.BATTLE_TEST_PROD_SERVER_SEED_PEPPER,
-      )
-    : db.battleTestDevSource && config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER
-    ? new BattleOutcomeSimulator(
-        db.battleTestDevSource,
-        config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER,
-      )
-    : undefined,
-  battleTestConfig,
+  undefined,
+  undefined,
+  {
+    dev: {
+      testConfig: battleTestConfigs.dev,
+      battleOutcomes: db.battleTestDevSource
+          && config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER
+        ? new BattleOutcomeSimulator(
+            db.battleTestDevSource,
+            config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER,
+          )
+        : undefined,
+    },
+    prod: {
+      testConfig: battleTestConfigs.prod,
+      battleOutcomes: config.BATTLE_TEST_PROD_SERVER_SEED_PEPPER
+        ? new BattleOutcomeSimulator(
+            db.source,
+            config.BATTLE_TEST_PROD_SERVER_SEED_PEPPER,
+          )
+        : undefined,
+    },
+  },
 );
 
 app.setErrorHandler((error, request, reply) => {

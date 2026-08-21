@@ -13,6 +13,7 @@ import {
 } from "@/lib/antifraud/eos-test-config-api";
 import { getBattleTestDevReadDrizzleDb } from "@/lib/battle-test-dev-db";
 import { getProdReadDrizzleDb } from "@/lib/db";
+import { readDbEnvFromCookie } from "@/lib/db-env";
 import { user } from "@/lib/db-schema/main/schema";
 import { requireEosTestAccess } from "@/lib/eos-test-access";
 import { escapeLikePattern } from "@/lib/utils/sql-like";
@@ -26,9 +27,12 @@ const saveFlowSchema = z.object({
 }).refine((flow) => !flow.randomized || flow.persistent);
 
 export async function saveGlobalEosFlow(input: unknown) {
-  const session = await requireEosTestAccess();
+  const [session, environment] = await Promise.all([
+    requireEosTestAccess(),
+    readDbEnvFromCookie(),
+  ]);
   const flow = saveFlowSchema.parse(input);
-  const saved = await updateEosTestConfig({
+  const saved = await updateEosTestConfig(environment, {
     ...flow,
     actor: session.username,
   });
@@ -37,10 +41,13 @@ export async function saveGlobalEosFlow(input: unknown) {
 }
 
 export async function setGlobalForceAllLosses(input: unknown) {
-  const session = await requireEosTestAccess();
+  const [session, environment] = await Promise.all([
+    requireEosTestAccess(),
+    readDbEnvFromCookie(),
+  ]);
   const forceAllLosses = z.boolean().parse(input);
-  const current = await getEosTestConfig();
-  const saved = await updateEosTestConfig({
+  const current = await getEosTestConfig(environment);
+  const saved = await updateEosTestConfig(environment, {
     rules: current.rules,
     persistent: current.persistent,
     randomized: current.randomized,
@@ -53,10 +60,12 @@ export async function setGlobalForceAllLosses(input: unknown) {
 }
 
 export async function searchEosUsers(input: unknown) {
-  await requireEosTestAccess();
+  const [, environment] = await Promise.all([
+    requireEosTestAccess(),
+    readDbEnvFromCookie(),
+  ]);
   const query = z.string().trim().min(2).max(100).parse(input);
-  const config = await getEosTestConfig();
-  const db = config.environment === "prod"
+  const db = environment === "prod"
     ? getProdReadDrizzleDb()
     : getBattleTestDevReadDrizzleDb();
   const prefix = `${escapeLikePattern(query.toLowerCase())}%`;
@@ -88,11 +97,14 @@ const saveUserConfigSchema = z.object({
 });
 
 export async function saveEosUserConfig(input: unknown) {
-  const session = await requireEosTestAccess();
+  const [session, environment] = await Promise.all([
+    requireEosTestAccess(),
+    readDbEnvFromCookie(),
+  ]);
   const parsed = saveUserConfigSchema
     .refine((flow) => !flow.randomized || flow.persistent)
     .parse(input);
-  const saved = await updateEosUserConfig({
+  const saved = await updateEosUserConfig(environment, {
     ...parsed,
     actor: session.username,
   });
@@ -101,8 +113,11 @@ export async function saveEosUserConfig(input: unknown) {
 }
 
 export async function removeEosUserConfig(input: unknown) {
-  await requireEosTestAccess();
+  const [, environment] = await Promise.all([
+    requireEosTestAccess(),
+    readDbEnvFromCookie(),
+  ]);
   const userId = z.string().trim().min(1).max(100).parse(input);
-  await deleteEosUserConfig(userId);
+  await deleteEosUserConfig(environment, userId);
   revalidatePath("/eos");
 }

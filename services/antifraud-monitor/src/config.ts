@@ -41,9 +41,9 @@ const schema = z.object({
     .enum(["disable", "require"])
     .default("disable"),
   FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_CA: z.string().optional(),
-  // Which environment's marks this deployment reads and writes in
-  // battle_test_user_sequences. Two deployments may share one antifraud
-  // database; the column keeps their rows apart.
+  // Legacy rollout variable. Authenticated EOS requests now select dev/prod
+  // explicitly with x-pokewin-environment; retaining this parser avoids a
+  // breaking environment-variable removal during rolling deployments.
   BATTLE_TEST_ENVIRONMENT: z.enum(["dev", "prod"]).default("dev"),
   BATTLE_TEST_DEV_DATABASE_URL: z.string().min(1).optional(),
   BATTLE_TEST_DEV_SERVER_SEED_PEPPER: z.string().min(32).optional(),
@@ -230,37 +230,11 @@ export function loadConfig(): Config {
   }
   const config = parsed.data;
   if (
-    config.NODE_ENV === "production"
-    && process.env.BATTLE_TEST_ENVIRONMENT === undefined
-  ) {
-    throw new Error(
-      "Invalid configuration: BATTLE_TEST_ENVIRONMENT must be explicit in production",
-    );
-  }
-  if (
     config.NODE_ENV !== "test" &&
     (!config.MAXMIND_ACCOUNT_ID || !config.MAXMIND_LICENSE_KEY)
   ) {
     throw new Error(
       "Invalid configuration: MAXMIND_ACCOUNT_ID and MAXMIND_LICENSE_KEY are required",
-    );
-  }
-  if (
-    config.BATTLE_TEST_ENVIRONMENT === "prod"
-    && !config.BATTLE_TEST_PROD_SERVER_SEED_PEPPER
-  ) {
-    throw new Error(
-      "Invalid configuration: production battle testing requires BATTLE_TEST_PROD_SERVER_SEED_PEPPER",
-    );
-  }
-  if (
-    config.NODE_ENV === "production"
-    && config.BATTLE_TEST_ENVIRONMENT === "dev"
-    && (!config.BATTLE_TEST_DEV_DATABASE_URL
-      || !config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER)
-  ) {
-    throw new Error(
-      "Invalid configuration: dev battle testing requires its database and pepper in production deployments",
     );
   }
   if (config.API_TOKEN === config.API_ADMIN_TOKEN) {

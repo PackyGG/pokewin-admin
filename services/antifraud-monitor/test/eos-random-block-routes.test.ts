@@ -10,6 +10,7 @@ import {
   EosRandomBlockService,
   EOS_CHAIN_BLOCK_PATH,
   EOS_CHAIN_INFO_PATH,
+  EOS_ENVIRONMENT_HEADER,
   EOS_RANDOM_BLOCK_CONFIG_PATH,
   EOS_RANDOM_BLOCK_PATH,
   EOS_RANDOM_BLOCK_USER_CONFIG_PATH,
@@ -965,6 +966,247 @@ test("force-all-losses uses the safest fallback and keeps it stable on retry", a
   assert.deepEqual(retry.json(), first.json());
   assert.equal(selects, 1);
   assert.equal(consumes, 1);
+  await app.close();
+});
+
+test("authenticated EOS config routes require and select the environment header", async () => {
+  const configFor = (environment: "dev" | "prod"): BattleTestConfigSource => ({
+    async get() {
+      return {
+        environment,
+        userOnlyLoses: false,
+        updatedAt: null,
+        updatedBy: null,
+      };
+    },
+    async set() {
+      throw new Error("not used");
+    },
+  });
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, undefined, undefined, undefined, {
+    dev: { testConfig: configFor("dev") },
+    prod: { testConfig: configFor("prod") },
+  });
+
+  const missing = await app.inject({
+    method: "GET",
+    url: EOS_RANDOM_BLOCK_CONFIG_PATH,
+  });
+  assert.equal(missing.statusCode, 400);
+  assert.deepEqual(missing.json(), { error: "invalid_environment" });
+
+  for (const invalid of ["staging", "DEV", "dev, prod"]) {
+    const response = await app.inject({
+      method: "GET",
+      url: EOS_RANDOM_BLOCK_CONFIG_PATH,
+      headers: { [EOS_ENVIRONMENT_HEADER]: invalid },
+    });
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(response.json(), { error: "invalid_environment" });
+  }
+
+  for (const environment of ["dev", "prod"] as const) {
+    const response = await app.inject({
+      method: "GET",
+      url: EOS_RANDOM_BLOCK_CONFIG_PATH,
+      headers: { [EOS_ENVIRONMENT_HEADER]: environment },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().data.environment, environment);
+  }
+  await app.close();
+});
+
+test("authenticated EOS battle routing isolates dev and prod simulators and config", async () => {
+  const selectedEnvironments: string[] = [];
+  const source: EosRandomBlockSource = {
+    async select() {
+      return {
+        provider: "https://eos.example",
+        chainInfo,
+        selectedIndex: 0,
+        selectedBlock: blocks[0]!,
+        candidates: blocks,
+      };
+    },
+  };
+  const outcomesFor = (
+    environment: "dev" | "prod",
+  ): BattleOutcomeSource => ({
+    async simulate(userID, battleID) {
+      selectedEnvironments.push(`simulator:${environment}:${userID}`);
+      return {
+        battleId: battleID!,
+        mode: "normal",
+        crazyMode: false,
+        currency: "real",
+        creatorUserID: userID,
+        outcomes: blocks.map((candidate, index) => ({
+          blockNumber: candidate.blockNumber,
+          winningTeam: 1,
+          creatorTeam: 1,
+          creatorWonBattle: true,
+          creatorCost: 10,
+          creatorProfitLoss: environment === "dev"
+            ? [50, 1, 20, 30, 40][index]!
+            : [1, 20, 50, 30, 40][index]!,
+        })),
+      };
+    },
+  });
+  const configFor = (
+    environment: "dev" | "prod",
+  ): BattleTestConfigSource => ({
+    async get() {
+      return { environment, userOnlyLoses: false, updatedAt: null, updatedBy: null };
+    },
+    async set() {
+      throw new Error("not used");
+    },
+    async consumeUserInstruction(userID) {
+      selectedEnvironments.push(`config:${environment}:${userID}`);
+      return {
+        target: "win",
+        strategy: environment === "dev" ? "lowest_profit" : "highest_profit",
+        minMultiplier: null,
+        maxMultiplier: null,
+      };
+    },
+  });
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, source, undefined, undefined, {
+    dev: { battleOutcomes: outcomesFor("dev"), testConfig: configFor("dev") },
+    prod: { battleOutcomes: outcomesFor("prod"), testConfig: configFor("prod") },
+  });
+  const battleID = "11111111-1111-4111-8111-111111111111";
+
+  const dev = await app.inject({
+    method: "POST",
+    url: EOS_CHAIN_INFO_PATH,
+    headers: { [EOS_ENVIRONMENT_HEADER]: "dev" },
+    payload: { userID: "test-user", battleID },
+  });
+  const prod = await app.inject({
+    method: "POST",
+    url: EOS_CHAIN_INFO_PATH,
+    headers: { [EOS_ENVIRONMENT_HEADER]: "prod" },
+    payload: { userID: "test-user", battleID },
+  });
+
+  assert.equal(dev.statusCode, 200);
+  assert.equal(dev.json().last_irreversible_block_num, blocks[1]!.blockNumber);
+  assert.equal(prod.statusCode, 200);
+  assert.equal(prod.json().last_irreversible_block_num, blocks[2]!.blockNumber);
+  assert.deepEqual(selectedEnvironments, [
+    "simulator:dev:test-user",
+    "config:dev:test-user",
+    "simulator:prod:test-user",
+    "config:prod:test-user",
+  ]);
+  await app.close();
+});
+
+test("EOS battle routing rejects unavailable environments before public selection", async () => {
+  let selects = 0;
+  const source: EosRandomBlockSource = {
+    async select() {
+      selects += 1;
+      throw new Error("must not select for an unavailable environment");
+    },
+  };
+  const config: BattleTestConfigSource = {
+    async get() {
+      return { environment: "prod", userOnlyLoses: false, updatedAt: null, updatedBy: null };
+    },
+    async set() {
+      throw new Error("not used");
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, source, undefined, undefined, {
+    prod: { testConfig: config },
+  });
+  const response = await app.inject({
+    method: "POST",
+    url: EOS_CHAIN_INFO_PATH,
+    headers: { [EOS_ENVIRONMENT_HEADER]: "prod" },
+    payload: {
+      userID: "test-user",
+      battleID: "11111111-1111-4111-8111-111111111111",
+    },
+  });
+
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.json(), { error: "environment_unavailable" });
+  assert.equal(selects, 0);
+  await app.close();
+});
+
+test("public EOS chain routes ignore the environment header", async () => {
+  const source: EosRandomBlockSource = {
+    async select() {
+      return {
+        provider: "https://eos.example",
+        chainInfo,
+        selectedIndex: 0,
+        selectedBlock: blocks[0]!,
+        candidates: blocks,
+      };
+    },
+    async getBlock(blockNumOrId) {
+      return { id: blockNumOrId };
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, source, undefined, undefined, {});
+  const headers = { [EOS_ENVIRONMENT_HEADER]: "spoofed" };
+
+  const getInfo = await app.inject({ method: "GET", url: EOS_CHAIN_INFO_PATH, headers });
+  const postInfo = await app.inject({
+    method: "POST",
+    url: EOS_CHAIN_INFO_PATH,
+    headers,
+    payload: {},
+  });
+  const getBlock = await app.inject({
+    method: "POST",
+    url: EOS_CHAIN_BLOCK_PATH,
+    headers,
+    payload: { block_num_or_id: 100 },
+  });
+
+  assert.equal(getInfo.statusCode, 200);
+  assert.equal(postInfo.statusCode, 200);
+  assert.equal(getBlock.statusCode, 200);
+  await app.close();
+});
+
+test("authentication rejects EOS requests before environment validation", async () => {
+  const config: BattleTestConfigSource = {
+    async get() {
+      return { environment: "dev", userOnlyLoses: false, updatedAt: null, updatedBy: null };
+    },
+    async set() {
+      throw new Error("not used");
+    },
+  };
+  const app = Fastify({ logger: false });
+  app.addHook("onRequest", async (request, reply) => {
+    if (request.headers.authorization !== "Bearer valid") {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+  });
+  await registerEosRandomBlockRoutes(app, undefined, undefined, undefined, {
+    dev: { testConfig: config },
+  });
+
+  const response = await app.inject({
+    method: "GET",
+    url: EOS_RANDOM_BLOCK_CONFIG_PATH,
+  });
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(response.json(), { error: "unauthorized" });
   await app.close();
 });
 

@@ -7,6 +7,7 @@ import {
   getEosTestConfig,
   listEosUserConfigs,
 } from "@/lib/antifraud/eos-test-config-api";
+import { readDbEnvFromCookie } from "@/lib/db-env";
 import { requireEosTestAccess } from "@/lib/eos-test-access";
 import { EosTestConfigCard } from "./eos-test-config-card";
 import { EosUserSequences } from "./eos-user-sequences";
@@ -15,13 +16,14 @@ export const metadata = { title: "EOS Battle Testing" };
 
 export default async function EosPage() {
   await requireEosTestAccess();
+  const environment = await readDbEnvFromCookie();
   const [config, userConfigs] = await Promise.all([
-    getEosTestConfig(),
-    listEosUserConfigs(),
+    getEosTestConfig(environment),
+    listEosUserConfigs(environment),
   ]);
-  if (userConfigs.some((entry) => entry.environment !== config.environment)) {
-    throw new Error("EOS configuration service returned mixed environments");
-  }
+  const environmentLabel = environment === "prod"
+    ? "Normal · production"
+    : "Development";
 
   return (
     <div className="space-y-5">
@@ -34,7 +36,7 @@ export default async function EosPage() {
               Private
             </Badge>
             <Badge variant="secondary" className="text-[10px] uppercase">
-              {config.environment} controls
+              {environmentLabel} controls
             </Badge>
           </>
         }
@@ -44,6 +46,7 @@ export default async function EosPage() {
           <CheckCircle2 className="size-4 text-emerald-500" />Control service connected
         </span>
         <span>{userConfigs.length} personal {userConfigs.length === 1 ? "flow" : "flows"}</span>
+        <span>Follows the dashboard&apos;s {environmentLabel.toLowerCase()} data toggle</span>
         <span>Multiplier ranges use creator payout ÷ creator cost</span>
         {config.forceAllLosses && (
           <Badge variant="destructive">All-battles loss override active</Badge>
@@ -60,7 +63,7 @@ export default async function EosPage() {
         </TabsList>
         <TabsContent value="users">
           <EosUserSequences
-            environment={config.environment}
+            environment={environment}
             initial={userConfigs}
             forceAllLosses={config.forceAllLosses}
           />

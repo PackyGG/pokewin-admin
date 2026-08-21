@@ -1,6 +1,10 @@
 import { randomInt } from "node:crypto";
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type {
+  FastifyInstance,
+  FastifyReply,
+  FastifyRequest,
+} from "fastify";
 import { z } from "zod";
 
 import {
@@ -10,6 +14,7 @@ import {
 } from "./battle-outcome-simulator.js";
 import type {
   BattleTestConfigSource,
+  BattleTestEnvironment,
   BattleTestUserInstruction,
 } from "./battle-test-config.js";
 
@@ -19,6 +24,16 @@ export const EOS_RANDOM_BLOCK_USER_CONFIG_PATH =
   `${EOS_RANDOM_BLOCK_CONFIG_PATH}/users`;
 export const EOS_CHAIN_INFO_PATH = "/v1/chain/get_info";
 export const EOS_CHAIN_BLOCK_PATH = "/v1/chain/get_block";
+export const EOS_ENVIRONMENT_HEADER = "x-pokewin-environment";
+
+export type EosBattleEnvironmentResources = {
+  battleOutcomes?: BattleOutcomeSource;
+  testConfig?: BattleTestConfigSource;
+};
+
+export type EosBattleEnvironmentRouting = Partial<
+  Record<BattleTestEnvironment, EosBattleEnvironmentResources>
+>;
 
 const EOS_ENDPOINTS = [
   "https://mainnet.genereos.io",
@@ -386,43 +401,84 @@ export async function registerEosRandomBlockRoutes(
   source: EosRandomBlockSource = new EosRandomBlockService(),
   battleOutcomes?: BattleOutcomeSource,
   testConfig?: BattleTestConfigSource,
+  environmentRouting?: EosBattleEnvironmentRouting,
 ): Promise<void> {
+  const environmentSchema = z.enum(["dev", "prod"]);
+  type ResolvedEnvironment = {
+    environment?: BattleTestEnvironment;
+    battleOutcomes?: BattleOutcomeSource;
+    testConfig?: BattleTestConfigSource;
+  };
+  type EnvironmentResolution =
+    | { ok: true; resources: ResolvedEnvironment }
+    | { ok: false; status: 400 | 503; error: "invalid_environment" | "environment_unavailable" };
+
+  const resolveEnvironment = (
+    request: FastifyRequest,
+    needs: "config" | "battle",
+  ): EnvironmentResolution => {
+    if (!environmentRouting) {
+      return { ok: true, resources: { battleOutcomes, testConfig } };
+    }
+    const parsed = environmentSchema.safeParse(
+      request.headers[EOS_ENVIRONMENT_HEADER],
+    );
+    if (!parsed.success) {
+      return { ok: false, status: 400, error: "invalid_environment" };
+    }
+    const selected = environmentRouting[parsed.data];
+    if (!selected?.testConfig || (needs === "battle" && !selected.battleOutcomes)) {
+      return { ok: false, status: 503, error: "environment_unavailable" };
+    }
+    return {
+      ok: true,
+      resources: { environment: parsed.data, ...selected },
+    };
+  };
+  const sendEnvironmentError = (
+    reply: FastifyReply,
+    resolution: Extract<EnvironmentResolution, { ok: false }>,
+  ) => reply.code(resolution.status).send({ error: resolution.error });
+
   const selectForBattle = async (
     userID: string,
     battleID: string | undefined,
+    resources: ResolvedEnvironment,
   ) => {
-    if (!battleOutcomes) {
+    const selectedOutcomes = resources.battleOutcomes;
+    const selectedConfig = resources.testConfig;
+    if (!selectedOutcomes) {
       throw new BattleSimulationError("battle_data_incomplete", 409);
     }
-    if (battleID && testConfig?.getBattleSelection) {
-      const cachedResponse = await testConfig.getBattleSelection(userID, battleID);
+    if (battleID && selectedConfig?.getBattleSelection) {
+      const cachedResponse = await selectedConfig.getBattleSelection(userID, battleID);
       if (cachedResponse) return { cachedResponse };
     }
     const selection = await source.select();
-    const battle = await battleOutcomes.simulate(
+    const battle = await selectedOutcomes.simulate(
       userID,
       battleID,
       selection.candidates,
     );
     const { outcomes: simulatedOutcomes, ...battleSummary } = battle;
-    if (testConfig?.getBattleSelection) {
-      const cachedResponse = await testConfig.getBattleSelection(
+    if (selectedConfig?.getBattleSelection) {
+      const cachedResponse = await selectedConfig.getBattleSelection(
         userID,
         battleSummary.battleId,
       );
       if (cachedResponse) return { cachedResponse };
     }
     let instruction: BattleTestUserInstruction | null = null;
-    if (testConfig?.consumeUserInstruction) {
-      instruction = await testConfig.consumeUserInstruction(
+    if (selectedConfig?.consumeUserInstruction) {
+      instruction = await selectedConfig.consumeUserInstruction(
         userID,
         battleSummary.battleId,
       );
     }
     let userOnlyLoses = false;
-    if (!instruction && testConfig) {
+    if (!instruction && selectedConfig) {
       try {
-        userOnlyLoses = (await testConfig.get()).userOnlyLoses;
+        userOnlyLoses = (await selectedConfig.get()).userOnlyLoses;
       } catch (error) {
         app.log.warn(
           { err: error, event: "eos_random_block.config_read_failed" },
@@ -448,8 +504,8 @@ export async function registerEosRandomBlockRoutes(
       throw new BattleSimulationError("battle_data_incomplete", 409);
     }
     const response = chainInfoForSelectedBlock(selection, selectedBlock);
-    const savedResponse = testConfig?.saveBattleSelection
-      ? await testConfig.saveBattleSelection(
+    const savedResponse = selectedConfig?.saveBattleSelection
+      ? await selectedConfig.saveBattleSelection(
           userID,
           battleSummary.battleId,
           response,
@@ -463,6 +519,7 @@ export async function registerEosRandomBlockRoutes(
       selectedBlock,
       instruction,
       userOnlyLoses,
+      environment: resources.environment,
       savedResponse,
     };
   };
@@ -484,6 +541,7 @@ export async function registerEosRandomBlockRoutes(
       {
         event: "eos_random_block.selected",
         requestId: request.id,
+        environment: resolved.environment ?? null,
         userId: userID,
         battleId: battleID ?? resolved.battleSummary.battleId,
         provider: resolved.selection.provider,
@@ -509,11 +567,21 @@ export async function registerEosRandomBlockRoutes(
     );
   };
 
-  if (testConfig) {
-    app.get(EOS_RANDOM_BLOCK_CONFIG_PATH, async () => ({
-      data: await testConfig.get(),
-    }));
+  const routedConfigs = environmentRouting
+    ? Object.values(environmentRouting).flatMap((entry) =>
+        entry?.testConfig ? [entry.testConfig] : []
+      )
+    : testConfig ? [testConfig] : [];
+  if (routedConfigs.length > 0) {
+    app.get(EOS_RANDOM_BLOCK_CONFIG_PATH, async (request, reply) => {
+      const resolution = resolveEnvironment(request, "config");
+      if (!resolution.ok) return sendEnvironmentError(reply, resolution);
+      return { data: await resolution.resources.testConfig!.get() };
+    });
     app.put(EOS_RANDOM_BLOCK_CONFIG_PATH, async (request, reply) => {
+      const resolution = resolveEnvironment(request, "config");
+      if (!resolution.ok) return sendEnvironmentError(reply, resolution);
+      const selectedConfig = resolution.resources.testConfig!;
       const parsed = flowUpdateSchema.safeParse(request.body);
       const legacy = configUpdateSchema.safeParse(request.body);
       if (!parsed.success && !legacy.success) {
@@ -523,22 +591,23 @@ export async function registerEosRandomBlockRoutes(
       let actor: string;
       if (parsed.success) {
         actor = parsed.data.actor;
-        saved = testConfig.setFlow
-          ? await testConfig.setFlow(parsed.data.rules, parsed.data.persistent,
+        saved = selectedConfig.setFlow
+          ? await selectedConfig.setFlow(parsed.data.rules, parsed.data.persistent,
               parsed.data.randomized, parsed.data.enabled, actor,
               parsed.data.forceAllLosses)
-          : await testConfig.set(parsed.data.enabled, actor);
+          : await selectedConfig.set(parsed.data.enabled, actor);
       } else {
         if (!legacy.success) {
           return reply.code(400).send({ error: "invalid_request" });
         }
         actor = legacy.data.actor;
-        saved = await testConfig.set(legacy.data.userOnlyLoses, actor);
+        saved = await selectedConfig.set(legacy.data.userOnlyLoses, actor);
       }
       request.log.info(
         {
           event: "eos_random_block.global_config_updated",
           requestId: request.id,
+          environment: resolution.resources.environment ?? saved.environment ?? null,
           actor,
           enabled: saved.enabled,
           persistent: saved.persistent,
@@ -550,13 +619,28 @@ export async function registerEosRandomBlockRoutes(
       );
       return { data: saved };
     });
-    if (testConfig.listUsers && testConfig.setUser && testConfig.deleteUser) {
-      app.get(EOS_RANDOM_BLOCK_USER_CONFIG_PATH, async () => ({
-        data: await testConfig.listUsers!(),
-      }));
+    const hasUserConfigRoutes = routedConfigs.some((config) =>
+      config.listUsers && config.setUser && config.deleteUser
+    );
+    if (hasUserConfigRoutes) {
+      app.get(EOS_RANDOM_BLOCK_USER_CONFIG_PATH, async (request, reply) => {
+        const resolution = resolveEnvironment(request, "config");
+        if (!resolution.ok) return sendEnvironmentError(reply, resolution);
+        const selectedConfig = resolution.resources.testConfig!;
+        if (!selectedConfig.listUsers) {
+          return reply.code(503).send({ error: "environment_unavailable" });
+        }
+        return { data: await selectedConfig.listUsers() };
+      });
       app.put(
         `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/:userId`,
         async (request, reply) => {
+          const resolution = resolveEnvironment(request, "config");
+          if (!resolution.ok) return sendEnvironmentError(reply, resolution);
+          const selectedConfig = resolution.resources.testConfig!;
+          if (!selectedConfig.setUser) {
+            return reply.code(503).send({ error: "environment_unavailable" });
+          }
           const userId = z.string().trim().min(1).max(100).safeParse(
             (request.params as { userId?: unknown }).userId,
           );
@@ -564,17 +648,18 @@ export async function registerEosRandomBlockRoutes(
           if (!userId.success || !parsed.success) {
             return reply.code(400).send({ error: "invalid_request" });
           }
-          const saved = testConfig.setUserFlow
-            ? await testConfig.setUserFlow(userId.data, parsed.data.username,
+          const saved = selectedConfig.setUserFlow
+            ? await selectedConfig.setUserFlow(userId.data, parsed.data.username,
                 parsed.data.rules, parsed.data.persistent, parsed.data.randomized,
                 parsed.data.enabled, parsed.data.actor)
-            : await testConfig.setUser!(userId.data, parsed.data.username,
+            : await selectedConfig.setUser(userId.data, parsed.data.username,
                 parsed.data.rules, parsed.data.persistent, parsed.data.enabled,
                 parsed.data.actor);
           request.log.info(
             {
               event: "eos_random_block.user_sequence_updated",
               requestId: request.id,
+              environment: resolution.resources.environment ?? saved.environment ?? null,
               actor: parsed.data.actor,
               userId: userId.data,
               username: parsed.data.username,
@@ -591,17 +676,24 @@ export async function registerEosRandomBlockRoutes(
       app.delete(
         `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/:userId`,
         async (request, reply) => {
+          const resolution = resolveEnvironment(request, "config");
+          if (!resolution.ok) return sendEnvironmentError(reply, resolution);
+          const selectedConfig = resolution.resources.testConfig!;
+          if (!selectedConfig.deleteUser) {
+            return reply.code(503).send({ error: "environment_unavailable" });
+          }
           const userId = z.string().trim().min(1).max(100).safeParse(
             (request.params as { userId?: unknown }).userId,
           );
           if (!userId.success) {
             return reply.code(400).send({ error: "invalid_request" });
           }
-          await testConfig.deleteUser!(userId.data);
+          await selectedConfig.deleteUser(userId.data);
           request.log.info(
             {
               event: "eos_random_block.user_sequence_deleted",
               requestId: request.id,
+              environment: resolution.resources.environment ?? null,
               userId: userId.data,
             },
             "EOS battle test user sequence deleted",
@@ -635,10 +727,13 @@ export async function registerEosRandomBlockRoutes(
     if (!parsed.success) {
       return reply.code(400).send({ error: "invalid_request" });
     }
+    const resolution = resolveEnvironment(request, "battle");
+    if (!resolution.ok) return sendEnvironmentError(reply, resolution);
     try {
       const resolved = await selectForBattle(
         parsed.data.userID,
         parsed.data.battleID,
+        resolution.resources,
       );
       if ("cachedResponse" in resolved) return resolved.cachedResponse;
       logSelection(request, parsed.data.userID, parsed.data.battleID, resolved);
