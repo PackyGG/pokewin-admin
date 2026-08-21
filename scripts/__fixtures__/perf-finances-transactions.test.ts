@@ -113,11 +113,9 @@ test("transactions list batches its auxiliary lookups into one wave", () => {
 });
 
 /**
- * The four finance tiles have very different costs (one Admin-DB aggregate
- * vs a MAIN-mirror reward/creator fan-out). Awaiting them together made
- * every tile wait for the slowest, and a leg burning its full safeQuery
- * budget held the whole grid blank before painting three good tiles next
- * to one failure band. Each tile owns its own boundary now.
+ * The finance tiles use both MAIN-mirror and Admin-DB reads. Awaiting them
+ * together would make every tile wait for the slowest, so each tile owns its
+ * own boundary.
  */
 test("finances streams each tile on its own boundary", () => {
   const source = read(FINANCES_PAGE);

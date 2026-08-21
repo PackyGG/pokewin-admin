@@ -4,7 +4,6 @@ import {
   ArrowRight,
   BadgeDollarSign,
   CalendarDays,
-  Gift,
   Receipt,
   TrendingDown,
   TrendingUp,
@@ -35,7 +34,6 @@ import {
 import { calculateWeeklyProfit } from "@/lib/finances/weekly-profit";
 import { houseAmountTextClass } from "@/lib/house-pov";
 import {
-  getActualExpenseSummary,
   getFinanceProfit,
   getSalaryExpenseSummary,
   getWeeklyOperatingExpenseSummary,
@@ -105,7 +103,6 @@ function FinanceLink({
 
 type FinanceProfitData = Awaited<ReturnType<typeof getFinanceProfit>>;
 type SalarySummaryData = Awaited<ReturnType<typeof getSalaryExpenseSummary>>;
-type ExpenseSummaryData = Awaited<ReturnType<typeof getActualExpenseSummary>>;
 type WeeklyOperatingExpenseData = Awaited<
   ReturnType<typeof getWeeklyOperatingExpenseSummary>
 >;
@@ -117,14 +114,10 @@ type QueryResult<T> = Promise<{ data: T | null }>;
 /**
  * Starts the reads in parallel but gives each tile its OWN Suspense boundary.
  *
- * Why: the four legs have wildly different costs. The salary summary is a
- * single Admin-DB aggregate; the actual-expense summary fans out over
- * reward + creator cost reads on the MAIN mirror. Awaiting them together
- * meant every tile waited for the slowest, and a leg that burned its full
- * 15s `safeQuery` budget held the ENTIRE grid blank for 15s before
- * painting three good tiles next to one failure band. Per-tile boundaries
- * let each number land when it is ready and confine a slow/failed leg to
- * its own card.
+ * The selected-period cash P&L is a MAIN-mirror read while salary,
+ * subscriptions, and logged expenses are Admin-DB aggregates. Per-tile
+ * boundaries let each number land when it is ready and confine a slow or
+ * failed leg to its own card.
  *
  * This function stays synchronous on purpose: it must not await anything,
  * or the static Profit header below would go back to being gated on data.
@@ -171,13 +164,6 @@ function FinancesOverview({ period }: { period: FinancePeriod }) {
     "finances.weeklyOperatingExpenses",
     REWARD_QUERY_TIMEOUT_MS,
   );
-  const expensePromise = safeQuery(
-    () => getActualExpenseSummary(period, now),
-    null,
-    `finances.actualExpenses.${period}`,
-    REWARD_QUERY_TIMEOUT_MS,
-  );
-
   const label = financePeriodLabel(period);
   const weekRange = financeWeekDateRange(now);
   const selectedPeriodCaption =
@@ -241,13 +227,6 @@ function FinancesOverview({ period }: { period: FinancePeriod }) {
         <SalaryExpensesCard
           promise={salaryPromise}
           caption={period === "7d" ? `${weekRange} UTC` : `Last ${label}`}
-        />
-      </Suspense>
-
-      <Suspense fallback={<FinanceCardSkeleton />}>
-        <ActualExpensesCard
-          promise={expensePromise}
-          caption={selectedPeriodCaption}
         />
       </Suspense>
     </div>
@@ -513,74 +492,6 @@ async function SalaryExpensesCard({
           </>
         ) : (
           <Unavailable message="Salary expenses could not be loaded. Refresh to retry." />
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-async function ActualExpensesCard({
-  promise,
-  caption,
-}: {
-  promise: QueryResult<ExpenseSummaryData>;
-  caption: string;
-}) {
-  const { data: expenses } = await promise;
-
-  return (
-    <Card className="min-h-[310px]">
-      <CardHeader className="border-b">
-        <CardTitle className="flex items-center gap-2">
-          <Gift className="size-4 text-rose-500" aria-hidden />
-          Actual expenses
-        </CardTitle>
-        <CardDescription>Rewards and creator programs</CardDescription>
-      </CardHeader>
-
-      <CardContent className="flex flex-1 flex-col justify-between gap-5">
-        {expenses ? (
-          <>
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                {caption}
-              </p>
-              <p className="mt-1 text-4xl font-bold tracking-tight text-rose-600 tabular-nums dark:text-rose-400 sm:text-5xl">
-                −<AnimatedNumber value={expenses.total} format="currency" />
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Real costs recognized in the selected period
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <SalaryDetail
-                icon={Gift}
-                label="Rewards + affiliate prizes"
-                value={formatCurrency(expenses.rewardsAndAffiliatePrizes)}
-              />
-              <SalaryDetail
-                icon={Users}
-                label="Creator programs"
-                value={formatCurrency(expenses.creatorPrograms)}
-              />
-              <div className="col-span-2">
-                <SalaryDetail
-                  icon={Receipt}
-                  label="One-time operating expenses"
-                  value={formatCurrency(expenses.operatingExpenses)}
-                />
-              </div>
-            </div>
-
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              Actual reward payouts, net house-funded rain, creator deal
-              payouts, tips, sponsored battles, and logged one-time expenses. No
-              salary or subscription run rate.
-            </p>
-          </>
-        ) : (
-          <Unavailable message="Actual expenses could not be loaded. Refresh to retry." />
         )}
       </CardContent>
     </Card>

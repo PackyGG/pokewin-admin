@@ -14,8 +14,6 @@ import {
   financePeriodSince,
   type FinancePeriod,
 } from "@/lib/finances/periods";
-import { getRewardCost } from "@/lib/metrics/queries";
-import { getCreatorCostsSince } from "@/lib/queries/dashboard-creator-costs-today";
 import {
   calculateWindowedPnlOneShot,
   type WindowedPnl,
@@ -45,13 +43,6 @@ export type SalaryExpenseSummary = {
   periodExpense: number;
   monthly: number;
   annual: number;
-};
-
-export type ActualExpenseSummary = {
-  total: number;
-  rewardsAndAffiliatePrizes: number;
-  creatorPrograms: number;
-  operatingExpenses: number;
 };
 
 export type WeeklyOperatingExpenseSummary = {
@@ -109,46 +100,5 @@ export async function getWeeklyOperatingExpenseSummary(
   return {
     monthlySubscriptions: toNumber(subscriptionRows[0]?.total),
     oneTimeExpenses: toNumber(expenseRows[0]?.total),
-  };
-}
-
-/**
- * Actual reward and creator-program costs recognized inside the selected
- * window. Affiliate commissions and leaderboard prizes already live
- * in the canonical reward-cost set, so only the non-overlapping creator legs
- * are added here.
- */
-export async function getActualExpenseSummary(
-  period: FinancePeriod,
-  now: Date = new Date(),
-): Promise<ActualExpenseSummary> {
-  const since = financePeriodSince(period, now);
-  const expenseDate = since.toISOString().slice(0, 10);
-  const throughDate = now.toISOString().slice(0, 10);
-  const [reward, creators, operatingRows] = await Promise.all([
-    getRewardCost({ since }),
-    getCreatorCostsSince(since),
-    adminDrizzle
-      .select({
-        total: sql<string>`COALESCE(SUM(${expenses.amount}), 0)::text`,
-      })
-      .from(expenses)
-      .where(
-        and(gte(expenses.date, expenseDate), lte(expenses.date, throughDate)),
-      ),
-  ]);
-
-  const rewardsAndAffiliatePrizes =
-    reward.rewardCostExclRain +
-    Math.max(0, reward.rainWinTotal - reward.rainTipTotal);
-  const creatorPrograms =
-    creators.creatorWithdrawals + creators.tips + creators.sponsoredBattles;
-  const operatingExpenses = toNumber(operatingRows[0]?.total);
-
-  return {
-    total: rewardsAndAffiliatePrizes + creatorPrograms + operatingExpenses,
-    rewardsAndAffiliatePrizes,
-    creatorPrograms,
-    operatingExpenses,
   };
 }

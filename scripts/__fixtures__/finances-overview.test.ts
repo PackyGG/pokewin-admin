@@ -104,17 +104,13 @@ test("finance overview is owner-gated and reuses canonical profit math", () => {
     /Cash profit minus weekly salary accrual, one quarter of active/,
   );
   assert.match(query, /financePeriodSince\(period, now\)/);
-  assert.match(page, /getActualExpenseSummary\(period, now\)/);
   assert.match(page, /getWeeklyOperatingExpenseSummary\(now\)/);
   assert.match(page, /monthlySubscriptions: operatingExpenses\.monthlySubscriptions/);
   assert.match(page, /oneTimeExpenses: operatingExpenses\.oneTimeExpenses/);
   assert.match(query, /\.from\(recurring_expenses\)/);
   assert.match(query, /recurring_expenses\.is_active/);
   assert.match(query, /lte\(expenses\.date, throughDate\)/);
-  assert.match(page, /expenses\.rewardsAndAffiliatePrizes/);
-  assert.match(page, /expenses\.creatorPrograms/);
-  assert.match(page, /expenses\.operatingExpenses/);
   assert.match(query, /\.from\(expenses\)/);
-  assert.match(query, /getRewardCost\(\{ since \}\)/);
-  assert.match(query, /getCreatorCostsSince\(since\)/);
+  assert.doesNotMatch(page, /Actual expenses/);
+  assert.doesNotMatch(query, /getRewardCost|getCreatorCostsSince/);
 });
