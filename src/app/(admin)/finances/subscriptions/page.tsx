@@ -15,9 +15,6 @@ export default async function SubscriptionsPage() {
   return (
     <div className="space-y-6">
       <SectionHeading icon={CalendarClock} title="Subscriptions" />
-      <p className="-mt-4 text-sm text-muted-foreground">
-        Manage recurring monthly costs and see the current annual run rate.
-      </p>
       <SubscriptionsClient data={data} />
     </div>
   );
