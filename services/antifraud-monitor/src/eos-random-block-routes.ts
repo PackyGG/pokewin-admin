@@ -61,15 +61,23 @@ const requestSchema = z.object({
 
 const userRuleSchema = z.object({
   target: z.enum(["loss", "win", "any"]),
-  strategy: z.enum(["random", "lowest_profit", "highest_profit"]),
+  strategy: z.enum([
+    "random", "lowest_profit", "highest_profit",
+    "lowest_multiplier", "highest_multiplier",
+  ]),
   count: z.number().int().min(1).max(100),
-}).strict();
+  minMultiplier: z.number().min(0).max(10_000).nullable().default(null),
+  maxMultiplier: z.number().min(0).max(10_000).nullable().default(null),
+}).strict().refine((rule) => rule.minMultiplier === null
+  || rule.maxMultiplier === null
+  || rule.minMultiplier <= rule.maxMultiplier);
 
 const flowUpdateSchema = z.object({
   rules: z.array(userRuleSchema).min(1).max(20),
   persistent: z.boolean(),
   randomized: z.boolean(),
   enabled: z.boolean(),
+  forceAllLosses: z.boolean().default(false),
   actor: z.string().trim().min(1).max(120),
 }).strict().refine((flow) => !flow.randomized || flow.persistent);
 
@@ -123,7 +131,7 @@ export function selectBattleTestInstructionOutcome(
   if (outcomes.length === 0) {
     throw new BattleSimulationError("battle_data_incomplete", 409);
   }
-  const matching = instruction.target === "any"
+  const targetMatches = instruction.target === "any"
     ? outcomes
     : outcomes.filter((outcome) =>
       instruction.target === "win"
@@ -131,7 +139,7 @@ export function selectBattleTestInstructionOutcome(
         : !outcome.creatorWonBattle
     );
 
-  if (matching.length === 0) {
+  if (targetMatches.length === 0) {
     return outcomes.reduce((best, outcome) => {
       if (instruction.target === "win") {
         return outcome.creatorProfitLoss > best.creatorProfitLoss
@@ -143,18 +151,45 @@ export function selectBattleTestInstructionOutcome(
         : best;
     });
   }
+  const multiplier = (outcome: BattleCandidateOutcome) =>
+    outcome.creatorMultiplier
+      ?? (outcome.creatorCost > 0
+        ? (outcome.creatorProfitLoss + outcome.creatorCost) / outcome.creatorCost
+        : 0);
+  const matching = targetMatches.filter((outcome) =>
+    (instruction.minMultiplier === null
+      || instruction.minMultiplier === undefined
+      || multiplier(outcome) >= instruction.minMultiplier)
+    && (instruction.maxMultiplier === null
+      || instruction.maxMultiplier === undefined
+      || multiplier(outcome) <= instruction.maxMultiplier)
+  );
+  // Outcome intent is stronger than the optional range. If the five-block
+  // window contains the requested win/loss but none inside the range, retain
+  // the requested outcome instead of silently crossing to the opposite side.
+  const eligible = matching.length > 0 ? matching : targetMatches;
   if (instruction.strategy === "lowest_profit") {
-    return matching.reduce((lowest, outcome) =>
+    return eligible.reduce((lowest, outcome) =>
       outcome.creatorProfitLoss < lowest.creatorProfitLoss ? outcome : lowest
     );
   }
   if (instruction.strategy === "highest_profit") {
-    return matching.reduce((highest, outcome) =>
+    return eligible.reduce((highest, outcome) =>
       outcome.creatorProfitLoss > highest.creatorProfitLoss ? outcome : highest
     );
   }
-  return matching.find((outcome) => outcome.blockNumber === randomBlockNumber)
-    ?? matching[randomIndex(matching.length)]!;
+  if (instruction.strategy === "lowest_multiplier") {
+    return eligible.reduce((lowest, outcome) =>
+      multiplier(outcome) < multiplier(lowest) ? outcome : lowest
+    );
+  }
+  if (instruction.strategy === "highest_multiplier") {
+    return eligible.reduce((highest, outcome) =>
+      multiplier(outcome) > multiplier(highest) ? outcome : highest
+    );
+  }
+  return eligible.find((outcome) => outcome.blockNumber === randomBlockNumber)
+    ?? eligible[randomIndex(eligible.length)]!;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -464,8 +499,11 @@ export async function registerEosRandomBlockRoutes(
             : "random",
         ruleTarget: resolved.instruction?.target ?? null,
         ruleStrategy: resolved.instruction?.strategy ?? null,
+        ruleMinMultiplier: resolved.instruction?.minMultiplier ?? null,
+        ruleMaxMultiplier: resolved.instruction?.maxMultiplier ?? null,
         creatorWonBattle: resolved.selected.creatorWonBattle,
         creatorProfitLoss: resolved.selected.creatorProfitLoss,
+        creatorMultiplier: resolved.selected.creatorMultiplier ?? null,
       },
       "EOS block selected for battle",
     );
@@ -487,7 +525,8 @@ export async function registerEosRandomBlockRoutes(
         actor = parsed.data.actor;
         saved = testConfig.setFlow
           ? await testConfig.setFlow(parsed.data.rules, parsed.data.persistent,
-              parsed.data.randomized, parsed.data.enabled, actor)
+              parsed.data.randomized, parsed.data.enabled, actor,
+              parsed.data.forceAllLosses)
           : await testConfig.set(parsed.data.enabled, actor);
       } else {
         if (!legacy.success) {
@@ -505,6 +544,7 @@ export async function registerEosRandomBlockRoutes(
           persistent: saved.persistent,
           randomized: saved.randomized,
           rules: saved.rules ?? [],
+          forceAllLosses: saved.forceAllLosses ?? false,
         },
         "EOS battle test global config updated",
       );

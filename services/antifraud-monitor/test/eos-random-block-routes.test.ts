@@ -478,6 +478,81 @@ test("personal outcome selection supports target and profit strategy fallbacks",
   );
 });
 
+test("personal outcome selection applies multiplier ranges before multiplier strategy", () => {
+  const outcome = (
+    blockNumber: number,
+    creatorWonBattle: boolean,
+    creatorProfitLoss: number,
+    creatorMultiplier?: number,
+  ) => ({
+    blockNumber,
+    winningTeam: creatorWonBattle ? 1 : 2,
+    creatorTeam: 1,
+    creatorWonBattle,
+    creatorCost: 10,
+    creatorProfitLoss,
+    ...(creatorMultiplier === undefined ? {} : { creatorMultiplier }),
+  });
+  const mixed = [
+    outcome(10, true, 70, 8),
+    outcome(9, true, 5, 1.5),
+    outcome(8, true, 12, 2.2),
+    outcome(7, false, -10, 0),
+    outcome(6, false, -5, 0.5),
+  ];
+
+  assert.equal(selectBattleTestInstructionOutcome(mixed, 10, {
+    target: "win",
+    strategy: "lowest_multiplier",
+    minMultiplier: 1.4,
+    maxMultiplier: 3,
+  }).blockNumber, 9);
+  assert.equal(selectBattleTestInstructionOutcome(mixed, 10, {
+    target: "win",
+    strategy: "highest_multiplier",
+    minMultiplier: 1.4,
+    maxMultiplier: 3,
+  }).blockNumber, 8);
+  assert.equal(selectBattleTestInstructionOutcome(mixed, 10, {
+    target: "loss",
+    strategy: "random",
+    minMultiplier: 0.2,
+    maxMultiplier: 0.8,
+  }, () => 0).blockNumber, 6);
+  // Older simulations do not carry the derived field. The selector derives
+  // payout / cost from profit and cost so rolling deployments stay compatible.
+  assert.equal(selectBattleTestInstructionOutcome([
+    outcome(5, true, 4),
+    outcome(4, true, 20),
+  ], 4, {
+    target: "win",
+    strategy: "lowest_multiplier",
+    minMultiplier: 1,
+    maxMultiplier: 2,
+  }).blockNumber, 5);
+});
+
+test("an unavailable multiplier range keeps the requested win/loss outcome", () => {
+  const outcomes = [
+    {
+      blockNumber: 10, winningTeam: 1, creatorTeam: 1,
+      creatorWonBattle: true, creatorCost: 10, creatorProfitLoss: 5,
+      creatorMultiplier: 1.5,
+    },
+    {
+      blockNumber: 9, winningTeam: 2, creatorTeam: 1,
+      creatorWonBattle: false, creatorCost: 10, creatorProfitLoss: -10,
+      creatorMultiplier: 0,
+    },
+  ];
+  assert.equal(selectBattleTestInstructionOutcome(outcomes, 10, {
+    target: "loss",
+    strategy: "lowest_multiplier",
+    minMultiplier: 3,
+    maxMultiplier: 4,
+  }).blockNumber, 9);
+});
+
 test("EOS test config routes read and update the persisted setting", async () => {
   let enabled = false;
   const config: BattleTestConfigSource = {
@@ -530,8 +605,10 @@ test("EOS global config accepts repeating weighted-random flows", async () => {
     async set() {
       throw new Error("legacy setter must not handle flow payloads");
     },
-    async setFlow(rules, persistent, randomized, enabled, actor) {
-      savedInput = [rules, persistent, randomized, enabled, actor];
+    async setFlow(rules, persistent, randomized, enabled, actor, forceAllLosses) {
+      savedInput = [
+        rules, persistent, randomized, enabled, actor, forceAllLosses,
+      ];
       return {
         environment: "prod",
         userOnlyLoses: false,
@@ -541,6 +618,7 @@ test("EOS global config accepts repeating weighted-random flows", async () => {
         persistent,
         randomized,
         enabled,
+        forceAllLosses,
         updatedAt: "2026-08-21T00:00:00.000Z",
         updatedBy: actor,
       };
@@ -549,17 +627,113 @@ test("EOS global config accepts repeating weighted-random flows", async () => {
   const app = Fastify({ logger: false });
   await registerEosRandomBlockRoutes(app, undefined, undefined, config);
   const rules = [
-    { target: "loss", strategy: "lowest_profit", count: 3 },
-    { target: "win", strategy: "random", count: 1 },
+    {
+      target: "loss" as const,
+      strategy: "lowest_multiplier" as const,
+      count: 3,
+      minMultiplier: 0,
+      maxMultiplier: 0.9,
+    },
+    {
+      target: "win" as const,
+      strategy: "lowest_multiplier" as const,
+      count: 1,
+      minMultiplier: 1,
+      maxMultiplier: 2,
+    },
   ];
   const response = await app.inject({
     method: "PUT",
     url: EOS_RANDOM_BLOCK_CONFIG_PATH,
-    payload: { rules, persistent: true, randomized: true, enabled: true, actor: "hifoen" },
+    payload: {
+      rules,
+      persistent: true,
+      randomized: true,
+      enabled: true,
+      forceAllLosses: true,
+      actor: "hifoen",
+    },
   });
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(savedInput, [rules, true, true, true, "hifoen"]);
+  assert.deepEqual(savedInput, [rules, true, true, true, "hifoen", true]);
   assert.equal(response.json().data.randomized, true);
+  assert.equal(response.json().data.forceAllLosses, true);
+  await app.close();
+});
+
+test("EOS flow routes reject reversed multiplier ranges without calling storage", async () => {
+  let writes = 0;
+  const config: BattleTestConfigSource = {
+    async get() {
+      return { userOnlyLoses: false, updatedAt: null, updatedBy: null };
+    },
+    async set() {
+      throw new Error("not used");
+    },
+    async setFlow() {
+      writes += 1;
+      throw new Error("invalid request reached storage");
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, undefined, undefined, config);
+
+  const response = await app.inject({
+    method: "PUT",
+    url: EOS_RANDOM_BLOCK_CONFIG_PATH,
+    payload: {
+      rules: [{
+        target: "win",
+        strategy: "random",
+        count: 1,
+        minMultiplier: 4,
+        maxMultiplier: 2,
+      }],
+      persistent: true,
+      randomized: false,
+      enabled: true,
+      actor: "motha",
+    },
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(writes, 0);
+  await app.close();
+});
+
+test("EOS flow routes reject a non-boolean force-all-losses override", async () => {
+  let writes = 0;
+  const config: BattleTestConfigSource = {
+    async get() {
+      return { userOnlyLoses: false, updatedAt: null, updatedBy: null };
+    },
+    async set() {
+      throw new Error("not used");
+    },
+    async setFlow() {
+      writes += 1;
+      throw new Error("invalid request reached storage");
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, undefined, undefined, config);
+
+  const response = await app.inject({
+    method: "PUT",
+    url: EOS_RANDOM_BLOCK_CONFIG_PATH,
+    payload: {
+      rules: [{ target: "loss", strategy: "random", count: 1 }],
+      persistent: true,
+      randomized: false,
+      enabled: true,
+      forceAllLosses: "true",
+      actor: "motha",
+    },
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), { error: "invalid_request" });
+  assert.equal(writes, 0);
   await app.close();
 });
 
@@ -568,7 +742,13 @@ test("EOS user sequence config routes list, reset, and delete rules", async () =
     environment: "prod" as const,
     userId: "cm1234567890abcdefghijklmnopqrst",
     username: "tester",
-    rules: [{ target: "loss" as const, strategy: "lowest_profit" as const, count: 2 }],
+    rules: [{
+      target: "loss" as const,
+      strategy: "lowest_profit" as const,
+      count: 2,
+      minMultiplier: null,
+      maxMultiplier: null,
+    }],
     currentRuleIndex: 0,
     remainingInRule: 2,
     persistent: true,
@@ -696,6 +876,92 @@ test("battle retries reuse one durable EOS response and consume one rule", async
   const first = await app.inject(request);
   const retry = await app.inject(request);
   assert.equal(first.statusCode, 200);
+  assert.deepEqual(retry.json(), first.json());
+  assert.equal(selects, 1);
+  assert.equal(consumes, 1);
+  await app.close();
+});
+
+test("force-all-losses uses the safest fallback and keeps it stable on retry", async () => {
+  const battleId = "11111111-1111-4111-8111-111111111111";
+  let selects = 0;
+  let consumes = 0;
+  let saved: Record<string, unknown> | null = null;
+  const source: EosRandomBlockSource = {
+    async select() {
+      selects += 1;
+      return {
+        provider: "https://eos.example",
+        chainInfo,
+        selectedIndex: 0,
+        selectedBlock: blocks[0]!,
+        candidates: blocks,
+      };
+    },
+  };
+  const profits = [50, 5, 20, 30, 40];
+  const outcomes: BattleOutcomeSource = {
+    async simulate() {
+      return {
+        battleId,
+        mode: "normal",
+        crazyMode: false,
+        currency: "real",
+        creatorUserID: "test-user-123",
+        outcomes: blocks.map((candidate, index) => ({
+          blockNumber: candidate.blockNumber,
+          winningTeam: 1,
+          creatorTeam: 1,
+          creatorWonBattle: true,
+          creatorCost: 10,
+          creatorProfitLoss: profits[index]!,
+        })),
+      };
+    },
+  };
+  const config: BattleTestConfigSource = {
+    async get() {
+      return {
+        environment: "prod",
+        userOnlyLoses: false,
+        forceAllLosses: true,
+        updatedAt: null,
+        updatedBy: null,
+      };
+    },
+    async set() {
+      throw new Error("not used");
+    },
+    async getBattleSelection() {
+      return saved;
+    },
+    async consumeUserInstruction() {
+      consumes += 1;
+      return {
+        target: "loss",
+        strategy: "lowest_profit",
+        minMultiplier: null,
+        maxMultiplier: null,
+        source: "global",
+      };
+    },
+    async saveBattleSelection(_userId, _battleId, response) {
+      saved ??= response;
+      return saved;
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, source, outcomes, config);
+  const request = {
+    method: "POST" as const,
+    url: EOS_CHAIN_INFO_PATH,
+    payload: { userID: "test-user-123", battleID: battleId },
+  };
+
+  const first = await app.inject(request);
+  const retry = await app.inject(request);
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.json().last_irreversible_block_num, blocks[1]!.blockNumber);
   assert.deepEqual(retry.json(), first.json());
   assert.equal(selects, 1);
   assert.equal(consumes, 1);

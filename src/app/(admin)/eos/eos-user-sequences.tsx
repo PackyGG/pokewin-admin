@@ -1,15 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import {
-  ListOrdered,
-  Loader2,
-  Plus,
-  Repeat2,
-  Search,
-  Trash2,
-  UserRoundCog,
-} from "lucide-react";
+import { ListOrdered, Loader2, Search, Trash2, UserRoundCog } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -17,119 +9,28 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import type {
-  EosTestConfig,
-  EosUserConfig,
-  EosUserRule,
-} from "@/lib/antifraud/eos-test-config-api";
-import {
-  removeEosUserConfig,
-  saveEosUserConfig,
-  searchEosUsers,
-} from "./actions";
+import type { EosTestConfig, EosUserConfig, EosUserRule } from "@/lib/antifraud/eos-test-config-api";
+import { removeEosUserConfig, saveEosUserConfig, searchEosUsers } from "./actions";
+import { EosFlowBuilder, eosRuleSummary, isEosFlowValid } from "./eos-flow-builder";
 
 type UserResult = Awaited<ReturnType<typeof searchEosUsers>>[number];
 
-const defaultRules: EosUserRule[] = [
-  { target: "loss", strategy: "lowest_profit", count: 1 },
-];
-
-const targetLabels: Record<EosUserRule["target"], string> = {
-  loss: "Creator loses",
-  win: "Creator wins",
-  any: "Any outcome",
-};
-
-const targetHelp: Record<EosUserRule["target"], string> = {
-  loss: "Choose a block where the creator loses. If none exists, use the creator's lowest money result.",
-  win: "Choose a block where the creator wins. If none exists, use the creator's best available result.",
-  any: "Do not force a win or loss. Choose from all five possible blocks.",
-};
-
-const strategyLabels: Record<EosUserRule["strategy"], string> = {
-  random: "Random matching result",
-  lowest_profit: "Lowest money result",
-  highest_profit: "Highest money result",
-};
+const defaultRules: EosUserRule[] = [{
+  target: "loss",
+  strategy: "lowest_multiplier",
+  count: 1,
+  minMultiplier: null,
+  maxMultiplier: null,
+}];
 
 function cloneRules(rules: EosUserRule[]): EosUserRule[] {
   return rules.map((rule) => ({ ...rule }));
 }
 
-function ruleSummary(rule: EosUserRule): string {
-  return `${targetLabels[rule.target]} · ${strategyLabels[rule.strategy]}`;
-}
-
-function RuleFields({
-  rule,
-  index,
-  showCount,
-  onChange,
-}: {
-  rule: EosUserRule;
-  index: number;
-  showCount: boolean;
-  onChange: (patch: Partial<EosUserRule>) => void;
-}) {
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      <label className="space-y-1.5 text-xs font-medium">
-        Outcome
-        <select
-          className="h-10 w-full rounded-md border bg-background px-3 text-sm font-normal"
-          value={rule.target}
-          onChange={(event) => onChange({
-            target: event.target.value as EosUserRule["target"],
-          })}
-        >
-          {Object.entries(targetLabels).map(([value, label]) => (
-            <option key={value} value={value}>{label}</option>
-          ))}
-        </select>
-      </label>
-      <label className="space-y-1.5 text-xs font-medium">
-        Which matching result?
-        <select
-          className="h-10 w-full rounded-md border bg-background px-3 text-sm font-normal"
-          value={rule.strategy}
-          onChange={(event) => onChange({
-            strategy: event.target.value as EosUserRule["strategy"],
-          })}
-        >
-          {Object.entries(strategyLabels).map(([value, label]) => (
-            <option key={value} value={value}>{label}</option>
-          ))}
-        </select>
-      </label>
-      {showCount && (
-        <label className="space-y-1.5 text-xs font-medium sm:col-span-2">
-          Number of battles for this step
-          <Input
-            className="max-w-32"
-            type="number"
-            min={1}
-            max={100}
-            value={rule.count}
-            aria-label={`Step ${index + 1} battle count`}
-            onChange={(event) => onChange({
-              count: Math.min(100, Math.max(1, Number(event.target.value) || 1)),
-            })}
-          />
-        </label>
-      )}
-      <p className="text-xs leading-5 text-muted-foreground sm:col-span-2">
-        {targetHelp[rule.target]}
-      </p>
-    </div>
-  );
-}
-
-export function EosUserSequences({
-  environment,
-  initial,
-}: {
+export function EosUserSequences({ environment, initial, forceAllLosses }: {
   environment: EosTestConfig["environment"];
   initial: EosUserConfig[];
+  forceAllLosses: boolean;
 }) {
   const [configs, setConfigs] = useState(initial);
   const [query, setQuery] = useState("");
@@ -140,6 +41,7 @@ export function EosUserSequences({
   const [randomized, setRandomized] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [isPending, startTransition] = useTransition();
+  const valid = isEosFlowValid(rules);
 
   function search() {
     startTransition(async () => {
@@ -160,26 +62,11 @@ export function EosUserSequences({
     setResults([]);
   }
 
-  function chooseUser(user: UserResult) {
-    loadConfig(user, configs.find((config) => config.userId === user.userId));
-  }
-
-  function editConfig(config: EosUserConfig) {
-    loadConfig({
-      userId: config.userId,
-      username: config.username,
-      displayUsername: null,
-    }, config);
-  }
-
-  function updateRule(index: number, patch: Partial<EosUserRule>) {
-    setRules((current) => current.map((rule, ruleIndex) =>
-      ruleIndex === index ? { ...rule, ...patch } : rule
-    ));
-  }
-
   function save() {
-    if (!selected) return;
+    if (!selected || !valid) {
+      if (!valid) toast.error("Fix the invalid multiplier range before saving.");
+      return;
+    }
     startTransition(async () => {
       try {
         const saved = await saveEosUserConfig({
@@ -190,16 +77,9 @@ export function EosUserSequences({
           randomized,
           enabled,
         });
-        setConfigs((current) => [
-          saved,
-          ...current.filter((config) => config.userId !== saved.userId),
-        ]);
+        setConfigs((current) => [saved, ...current.filter((config) => config.userId !== saved.userId)]);
         setRules(cloneRules(saved.rules));
-        toast.success(
-          persistent
-            ? "Repeating EOS outcome flow saved"
-            : "EOS outcome sequence saved and reset to step 1",
-        );
+        toast.success("Personal EOS flow saved and restarted");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Outcome control save failed");
       }
@@ -220,54 +100,29 @@ export function EosUserSequences({
   }
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <UserRoundCog className="size-4 text-primary" />
-            Per-user outcome control
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            A personal rule overrides the global “user only loses” setting while it is active
-            in the {environment} control namespace.
-          </p>
+    <div className="grid items-start gap-5 2xl:grid-cols-[minmax(0,1fr)_400px]">
+      <Card className="min-w-0 overflow-hidden">
+        <CardHeader className="border-b bg-muted/20">
+          <CardTitle className="flex items-center gap-2 text-base"><UserRoundCog className="size-4 text-primary" />Per-user outcome control</CardTitle>
+          <p className="max-w-3xl text-sm text-muted-foreground">Build a personal {environment} flow. While enabled, it overrides the global flow for this user only.</p>
         </CardHeader>
-        <CardContent className="space-y-5">
+        <CardContent className="space-y-5 pt-6">
+          {forceAllLosses && (
+            <div role="status" className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-xs font-medium text-destructive">
+              The global all-battles loss override is active. Personal flows remain saved but are temporarily bypassed.
+            </div>
+          )}
           <div className="space-y-2">
-            <div className="flex gap-2">
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && query.trim().length >= 2) search();
-                }}
-                placeholder={`Search ${environment} user ID or username`}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                disabled={isPending || query.trim().length < 2}
-                onClick={search}
-              >
-                {isPending ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
-                Search
-              </Button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input aria-label="Search EOS users" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && query.trim().length >= 2) search(); }} placeholder={`Search ${environment} user ID or username`} />
+              <Button type="button" variant="outline" disabled={isPending || query.trim().length < 2} onClick={search}>{isPending ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}Search</Button>
             </div>
             {results.length > 0 && (
-              <div className="divide-y rounded-lg border">
+              <div className="divide-y rounded-lg border" role="listbox" aria-label="EOS user search results">
                 {results.map((user) => (
-                  <button
-                    key={user.userId}
-                    type="button"
-                    className="flex w-full items-center justify-between gap-4 p-3 text-left hover:bg-muted/50"
-                    onClick={() => chooseUser(user)}
-                  >
-                    <span className="text-sm font-medium">
-                      {user.displayUsername ?? user.username ?? "Unnamed user"}
-                    </span>
-                    <span className="font-mono text-[11px] text-muted-foreground">
-                      {user.userId}
-                    </span>
+                  <button key={user.userId} type="button" role="option" aria-selected={selected?.userId === user.userId} className="flex w-full flex-col gap-1 p-3 text-left hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between" onClick={() => loadConfig(user, configs.find((config) => config.userId === user.userId))}>
+                    <span className="text-sm font-medium">{user.displayUsername ?? user.username ?? "Unnamed user"}</span>
+                    <span className="break-all font-mono text-[11px] text-muted-foreground">{user.userId}</span>
                   </button>
                 ))}
               </div>
@@ -275,205 +130,66 @@ export function EosUserSequences({
           </div>
 
           {selected ? (
-            <div className="space-y-5 rounded-lg border p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold">
-                    {selected.displayUsername ?? selected.username ?? "Unnamed user"}
-                  </p>
-                  <p className="font-mono text-[11px] text-muted-foreground">
-                    {selected.userId}
-                  </p>
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/20 p-4">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{selected.displayUsername ?? selected.username ?? "Unnamed user"}</p>
+                  <p className="break-all font-mono text-[11px] text-muted-foreground">{selected.userId}</p>
                 </div>
-                <label className="flex items-center gap-2 text-sm font-medium">
-                  Control enabled
-                  <Switch checked={enabled} onCheckedChange={setEnabled} />
+                <label className="flex items-center gap-3 rounded-lg border bg-background px-3 py-2 text-sm font-medium">
+                  Personal flow {enabled ? "enabled" : "paused"}
+                  <Switch aria-label="Enable personal EOS flow" checked={enabled} onCheckedChange={setEnabled} />
                 </label>
               </div>
-
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  How long should it apply?
-                </p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setPersistent(true)}
-                    className={`rounded-lg border p-3 text-left transition-colors ${
-                      persistent ? "border-primary bg-primary/5" : "hover:bg-muted/40"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2 text-sm font-semibold">
-                      <Repeat2 className="size-4" /> Repeat flow
-                    </span>
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      Loop these steps until you disable or remove the flow.
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPersistent(false);
-                      setRandomized(false);
-                    }}
-                    className={`rounded-lg border p-3 text-left transition-colors ${
-                      !persistent ? "border-primary bg-primary/5" : "hover:bg-muted/40"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2 text-sm font-semibold">
-                      <ListOrdered className="size-4" /> Run a sequence
-                    </span>
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      Run the steps once, then automatically stop.
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              {persistent && (
-                <div className="flex items-center justify-between gap-5 rounded-lg border p-3">
-                  <div>
-                    <p className="text-sm font-semibold">Randomize step order</p>
-                    <p className="text-xs text-muted-foreground">
-                      Pick a step per battle; each step count becomes its relative weight.
-                    </p>
-                  </div>
-                  <Switch
-                    aria-label="Randomize user flow"
-                    checked={randomized}
-                    onCheckedChange={setRandomized}
-                  />
-                </div>
-              )}
-
-              <div className="space-y-3">
-                  {rules.map((rule, index) => (
-                    <div key={index} className="space-y-3 rounded-lg bg-muted/35 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold">Step {index + 1}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {randomized
-                              ? `Weight ${rule.count}`
-                              : `Runs for ${rule.count} ${rule.count === 1 ? "battle" : "battles"}.`}
-                          </p>
-                        </div>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          aria-label={`Remove step ${index + 1}`}
-                          disabled={rules.length === 1}
-                          onClick={() => setRules((current) =>
-                            current.filter((_, ruleIndex) => ruleIndex !== index)
-                          )}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
-                      <RuleFields
-                        rule={rule}
-                        index={index}
-                        showCount
-                        onChange={(patch) => updateRule(index, patch)}
-                      />
-                    </div>
-                  ))}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={rules.length >= 20}
-                    onClick={() => setRules((current) => [
-                      ...current,
-                      { target: "win", strategy: "lowest_profit", count: 1 },
-                    ])}
-                  >
-                    <Plus className="size-4" /> Add next step
-                  </Button>
-              </div>
-
-              <div className="flex justify-end">
-                <Button type="button" disabled={isPending} onClick={save}>
-                  {isPending && <Loader2 className="size-4 animate-spin" />}
-                  {persistent ? "Save repeating flow" : "Save and restart sequence"}
-                </Button>
+              <EosFlowBuilder id={`user-eos-flow-${selected.userId}`} rules={rules} persistent={persistent} randomized={randomized} onRulesChange={setRules} onPersistentChange={setPersistent} onRandomizedChange={setRandomized} />
+              <div className="flex justify-end border-t pt-4">
+                <Button type="button" disabled={isPending || !valid} onClick={save}>{isPending && <Loader2 className="size-4 animate-spin" />}Save personal flow</Button>
               </div>
             </div>
           ) : (
-            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-              Search for a {environment} user to create a repeating or one-time outcome flow.
-            </div>
+            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">Search for a {environment} user to create or edit a personal flow.</div>
           )}
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="2xl:sticky 2xl:top-5">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <ListOrdered className="size-4 text-primary" />
-            Configured users
-          </CardTitle>
+          <CardTitle className="flex items-center gap-2 text-base"><ListOrdered className="size-4 text-primary" />Configured users</CardTitle>
+          <p className="text-sm text-muted-foreground">{configs.length} personal {configs.length === 1 ? "flow" : "flows"}</p>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {configs.length === 0 && (
-            <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              No personal outcome controls configured.
-            </p>
-          )}
+        <CardContent className="max-h-[70vh] space-y-3 overflow-y-auto">
+          {configs.length === 0 && <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No personal outcome controls configured.</p>}
           {configs.map((config) => {
             const activeRule = config.rules[config.currentRuleIndex];
-            const status = config.enabled
-              ? (config.persistent ? "Permanent" : "Active")
-              : (activeRule ? "Paused" : "Complete");
+            const totalBattles = config.rules.reduce((sum, rule) => sum + rule.count, 0);
+            const completedBattles = config.rules.slice(0, config.currentRuleIndex).reduce((sum, rule) => sum + rule.count, 0) + (activeRule ? activeRule.count - config.remainingInRule : totalBattles);
+            const progress = totalBattles > 0 ? Math.min(100, Math.round((completedBattles / totalBattles) * 100)) : 0;
+            const status = config.enabled ? (config.persistent ? "Running" : "Active") : (activeRule ? "Paused" : "Complete");
             return (
-              <div key={config.userId} className="space-y-3 rounded-lg border p-3">
+              <div key={config.userId} className={`space-y-3 rounded-lg border p-3 ${selected?.userId === config.userId ? "border-primary bg-primary/5" : ""}`}>
                 <div className="flex items-start justify-between gap-3">
-                  <button type="button" className="min-w-0 text-left" onClick={() => editConfig(config)}>
-                    <p className="truncate text-sm font-semibold">
-                      {config.username ?? "Unnamed user"}
-                    </p>
-                    <p className="truncate font-mono text-[10px] text-muted-foreground">
-                      {config.userId}
-                    </p>
+                  <button type="button" className="min-w-0 text-left" onClick={() => loadConfig({ userId: config.userId, username: config.username, displayUsername: null }, config)}>
+                    <p className="truncate text-sm font-semibold">{config.username ?? "Unnamed user"}</p>
+                    <p className="truncate font-mono text-[10px] text-muted-foreground">{config.userId}</p>
                   </button>
-                  <div className="flex items-center gap-1.5">
-                    <Badge variant={config.enabled ? "default" : "secondary"}>
-                      {status}
-                    </Badge>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      aria-label={`Remove ${config.username ?? config.userId}`}
-                      onClick={() => remove(config.userId)}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
+                  <div className="flex items-center gap-1">
+                    <Badge variant={config.enabled ? "default" : "secondary"}>{status}</Badge>
+                    <Button type="button" size="icon" variant="ghost" aria-label={`Remove ${config.username ?? config.userId}`} onClick={() => remove(config.userId)}><Trash2 className="size-4" /></Button>
                   </div>
                 </div>
-                {config.persistent && activeRule ? (
-                  <p className="text-xs text-muted-foreground">
-                    {config.randomized ? "Weighted random flow" : "Repeating flow"}: {config.rules.length} step(s).
-                  </p>
-                ) : activeRule ? (
-                  <p className="text-xs text-muted-foreground">
-                    Step {config.currentRuleIndex + 1} of {config.rules.length}: {ruleSummary(activeRule)}
-                    {" · "}{config.remainingInRule} remaining
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Sequence finished. Open and save it to restart from step 1.
-                  </p>
-                )}
-                {!config.persistent && (
-                  <div className="flex flex-wrap gap-1">
-                    {config.rules.map((rule, index) => (
-                      <Badge key={`${config.userId}-${index}`} variant="outline" className="text-[10px]">
-                        {rule.count}× {ruleSummary(rule)}
-                      </Badge>
-                    ))}
+                <p className="text-xs text-muted-foreground">
+                  {config.randomized ? "Weighted random" : config.persistent ? "Repeating sequence" : activeRule ? `Step ${config.currentRuleIndex + 1} of ${config.rules.length}` : "Sequence finished"}
+                  {activeRule && ` · ${eosRuleSummary(activeRule)}`}
+                </p>
+                {!config.persistent && activeRule && (
+                  <div className="space-y-1" aria-label={`${progress}% complete`}>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${progress}%` }} /></div>
+                    <p className="text-right text-[10px] text-muted-foreground">{config.remainingInRule} in current step</p>
                   </div>
                 )}
+                <div className="flex flex-wrap gap-1">
+                  {config.rules.map((rule, index) => <Badge key={`${config.userId}-${index}`} variant="outline" className="max-w-full truncate text-[10px]">{rule.count}× {eosRuleSummary(rule)}</Badge>)}
+                </div>
               </div>
             );
           })}

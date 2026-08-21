@@ -22,6 +22,7 @@ const saveFlowSchema = z.object({
   persistent: z.boolean(),
   randomized: z.boolean(),
   enabled: z.boolean(),
+  forceAllLosses: z.boolean(),
 }).refine((flow) => !flow.randomized || flow.persistent);
 
 export async function saveGlobalEosFlow(input: unknown) {
@@ -29,6 +30,22 @@ export async function saveGlobalEosFlow(input: unknown) {
   const flow = saveFlowSchema.parse(input);
   const saved = await updateEosTestConfig({
     ...flow,
+    actor: session.username,
+  });
+  revalidatePath("/eos");
+  return saved;
+}
+
+export async function setGlobalForceAllLosses(input: unknown) {
+  const session = await requireEosTestAccess();
+  const forceAllLosses = z.boolean().parse(input);
+  const current = await getEosTestConfig();
+  const saved = await updateEosTestConfig({
+    rules: current.rules,
+    persistent: current.persistent,
+    randomized: current.randomized,
+    enabled: current.enabled,
+    forceAllLosses,
     actor: session.username,
   });
   revalidatePath("/eos");

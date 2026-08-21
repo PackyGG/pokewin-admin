@@ -57,6 +57,7 @@ export type BattleCandidateOutcome = {
   creatorWonBattle: boolean;
   creatorCost: number;
   creatorProfitLoss: number;
+  creatorMultiplier?: number;
 };
 
 export type BattleOutcomeSimulation = {
@@ -590,6 +591,9 @@ export function simulateBattle(input: {
         )
       : 0;
     const creatorProfitLoss = roundedMoney(creatorPayout - creatorCost);
+    const creatorMultiplier = creatorCost > 0
+      ? Math.round((creatorPayout / creatorCost) * 10_000) / 10_000
+      : 0;
     return {
       blockNumber: candidate.blockNumber,
       winningTeam: resolved.winnerTeam,
@@ -597,6 +601,7 @@ export function simulateBattle(input: {
       creatorWonBattle,
       creatorCost,
       creatorProfitLoss,
+      creatorMultiplier,
     };
   });
   return {

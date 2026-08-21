@@ -8,12 +8,16 @@ export type BattleTestOutcomeTarget = "loss" | "win" | "any";
 export type BattleTestSelectionStrategy =
   | "random"
   | "lowest_profit"
-  | "highest_profit";
+  | "highest_profit"
+  | "lowest_multiplier"
+  | "highest_multiplier";
 
 export type BattleTestUserRule = {
   target: BattleTestOutcomeTarget;
   strategy: BattleTestSelectionStrategy;
   count: number;
+  minMultiplier?: number | null;
+  maxMultiplier?: number | null;
 };
 
 export type BattleTestUserConfig = {
@@ -32,7 +36,7 @@ export type BattleTestUserConfig = {
 
 export type BattleTestUserInstruction = Pick<
   BattleTestUserRule,
-  "target" | "strategy"
+  "target" | "strategy" | "minMultiplier" | "maxMultiplier"
 > & { source?: "user" | "global" };
 
 export type BattleTestConfig = {
@@ -44,6 +48,7 @@ export type BattleTestConfig = {
   persistent?: boolean;
   randomized?: boolean;
   enabled?: boolean;
+  forceAllLosses?: boolean;
   updatedAt: string | null;
   updatedBy: string | null;
 };
@@ -57,6 +62,7 @@ export interface BattleTestConfigSource {
     randomized: boolean,
     enabled: boolean,
     actor: string,
+    forceAllLosses?: boolean,
   ): Promise<BattleTestConfig>;
   listUsers?(): Promise<BattleTestUserConfig[]>;
   setUser?(
@@ -100,6 +106,7 @@ type ConfigRow = {
   persistent: boolean;
   randomized: boolean;
   enabled: boolean;
+  force_all_losses: boolean;
   updated_at: Date | string;
   updated_by: string | null;
 };
@@ -133,6 +140,7 @@ function mapRow(
     persistent: row.persistent,
     randomized: row.randomized,
     enabled: row.enabled,
+    forceAllLosses: row.force_all_losses,
     updatedAt: new Date(row.updated_at).toISOString(),
     updatedBy: row.updated_by,
   };
@@ -143,13 +151,25 @@ const STRATEGIES = new Set<BattleTestSelectionStrategy>([
   "random",
   "lowest_profit",
   "highest_profit",
+  "lowest_multiplier",
+  "highest_multiplier",
 ]);
+
+function parseMultiplier(value: unknown): number | null | undefined {
+  if (value === null || value === undefined) return null;
+  return typeof value === "number" && Number.isFinite(value)
+      && value >= 0 && value <= 10_000
+    ? value
+    : undefined;
+}
 
 function parseRules(value: unknown): BattleTestUserRule[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((rule) => {
     if (!rule || typeof rule !== "object") return [];
     const candidate = rule as Record<string, unknown>;
+    const minMultiplier = parseMultiplier(candidate.minMultiplier);
+    const maxMultiplier = parseMultiplier(candidate.maxMultiplier);
     if (
       typeof candidate.target !== "string"
       || !TARGETS.has(candidate.target as BattleTestOutcomeTarget)
@@ -158,11 +178,17 @@ function parseRules(value: unknown): BattleTestUserRule[] {
       || !Number.isSafeInteger(candidate.count)
       || (candidate.count as number) < 1
       || (candidate.count as number) > 100
+      || minMultiplier === undefined
+      || maxMultiplier === undefined
+      || (minMultiplier !== null && maxMultiplier !== null
+        && minMultiplier > maxMultiplier)
     ) return [];
     return [{
       target: candidate.target as BattleTestOutcomeTarget,
       strategy: candidate.strategy as BattleTestSelectionStrategy,
       count: candidate.count as number,
+      minMultiplier,
+      maxMultiplier,
     }];
   });
 }
@@ -204,7 +230,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
     }
     const result = await this.pool.query<ConfigRow>(`
       SELECT user_only_loses, rules, current_rule_index, remaining_in_rule,
-             persistent, randomized, enabled, updated_at, updated_by
+             persistent, randomized, enabled, force_all_losses, updated_at, updated_by
       FROM battle_test_config
       WHERE environment = $1
       LIMIT 1
@@ -214,12 +240,16 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
       : {
           environment: this.environment,
           userOnlyLoses: false,
-          rules: [{ target: "any", strategy: "random", count: 1 }],
+          rules: [{
+            target: "any", strategy: "random", count: 1,
+            minMultiplier: null, maxMultiplier: null,
+          }],
           currentRuleIndex: 0,
           remainingInRule: 1,
           persistent: true,
           randomized: false,
           enabled: false,
+          forceAllLosses: false,
           updatedAt: null,
           updatedBy: null,
         };
@@ -229,11 +259,15 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
 
   async set(userOnlyLoses: boolean, actor: string): Promise<BattleTestConfig> {
     return this.setFlow(
-      [{ target: userOnlyLoses ? "loss" : "any", strategy: "random", count: 1 }],
+      [{
+        target: userOnlyLoses ? "loss" : "any", strategy: "random", count: 1,
+        minMultiplier: null, maxMultiplier: null,
+      }],
       true,
       false,
       userOnlyLoses,
       actor,
+      false,
     );
   }
 
@@ -243,6 +277,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
     randomized: boolean,
     enabled: boolean,
     actor: string,
+    forceAllLosses = false,
   ): Promise<BattleTestConfig> {
     const normalizedRules = parseRules(rules);
     if (normalizedRules.length === 0 || normalizedRules.length !== rules.length) {
@@ -255,8 +290,9 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
       `
         INSERT INTO battle_test_config (
           singleton, environment, user_only_loses, rules, current_rule_index,
-          remaining_in_rule, persistent, randomized, enabled, updated_at, updated_by
-        ) VALUES ($1 = 'dev', $1, false, $2::jsonb, 0, $3, $4, $5, $6, now(), $7)
+          remaining_in_rule, persistent, randomized, enabled, force_all_losses,
+          updated_at, updated_by
+        ) VALUES ($1 = 'dev', $1, false, $2::jsonb, 0, $3, $4, $5, $6, $7, now(), $8)
         ON CONFLICT (environment) DO UPDATE SET
           user_only_loses = false,
           rules = EXCLUDED.rules,
@@ -265,13 +301,14 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
           persistent = EXCLUDED.persistent,
           randomized = EXCLUDED.randomized,
           enabled = EXCLUDED.enabled,
+          force_all_losses = EXCLUDED.force_all_losses,
           updated_at = now(),
           updated_by = EXCLUDED.updated_by
         RETURNING user_only_loses, rules, current_rule_index, remaining_in_rule,
-                  persistent, randomized, enabled, updated_at, updated_by
+                  persistent, randomized, enabled, force_all_losses, updated_at, updated_by
       `,
       [this.environment, JSON.stringify(normalizedRules), normalizedRules[0]!.count,
-       persistent, randomized, enabled, actor],
+       persistent, randomized, enabled, forceAllLosses, actor],
     );
     const value = mapRow(result.rows[0]!, this.environment);
     this.cached = { value, expiresAt: Date.now() + CACHE_MS };
@@ -368,6 +405,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
     battleId = "00000000-0000-0000-0000-000000000000",
   ): Promise<BattleTestUserInstruction | null> {
     const client = await this.pool.connect();
+    let releaseError: Error | undefined;
     try {
       await client.query("BEGIN");
       const reservation = await client.query<{ battle_id: string }>(
@@ -404,7 +442,20 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
       );
       const row = result.rows[0];
       let instruction: BattleTestUserInstruction | null = null;
-      if (row?.enabled) {
+      const override = await client.query<{ force_all_losses: boolean }>(
+        `SELECT force_all_losses FROM battle_test_config
+         WHERE environment = $1`,
+        [this.environment],
+      );
+      if (override.rows[0]?.force_all_losses) {
+        instruction = {
+          target: "loss",
+          strategy: "lowest_profit",
+          minMultiplier: null,
+          maxMultiplier: null,
+          source: "global",
+        };
+      } else if (row?.enabled) {
         instruction = await consumeFlow(client, {
           environment: this.environment,
           table: "battle_test_user_sequences",
@@ -415,7 +466,8 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
       } else {
         const global = await client.query<ConfigRow>(
           `SELECT user_only_loses, rules, current_rule_index, remaining_in_rule,
-                  persistent, randomized, enabled, updated_at, updated_by
+                  persistent, randomized, enabled, force_all_losses,
+                  updated_at, updated_by
            FROM battle_test_config
            WHERE environment = $1
            FOR UPDATE`,
@@ -436,10 +488,18 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
       await this.maybeCleanupSelections();
       return instruction;
     } catch (error) {
-      await client.query("ROLLBACK");
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        // Preserve the operation error that explains why the request failed,
+        // but evict a connection that could not reset its transaction state.
+        releaseError = rollbackError instanceof Error
+          ? rollbackError
+          : new Error("EOS battle transaction rollback failed");
+      }
       throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
   }
 
@@ -498,13 +558,28 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
 function parseInstruction(value: unknown): BattleTestUserInstruction | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
+  const minMultiplier = parseMultiplier(record.minMultiplier);
+  const maxMultiplier = parseMultiplier(record.maxMultiplier);
+  const source = record.source === undefined
+    ? undefined
+    : record.source === "user" || record.source === "global"
+      ? record.source
+      : null;
   return typeof record.target === "string"
       && TARGETS.has(record.target as BattleTestOutcomeTarget)
       && typeof record.strategy === "string"
       && STRATEGIES.has(record.strategy as BattleTestSelectionStrategy)
+      && minMultiplier !== undefined
+      && maxMultiplier !== undefined
+      && (minMultiplier === null || maxMultiplier === null
+        || minMultiplier <= maxMultiplier)
+      && source !== null
     ? {
         target: record.target as BattleTestOutcomeTarget,
         strategy: record.strategy as BattleTestSelectionStrategy,
+        minMultiplier,
+        maxMultiplier,
+        ...(source ? { source } : {}),
       }
     : null;
 }
@@ -527,6 +602,19 @@ type FlowRow = Pick<
   "rules" | "current_rule_index" | "remaining_in_rule" | "persistent" | "randomized" | "enabled"
 >;
 
+function instructionForRule(
+  rule: BattleTestUserRule,
+  source: "user" | "global",
+): BattleTestUserInstruction {
+  return {
+    target: rule.target,
+    strategy: rule.strategy,
+    minMultiplier: rule.minMultiplier ?? null,
+    maxMultiplier: rule.maxMultiplier ?? null,
+    ...(source === "global" ? { source } : {}),
+  };
+}
+
 async function consumeFlow(
   client: pg.PoolClient,
   input: {
@@ -541,10 +629,7 @@ async function consumeFlow(
   if (rules.length === 0) return null;
 
   if (input.row.persistent && rules.length === 1) {
-    const selected = rules[0]!;
-    return input.source === "global"
-      ? { target: selected.target, strategy: selected.strategy, source: "global" }
-      : { target: selected.target, strategy: selected.strategy };
+    return instructionForRule(rules[0]!, input.source);
   }
 
   if (input.row.randomized) {
@@ -558,9 +643,7 @@ async function consumeFlow(
       }
       ticket -= rule.count;
     }
-    return input.source === "global"
-      ? { target: selected.target, strategy: selected.strategy, source: "global" }
-      : { target: selected.target, strategy: selected.strategy };
+    return instructionForRule(selected, input.source);
   }
 
   const rule = rules[input.row.current_rule_index];
@@ -590,7 +673,5 @@ async function consumeFlow(
          WHERE environment = $1`,
     params,
   );
-  return input.source === "global"
-    ? { target: rule.target, strategy: rule.strategy, source: "global" }
-    : { target: rule.target, strategy: rule.strategy };
+  return instructionForRule(rule, input.source);
 }

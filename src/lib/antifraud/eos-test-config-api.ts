@@ -4,9 +4,19 @@ import { z } from "zod";
 
 export const eosUserRuleSchema = z.object({
   target: z.enum(["loss", "win", "any"]),
-  strategy: z.enum(["random", "lowest_profit", "highest_profit"]),
+  strategy: z.enum([
+    "random",
+    "lowest_profit",
+    "highest_profit",
+    "lowest_multiplier",
+    "highest_multiplier",
+  ]),
   count: z.number().int().min(1).max(100),
-});
+  minMultiplier: z.number().min(0).max(10_000).nullable().default(null),
+  maxMultiplier: z.number().min(0).max(10_000).nullable().default(null),
+}).refine((rule) => rule.minMultiplier === null
+  || rule.maxMultiplier === null
+  || rule.minMultiplier <= rule.maxMultiplier);
 
 const configSchema = z.object({
   // Default keeps the admin deploy compatible with an older monitor during a
@@ -14,13 +24,20 @@ const configSchema = z.object({
   environment: z.enum(["dev", "prod"]).default("dev"),
   userOnlyLoses: z.boolean(),
   rules: z.array(eosUserRuleSchema).default([
-    { target: "any", strategy: "random", count: 1 },
+    {
+      target: "any",
+      strategy: "random",
+      count: 1,
+      minMultiplier: null,
+      maxMultiplier: null,
+    },
   ]),
   currentRuleIndex: z.number().int().nonnegative().default(0),
   remainingInRule: z.number().int().nonnegative().default(1),
   persistent: z.boolean().default(true),
   randomized: z.boolean().default(false),
   enabled: z.boolean().default(false),
+  forceAllLosses: z.boolean().default(false),
   updatedAt: z.string().nullable(),
   updatedBy: z.string().nullable(),
 });
@@ -56,6 +73,26 @@ function connection(): { baseUrl: string; token: string } {
   return { baseUrl, token };
 }
 
+function serviceError(response: Response, subject: "global" | "user"): Error {
+  if (response.status === 401 || response.status === 403) {
+    return new Error("The EOS control credentials were rejected.");
+  }
+  if (response.status === 409) {
+    return new Error("The EOS flow changed while it was being saved. Reload and try again.");
+  }
+  if (response.status === 429) {
+    return new Error("Too many EOS control updates. Wait a moment and try again.");
+  }
+  if (response.status >= 500) {
+    return new Error("The EOS control service is temporarily unavailable.");
+  }
+  return new Error(
+    subject === "global"
+      ? "The EOS global flow could not be loaded or saved."
+      : "The EOS user flow could not be loaded or saved.",
+  );
+}
+
 async function request(init?: RequestInit): Promise<EosTestConfig> {
   const { baseUrl, token } = connection();
   let response: Response;
@@ -74,9 +111,13 @@ async function request(init?: RequestInit): Promise<EosTestConfig> {
     throw new Error("The EOS test configuration service did not respond.");
   }
   if (!response.ok) {
-    throw new Error("The EOS test configuration could not be loaded or saved.");
+    throw serviceError(response, "global");
   }
-  return z.object({ data: configSchema }).parse(await response.json()).data;
+  try {
+    return z.object({ data: configSchema }).parse(await response.json()).data;
+  } catch {
+    throw new Error("The EOS control service returned an invalid response.");
+  }
 }
 
 export function getEosTestConfig(): Promise<EosTestConfig> {
@@ -88,6 +129,7 @@ export function updateEosTestConfig(input: {
   persistent: boolean;
   randomized: boolean;
   enabled: boolean;
+  forceAllLosses: boolean;
   actor: string;
 }): Promise<EosTestConfig> {
   return request({ method: "PUT", body: JSON.stringify(input) });
@@ -115,9 +157,13 @@ async function userRequest<T>(
     throw new Error("The EOS user configuration service did not respond.");
   }
   if (!response.ok) {
-    throw new Error("The EOS user configuration could not be loaded or saved.");
+    throw serviceError(response, "user");
   }
-  return schema.parse(await response.json());
+  try {
+    return schema.parse(await response.json());
+  } catch {
+    throw new Error("The EOS user flow service returned an invalid response.");
+  }
 }
 
 export async function listEosUserConfigs(): Promise<EosUserConfig[]> {
@@ -172,6 +218,6 @@ export async function deleteEosUserConfig(userId: string): Promise<void> {
     throw new Error("The EOS user configuration service did not respond.");
   }
   if (!response.ok) {
-    throw new Error("The EOS user configuration could not be deleted.");
+    throw serviceError(response, "user");
   }
 }

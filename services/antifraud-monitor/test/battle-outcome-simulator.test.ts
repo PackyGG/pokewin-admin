@@ -135,6 +135,13 @@ test("battle simulation deterministically evaluates all five EOS candidates", ()
     assert.equal(outcome.creatorWonBattle, outcome.winningTeam === 1);
     assert.equal(outcome.creatorCost, 20);
     assert.equal(
+      outcome.creatorMultiplier,
+      Math.round(
+        ((outcome.creatorProfitLoss + outcome.creatorCost) / outcome.creatorCost)
+          * 10_000,
+      ) / 10_000,
+    );
+    assert.equal(
       outcome.creatorProfitLoss,
       outcome.creatorWonBattle
         ? outcome.creatorProfitLoss
@@ -152,6 +159,7 @@ test("all backend battle modes return creator-level settlement results only", ()
       assert.deepEqual(Object.keys(outcome).sort(), [
         "blockNumber",
         "creatorCost",
+        "creatorMultiplier",
         "creatorProfitLoss",
         "creatorTeam",
         "creatorWonBattle",

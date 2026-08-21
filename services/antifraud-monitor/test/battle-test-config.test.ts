@@ -69,7 +69,12 @@ test("persistent user rules stay active without consuming their counter", async 
     "00000000-0000-0000-0000-000000000002",
   );
 
-  assert.deepEqual(first, { target: "loss", strategy: "lowest_profit" });
+  assert.deepEqual(first, {
+    target: "loss",
+    strategy: "lowest_profit",
+    minMultiplier: null,
+    maxMultiplier: null,
+  });
   assert.deepEqual(second, first);
   assert.equal(
     statements.some((statement) =>
@@ -114,4 +119,306 @@ test("every user-sequence query is scoped to the deployment's environment", asyn
     assert.match(call.text, /environment = \$1/);
     assert.equal(call.params[0], "prod");
   }
+});
+
+test("ordered user flows retain multiplier ranges and disable after their final step", async () => {
+  const row = {
+    environment: "dev",
+    user_id: "test-user-123",
+    username: "tester",
+    rules: [
+      {
+        target: "win", strategy: "lowest_multiplier", count: 2,
+        minMultiplier: 1.25, maxMultiplier: 2.5,
+      },
+      {
+        target: "loss", strategy: "highest_multiplier", count: 1,
+        minMultiplier: 3, maxMultiplier: 8,
+      },
+    ],
+    current_rule_index: 0,
+    remaining_in_rule: 2,
+    persistent: false,
+    randomized: false,
+    enabled: true,
+    updated_at: new Date("2026-08-08T00:00:00.000Z"),
+    updated_by: "motha",
+  };
+  let reservation = 0;
+  const client = {
+    async query(text: string, params: unknown[] = []) {
+      if (text.includes("INSERT INTO battle_test_eos_selections")) {
+        reservation += 1;
+        return { rows: [{ battle_id: String(reservation) }] };
+      }
+      if (text.includes("FROM battle_test_user_sequences")) {
+        return { rows: [{ ...row }] };
+      }
+      if (text.includes("UPDATE battle_test_user_sequences")) {
+        row.current_rule_index = params[2] as number;
+        row.remaining_in_rule = params[3] as number;
+        row.enabled = params[4] as boolean;
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = {
+    async connect() { return client; },
+    async query() { return { rows: [] }; },
+  };
+  const store = new PgBattleTestConfigStore(pool as never, "dev");
+
+  const instructions = [];
+  for (let index = 1; index <= 4; index += 1) {
+    instructions.push(await store.consumeUserInstruction(
+      row.user_id,
+      `00000000-0000-0000-0000-00000000000${index}`,
+    ));
+  }
+
+  assert.deepEqual(instructions, [
+    {
+      target: "win", strategy: "lowest_multiplier",
+      minMultiplier: 1.25, maxMultiplier: 2.5,
+    },
+    {
+      target: "win", strategy: "lowest_multiplier",
+      minMultiplier: 1.25, maxMultiplier: 2.5,
+    },
+    {
+      target: "loss", strategy: "highest_multiplier",
+      minMultiplier: 3, maxMultiplier: 8,
+    },
+    null,
+  ]);
+  assert.equal(row.enabled, false);
+});
+
+test("idempotent retries preserve a global rule's range and provenance", async () => {
+  const instruction = {
+    target: "loss",
+    strategy: "lowest_multiplier",
+    minMultiplier: 1.1,
+    maxMultiplier: 1.8,
+    source: "global",
+  };
+  const client = {
+    async query(text: string) {
+      if (text.includes("INSERT INTO battle_test_eos_selections")) {
+        return { rows: [] };
+      }
+      if (text.includes("SELECT user_id, instruction")) {
+        return { rows: [{ user_id: "test-user-123", instruction }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = { async connect() { return client; } };
+  const store = new PgBattleTestConfigStore(pool as never, "dev");
+
+  assert.deepEqual(
+    await store.consumeUserInstruction(
+      "test-user-123",
+      "00000000-0000-0000-0000-000000000001",
+    ),
+    instruction,
+  );
+});
+
+test("flow writes reject reversed ranges and one-shot randomized rules", async () => {
+  let queryCount = 0;
+  const pool = {
+    async query() {
+      queryCount += 1;
+      return { rows: [] };
+    },
+  };
+  const store = new PgBattleTestConfigStore(pool as never, "dev");
+
+  await assert.rejects(
+    store.setUserFlow(
+      "test-user-123",
+      "tester",
+      [{
+        target: "any", strategy: "random", count: 1,
+        minMultiplier: 3, maxMultiplier: 2,
+      }],
+      true,
+      false,
+      true,
+      "motha",
+    ),
+    /Invalid battle test user rules/,
+  );
+  await assert.rejects(
+    store.setUserFlow(
+      "test-user-123",
+      "tester",
+      [{
+        target: "loss", strategy: "random", count: 1,
+        minMultiplier: null, maxMultiplier: null,
+      }],
+      false,
+      true,
+      true,
+      "motha",
+    ),
+    /must repeat/,
+  );
+  assert.equal(queryCount, 0);
+});
+
+test("transaction failures preserve the operation error and evict a broken client", async () => {
+  const operationError = new Error("sequence query failed");
+  const rollbackError = new Error("connection lost during rollback");
+  let releasedWith: Error | undefined;
+  const client = {
+    async query(text: string) {
+      if (text === "BEGIN") return { rows: [] };
+      if (text === "ROLLBACK") throw rollbackError;
+      throw operationError;
+    },
+    release(error?: Error) {
+      releasedWith = error;
+    },
+  };
+  const pool = { async connect() { return client; } };
+  const store = new PgBattleTestConfigStore(pool as never, "dev");
+
+  await assert.rejects(
+    store.consumeUserInstruction(
+      "test-user-123",
+      "00000000-0000-0000-0000-000000000001",
+    ),
+    (error) => error === operationError,
+  );
+  assert.equal(releasedWith, rollbackError);
+});
+
+test("force-all-losses takes priority without advancing an enabled personal flow", async () => {
+  const statements: string[] = [];
+  const client = {
+    async query(text: string) {
+      statements.push(text);
+      if (text.includes("INSERT INTO battle_test_eos_selections")) {
+        return { rows: [{ battle_id: "test-battle" }] };
+      }
+      if (text.includes("FROM battle_test_user_sequences")) {
+        return { rows: [{
+          environment: "dev",
+          user_id: "test-user-123",
+          username: "tester",
+          rules: [{ target: "win", strategy: "highest_multiplier", count: 3 }],
+          current_rule_index: 0,
+          remaining_in_rule: 3,
+          persistent: true,
+          randomized: false,
+          enabled: true,
+          updated_at: new Date("2026-08-21T00:00:00.000Z"),
+          updated_by: "motha",
+        }] };
+      }
+      if (text.includes("SELECT force_all_losses FROM battle_test_config")) {
+        return { rows: [{ force_all_losses: true }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = {
+    async connect() { return client; },
+    async query() { return { rows: [] }; },
+  };
+  const store = new PgBattleTestConfigStore(pool as never, "dev");
+
+  assert.deepEqual(await store.consumeUserInstruction(
+    "test-user-123",
+    "00000000-0000-0000-0000-000000000001",
+  ), {
+    target: "loss",
+    strategy: "lowest_profit",
+    minMultiplier: null,
+    maxMultiplier: null,
+    source: "global",
+  });
+  assert.equal(statements.some((statement) =>
+    statement.includes("UPDATE battle_test_user_sequences SET current_rule_index")
+  ), false);
+});
+
+test("force-all-losses takes priority over an enabled global flow", async () => {
+  const statements: string[] = [];
+  const client = {
+    async query(text: string) {
+      statements.push(text);
+      if (text.includes("INSERT INTO battle_test_eos_selections")) {
+        return { rows: [{ battle_id: "test-battle" }] };
+      }
+      if (text.includes("FROM battle_test_user_sequences")) {
+        return { rows: [] };
+      }
+      if (text.includes("SELECT force_all_losses FROM battle_test_config")) {
+        return { rows: [{ force_all_losses: true }] };
+      }
+      if (text.includes("SELECT user_only_loses")) {
+        throw new Error("normal global flow must not be read while override is active");
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = {
+    async connect() { return client; },
+    async query() { return { rows: [] }; },
+  };
+  const store = new PgBattleTestConfigStore(pool as never, "dev");
+
+  const instruction = await store.consumeUserInstruction(
+    "test-user-123",
+    "00000000-0000-0000-0000-000000000001",
+  );
+  assert.equal(instruction?.target, "loss");
+  assert.equal(instruction?.source, "global");
+  assert.equal(statements.filter((statement) =>
+    statement.includes("battle_test_config")
+  ).length, 1);
+});
+
+test("an override instruction remains stable on a durable retry", async () => {
+  const durableInstruction = {
+    target: "loss",
+    strategy: "lowest_profit",
+    minMultiplier: null,
+    maxMultiplier: null,
+    source: "global",
+  };
+  const statements: string[] = [];
+  const client = {
+    async query(text: string) {
+      statements.push(text);
+      if (text.includes("INSERT INTO battle_test_eos_selections")) {
+        return { rows: [] };
+      }
+      if (text.includes("SELECT user_id, instruction")) {
+        return { rows: [{
+          user_id: "test-user-123",
+          instruction: durableInstruction,
+        }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = { async connect() { return client; } };
+  const store = new PgBattleTestConfigStore(pool as never, "dev");
+
+  assert.deepEqual(await store.consumeUserInstruction(
+    "test-user-123",
+    "00000000-0000-0000-0000-000000000001",
+  ), durableInstruction);
+  assert.equal(statements.some((statement) =>
+    statement.includes("SELECT force_all_losses")
+  ), false);
 });
