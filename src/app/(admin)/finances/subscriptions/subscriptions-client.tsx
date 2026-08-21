@@ -249,7 +249,7 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="static mx-0 mb-0 border-0 bg-transparent px-0 py-0 backdrop-blur-none sm:mb-0 sm:px-0 sm:py-0">
           <Button
             variant="outline"
             onClick={() => setOpen(false)}

@@ -75,7 +75,7 @@ test("cost forms expose safe CRUD and recurring status controls", () => {
   assert.doesNotMatch(subscriptions, /item\.(?:category|notes)/);
   assert.match(subscriptions, /SUBSCRIPTION_SERVICES\.map/);
   assert.match(subscriptions, /<SelectItem value=\{CUSTOM_SERVICE\}>/);
-  assert.match(subscriptions, /<DialogFooter>/);
+  assert.match(subscriptions, /<DialogFooter className="static mx-0/);
   assert.doesNotMatch(subscriptions, /sm:grid-cols-\[minmax/);
 });
 
