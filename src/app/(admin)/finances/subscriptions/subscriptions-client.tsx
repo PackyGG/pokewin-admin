@@ -39,7 +39,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -66,6 +65,8 @@ import type {
   SubscriptionPageData,
 } from "@/lib/queries/finance-costs";
 import { formatCurrency } from "@/lib/utils/format";
+
+import { SubscriptionBrand } from "./subscription-brand";
 
 const EMPTY_SUBSCRIPTION: SubscriptionInput = {
   name: "",
@@ -140,7 +141,7 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
           </>
         )}
       </DialogTrigger>
-      <DialogContent className="max-h-[90vh] overflow-y-auto p-0 sm:max-w-xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto p-0 sm:max-w-lg">
         <div className="border-b bg-card px-5 py-4">
           <DialogHeader>
             <div className="flex items-center gap-3">
@@ -159,7 +160,7 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
           </DialogHeader>
         </div>
 
-        <div className="grid gap-4 px-5 py-5 sm:grid-cols-2">
+        <div className="grid gap-4 px-5 py-5 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-end">
           <div className="space-y-1.5">
             <Label htmlFor="subscription-name">Name</Label>
             <Input
@@ -188,7 +189,7 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
           </div>
         </div>
 
-        <DialogFooter>
+        <div className="flex flex-col-reverse gap-2 border-t bg-muted/30 px-5 py-4 sm:flex-row sm:justify-end">
           <Button
             variant="ghost"
             onClick={() => setOpen(false)}
@@ -206,7 +207,7 @@ function SubscriptionDialog({ item }: { item?: SubscriptionListItem }) {
             )}
             {isPending ? "Saving…" : item ? "Save changes" : "Add subscription"}
           </Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -409,10 +410,15 @@ export function SubscriptionsClient({ data }: { data: SubscriptionPageData }) {
                       className={!item.isActive ? "opacity-60" : undefined}
                     >
                       <TableCell>
-                        <p className="font-medium">{item.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Added by {item.createdBy}
-                        </p>
+                        <div className="flex items-center gap-3">
+                          <SubscriptionBrand name={item.name} />
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{item.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Added by {item.createdBy}
+                            </p>
+                          </div>
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Badge variant={item.isActive ? "default" : "outline"}>

@@ -74,3 +74,30 @@ test("cost forms expose safe CRUD and recurring status controls", () => {
   );
   assert.doesNotMatch(subscriptions, /item\.(?:category|notes)/);
 });
+
+test("subscriptions match common vendors to branded logos", () => {
+  const brands = read(
+    "src/app/(admin)/finances/subscriptions/subscription-brand.tsx",
+  );
+  const client = read(
+    "src/app/(admin)/finances/subscriptions/subscriptions-client.tsx",
+  );
+
+  for (const vendor of [
+    "Linear",
+    "Google",
+    "GitHub",
+    "AWS",
+    "Vercel",
+    "Whop",
+    "CoinGecko",
+    "Hetzner",
+    "ImageKit",
+    "Adobe Photoshop",
+    "Intercom",
+    "X / Twitter",
+  ]) {
+    assert.match(brands, new RegExp(`label: "${vendor}"`));
+  }
+  assert.match(client, /<SubscriptionBrand name=\{item\.name\} \/>/);
+});
