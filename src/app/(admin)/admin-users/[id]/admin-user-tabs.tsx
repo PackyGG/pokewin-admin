@@ -65,6 +65,7 @@ export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, 
       <ManagementActions
         detail={detail}
         startTransition={startTransition}
+        viewerIsMainOwner={viewerIsMainOwner}
       />
       {/* Owner / ultra-admin management — visible ONLY to the main owner
           (motha). Lets motha grant/revoke owner on any admin (motha's own row

@@ -17,6 +17,18 @@ function observe(report: () => void): void {
   }
 }
 
+async function flushReports(): Promise<void> {
+  try {
+    // Vercel may freeze the function as soon as its response is returned. In
+    // particular, that can leave an `in_progress` check-in uploaded while the
+    // matching terminal check-in is still buffered, producing a false timeout
+    // on every otherwise-successful run.
+    await Sentry.flush(2_000);
+  } catch {
+    // Monitoring remains best-effort and must not replace the cron result.
+  }
+}
+
 /**
  * Report one authenticated cron execution to Sentry.
  *
@@ -75,6 +87,7 @@ export async function runSentryCronMonitor(
       });
       Sentry.logger.error("Cron job threw", { cron: options.slug });
     });
+    await flushReports();
     throw error;
   }
 
@@ -105,5 +118,6 @@ export async function runSentryCronMonitor(
       });
     }
   });
+  await flushReports();
   return response;
 }

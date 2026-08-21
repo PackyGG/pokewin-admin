@@ -74,6 +74,8 @@ test("Sentry initializes all Next.js runtimes with privacy and tracing guards", 
   assert.match(sentryCron, /failureIssueThreshold: 2/);
   assert.match(sentryCron, /Sentry\.metrics\.count\("cron\.runs"/);
   assert.match(sentryCron, /Sentry\.logger\.error\(/);
+  assert.match(sentryCron, /await Sentry\.flush\(2_000\)/);
+  assert.match(sentryCron, /await flushReports\(\)/);
   assert.match(sentryCron, /function observe\(/);
   assert.match(cronRoutes, /slug: "\/api\/cron\/warm"/);
   assert.match(cronRoutes, /slug: "\/api\/cron\/antifraud-containment-retry"/);

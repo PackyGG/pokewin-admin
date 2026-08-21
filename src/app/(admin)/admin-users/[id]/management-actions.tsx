@@ -30,9 +30,11 @@ import type { AdminUserDetail } from "@/lib/queries/admin-users";
 export function ManagementActions({
   detail,
   startTransition,
+  viewerIsMainOwner,
 }: {
   detail: AdminUserDetail;
   startTransition: React.TransitionStartFunction;
+  viewerIsMainOwner: boolean;
 }) {
   const router = useRouter();
 
@@ -60,7 +62,9 @@ export function ManagementActions({
           <Reset2FADialog detail={detail} handleAction={handleAction} />
         )}
 
-        <ResetPasswordDialog detail={detail} handleAction={handleAction} />
+        {(!detail.isOwner || viewerIsMainOwner) && (
+          <ResetPasswordDialog detail={detail} handleAction={handleAction} />
+        )}
 
         <AlertDialog>
           <AlertDialogTrigger className={buttonVariants({ variant: "destructive", size: "sm" })}>

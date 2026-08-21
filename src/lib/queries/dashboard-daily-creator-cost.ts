@@ -1,8 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getReadDrizzleDb } from "@/lib/db";
-import { queryRows } from "@/lib/drizzle-query";
+import { queryMainRows } from "@/lib/drizzle-query";
 import { withTiming } from "@/lib/observability/query-timings";
 import { filterVoucherOriginsLive } from "@/lib/queries/_voucher-origins";
 
@@ -58,8 +57,6 @@ export type DailyCreatorCostPoint = {
 
 async function computeDailyCreatorCost(): Promise<DailyCreatorCostPoint[]> {
   return withTiming("dashboard.dailyCreatorCost", async () => {
-    const db = await getReadDrizzleDb();
-
     // Native-enum, drift-safe origin list (keeps the index path; never throws
     // 22P02 if a member is absent from the live enum).
     const liveOrigins = await filterVoucherOriginsLive(CONVERTED_PAYOUT_ORIGINS);
@@ -68,7 +65,7 @@ async function computeDailyCreatorCost(): Promise<DailyCreatorCostPoint[]> {
 
     const voucherPromise =
       liveOrigins.length > 0
-        ? queryRows<Row[]>(db,
+        ? queryMainRows<Row[]>(
             `SELECT DATE(created_at) AS d, COALESCE(SUM(value::numeric), 0)::float8 AS amt
              FROM vouchers
              WHERE origin IN (${liveOrigins
@@ -79,7 +76,7 @@ async function computeDailyCreatorCost(): Promise<DailyCreatorCostPoint[]> {
           )
         : Promise.resolve([] as Row[]);
 
-    const ledgerPromise = queryRows<Row[]>(db,
+    const ledgerPromise = queryMainRows<Row[]>(
       `SELECT DATE(created_at) AS d, COALESCE(SUM(ABS(amount::numeric)), 0)::float8 AS amt
        FROM ledger_transactions
        WHERE status = 'completed'
