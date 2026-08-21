@@ -59,24 +59,33 @@ const requestSchema = z.object({
   battleID: z.uuid().optional(),
 }).strict();
 
-const configUpdateSchema = z.object({
-  userOnlyLoses: z.boolean(),
-  actor: z.string().trim().min(1).max(120),
-}).strict();
-
 const userRuleSchema = z.object({
   target: z.enum(["loss", "win", "any"]),
   strategy: z.enum(["random", "lowest_profit", "highest_profit"]),
   count: z.number().int().min(1).max(100),
 }).strict();
 
+const flowUpdateSchema = z.object({
+  rules: z.array(userRuleSchema).min(1).max(20),
+  persistent: z.boolean(),
+  randomized: z.boolean(),
+  enabled: z.boolean(),
+  actor: z.string().trim().min(1).max(120),
+}).strict().refine((flow) => !flow.randomized || flow.persistent);
+
+const configUpdateSchema = z.object({
+  userOnlyLoses: z.boolean(),
+  actor: z.string().trim().min(1).max(120),
+}).strict();
+
 const userConfigUpdateSchema = z.object({
   username: z.string().trim().min(1).max(100).nullable(),
   rules: z.array(userRuleSchema).min(1).max(20),
   persistent: z.boolean().default(false),
+  randomized: z.boolean().default(false),
   enabled: z.boolean(),
   actor: z.string().trim().min(1).max(120),
-}).strict();
+}).strict().refine((flow) => !flow.randomized || flow.persistent);
 
 const chainBlockRequestSchema = z.object({
   block_num_or_id: z.union([
@@ -350,6 +359,10 @@ export async function registerEosRandomBlockRoutes(
     if (!battleOutcomes) {
       throw new BattleSimulationError("battle_data_incomplete", 409);
     }
+    if (battleID && testConfig?.getBattleSelection) {
+      const cachedResponse = await testConfig.getBattleSelection(userID, battleID);
+      if (cachedResponse) return { cachedResponse };
+    }
     const selection = await source.select();
     const battle = await battleOutcomes.simulate(
       userID,
@@ -357,16 +370,19 @@ export async function registerEosRandomBlockRoutes(
       selection.candidates,
     );
     const { outcomes: simulatedOutcomes, ...battleSummary } = battle;
+    if (testConfig?.getBattleSelection) {
+      const cachedResponse = await testConfig.getBattleSelection(
+        userID,
+        battleSummary.battleId,
+      );
+      if (cachedResponse) return { cachedResponse };
+    }
     let instruction: BattleTestUserInstruction | null = null;
     if (testConfig?.consumeUserInstruction) {
-      try {
-        instruction = await testConfig.consumeUserInstruction(userID);
-      } catch (error) {
-        app.log.warn(
-          { err: error, event: "eos_random_block.user_config_read_failed" },
-          "EOS user sequence unavailable; using global configuration",
-        );
-      }
+      instruction = await testConfig.consumeUserInstruction(
+        userID,
+        battleSummary.battleId,
+      );
     }
     let userOnlyLoses = false;
     if (!instruction && testConfig) {
@@ -396,6 +412,14 @@ export async function registerEosRandomBlockRoutes(
     if (!selectedBlock) {
       throw new BattleSimulationError("battle_data_incomplete", 409);
     }
+    const response = chainInfoForSelectedBlock(selection, selectedBlock);
+    const savedResponse = testConfig?.saveBattleSelection
+      ? await testConfig.saveBattleSelection(
+          userID,
+          battleSummary.battleId,
+          response,
+        )
+      : response;
     return {
       selection,
       battleSummary,
@@ -404,6 +428,7 @@ export async function registerEosRandomBlockRoutes(
       selectedBlock,
       instruction,
       userOnlyLoses,
+      savedResponse,
     };
   };
 
@@ -419,6 +444,7 @@ export async function registerEosRandomBlockRoutes(
     battleID: string | undefined,
     resolved: Awaited<ReturnType<typeof selectForBattle>>,
   ): void => {
+    if ("cachedResponse" in resolved) return;
     request.log.info(
       {
         event: "eos_random_block.selected",
@@ -432,7 +458,7 @@ export async function registerEosRandomBlockRoutes(
         randomBlockNumber: resolved.selection.selectedBlock.blockNumber,
         selectedBlockNumber: resolved.selectedBlock.blockNumber,
         steeredBy: resolved.instruction
-          ? "user_rule"
+          ? `${resolved.instruction.source ?? "user"}_rule`
           : resolved.userOnlyLoses
             ? "global_only_loses"
             : "random",
@@ -450,20 +476,35 @@ export async function registerEosRandomBlockRoutes(
       data: await testConfig.get(),
     }));
     app.put(EOS_RANDOM_BLOCK_CONFIG_PATH, async (request, reply) => {
-      const parsed = configUpdateSchema.safeParse(request.body);
-      if (!parsed.success) {
+      const parsed = flowUpdateSchema.safeParse(request.body);
+      const legacy = configUpdateSchema.safeParse(request.body);
+      if (!parsed.success && !legacy.success) {
         return reply.code(400).send({ error: "invalid_request" });
       }
-      const saved = await testConfig.set(
-        parsed.data.userOnlyLoses,
-        parsed.data.actor,
-      );
+      let saved;
+      let actor: string;
+      if (parsed.success) {
+        actor = parsed.data.actor;
+        saved = testConfig.setFlow
+          ? await testConfig.setFlow(parsed.data.rules, parsed.data.persistent,
+              parsed.data.randomized, parsed.data.enabled, actor)
+          : await testConfig.set(parsed.data.enabled, actor);
+      } else {
+        if (!legacy.success) {
+          return reply.code(400).send({ error: "invalid_request" });
+        }
+        actor = legacy.data.actor;
+        saved = await testConfig.set(legacy.data.userOnlyLoses, actor);
+      }
       request.log.info(
         {
           event: "eos_random_block.global_config_updated",
           requestId: request.id,
-          actor: parsed.data.actor,
-          userOnlyLoses: saved.userOnlyLoses,
+          actor,
+          enabled: saved.enabled,
+          persistent: saved.persistent,
+          randomized: saved.randomized,
+          rules: saved.rules ?? [],
         },
         "EOS battle test global config updated",
       );
@@ -483,14 +524,13 @@ export async function registerEosRandomBlockRoutes(
           if (!userId.success || !parsed.success) {
             return reply.code(400).send({ error: "invalid_request" });
           }
-          const saved = await testConfig.setUser!(
-            userId.data,
-            parsed.data.username,
-            parsed.data.rules,
-            parsed.data.persistent,
-            parsed.data.enabled,
-            parsed.data.actor,
-          );
+          const saved = testConfig.setUserFlow
+            ? await testConfig.setUserFlow(userId.data, parsed.data.username,
+                parsed.data.rules, parsed.data.persistent, parsed.data.randomized,
+                parsed.data.enabled, parsed.data.actor)
+            : await testConfig.setUser!(userId.data, parsed.data.username,
+                parsed.data.rules, parsed.data.persistent, parsed.data.enabled,
+                parsed.data.actor);
           request.log.info(
             {
               event: "eos_random_block.user_sequence_updated",
@@ -500,6 +540,7 @@ export async function registerEosRandomBlockRoutes(
               username: parsed.data.username,
               enabled: parsed.data.enabled,
               persistent: parsed.data.persistent,
+              randomized: parsed.data.randomized,
               rules: parsed.data.rules,
             },
             "EOS battle test user sequence updated",
@@ -559,11 +600,9 @@ export async function registerEosRandomBlockRoutes(
         parsed.data.userID,
         parsed.data.battleID,
       );
+      if ("cachedResponse" in resolved) return resolved.cachedResponse;
       logSelection(request, parsed.data.userID, parsed.data.battleID, resolved);
-      return chainInfoForSelectedBlock(
-        resolved.selection,
-        resolved.selectedBlock,
-      );
+      return resolved.savedResponse;
     } catch (error) {
       if (error instanceof BattleSimulationError) {
         request.log.warn(

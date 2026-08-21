@@ -18,6 +18,9 @@ export default async function EosPage() {
     getEosTestConfig(),
     listEosUserConfigs(),
   ]);
+  if (userConfigs.some((entry) => entry.environment !== config.environment)) {
+    throw new Error("EOS configuration service returned mixed environments");
+  }
 
   return (
     <div className="space-y-5">
@@ -29,11 +32,17 @@ export default async function EosPage() {
             <Badge variant="outline" className="text-[10px] uppercase">
               Private
             </Badge>
+            <Badge variant="secondary" className="text-[10px] uppercase">
+              {config.environment} controls
+            </Badge>
           </>
         }
       />
       <EosTestConfigCard initial={config} />
-      <EosUserSequences initial={userConfigs} />
+      <EosUserSequences
+        environment={config.environment}
+        initial={userConfigs}
+      />
     </div>
   );
 }

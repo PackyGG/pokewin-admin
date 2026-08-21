@@ -4,7 +4,7 @@ import test from "node:test";
 import { createHmac } from "node:crypto";
 
 import {
-  DevBattleOutcomeSimulator,
+  BattleOutcomeSimulator,
   resolveBattleMode,
   simulateBattle,
   type PulledParticipant,
@@ -314,7 +314,7 @@ test("dev simulator resolves the newest in-progress battle when battle ID is omi
       return { rows: [] };
     },
   };
-  const simulator = new DevBattleOutcomeSimulator(
+  const simulator = new BattleOutcomeSimulator(
     pool as never,
     "pepper",
   );

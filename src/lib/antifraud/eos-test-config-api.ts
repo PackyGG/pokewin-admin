@@ -2,25 +2,38 @@ import "server-only";
 
 import { z } from "zod";
 
-const configSchema = z.object({
-  userOnlyLoses: z.boolean(),
-  updatedAt: z.string().nullable(),
-  updatedBy: z.string().nullable(),
-});
-
 export const eosUserRuleSchema = z.object({
   target: z.enum(["loss", "win", "any"]),
   strategy: z.enum(["random", "lowest_profit", "highest_profit"]),
   count: z.number().int().min(1).max(100),
 });
 
+const configSchema = z.object({
+  // Default keeps the admin deploy compatible with an older monitor during a
+  // staggered rollout. The hardened monitor always returns this explicitly.
+  environment: z.enum(["dev", "prod"]).default("dev"),
+  userOnlyLoses: z.boolean(),
+  rules: z.array(eosUserRuleSchema).default([
+    { target: "any", strategy: "random", count: 1 },
+  ]),
+  currentRuleIndex: z.number().int().nonnegative().default(0),
+  remainingInRule: z.number().int().nonnegative().default(1),
+  persistent: z.boolean().default(true),
+  randomized: z.boolean().default(false),
+  enabled: z.boolean().default(false),
+  updatedAt: z.string().nullable(),
+  updatedBy: z.string().nullable(),
+});
+
 const userConfigSchema = z.object({
+  environment: z.enum(["dev", "prod"]).default("dev"),
   userId: z.string().min(1).max(100),
   username: z.string().nullable(),
   rules: z.array(eosUserRuleSchema),
   currentRuleIndex: z.number().int().nonnegative(),
   remainingInRule: z.number().int().nonnegative(),
   persistent: z.boolean().default(false),
+  randomized: z.boolean().default(false),
   enabled: z.boolean(),
   updatedAt: z.string(),
   updatedBy: z.string().nullable(),
@@ -71,7 +84,10 @@ export function getEosTestConfig(): Promise<EosTestConfig> {
 }
 
 export function updateEosTestConfig(input: {
-  userOnlyLoses: boolean;
+  rules: EosUserRule[];
+  persistent: boolean;
+  randomized: boolean;
+  enabled: boolean;
   actor: string;
 }): Promise<EosTestConfig> {
   return request({ method: "PUT", body: JSON.stringify(input) });
@@ -117,6 +133,7 @@ export async function updateEosUserConfig(input: {
   username: string | null;
   rules: EosUserRule[];
   persistent: boolean;
+  randomized: boolean;
   enabled: boolean;
   actor: string;
 }): Promise<EosUserConfig> {
@@ -129,6 +146,7 @@ export async function updateEosUserConfig(input: {
         username: input.username,
         rules: input.rules,
         persistent: input.persistent,
+        randomized: input.randomized,
         enabled: input.enabled,
         actor: input.actor,
       }),

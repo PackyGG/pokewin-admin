@@ -5,7 +5,7 @@ import test from "node:test";
 
 const repoRoot = process.cwd();
 
-test("EOS user search is pinned to the read-only battle-test dev database", () => {
+test("EOS user search follows the monitor environment using read-only databases", () => {
   const action = fs.readFileSync(
     path.join(repoRoot, "src/app/(admin)/eos/actions.ts"),
     "utf8",
@@ -16,6 +16,8 @@ test("EOS user search is pinned to the read-only battle-test dev database", () =
   );
 
   assert.match(action, /getBattleTestDevReadDrizzleDb/);
+  assert.match(action, /getProdReadDrizzleDb/);
+  assert.match(action, /config\.environment === "prod"/);
   assert.doesNotMatch(action, /getDevReadDrizzleDb/);
   assert.match(database, /BATTLE_TEST_DEV_DATABASE_URL/);
   assert.match(database, /default_transaction_read_only=on/);

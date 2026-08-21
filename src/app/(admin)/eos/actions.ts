@@ -7,29 +7,41 @@ import { z } from "zod";
 import {
   deleteEosUserConfig,
   eosUserRuleSchema,
+  getEosTestConfig,
   updateEosTestConfig,
   updateEosUserConfig,
 } from "@/lib/antifraud/eos-test-config-api";
 import { getBattleTestDevReadDrizzleDb } from "@/lib/battle-test-dev-db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import { requireEosTestAccess } from "@/lib/eos-test-access";
 import { escapeLikePattern } from "@/lib/utils/sql-like";
 
-export async function setUserOnlyLoses(input: unknown) {
+const saveFlowSchema = z.object({
+  rules: z.array(eosUserRuleSchema).min(1).max(20),
+  persistent: z.boolean(),
+  randomized: z.boolean(),
+  enabled: z.boolean(),
+}).refine((flow) => !flow.randomized || flow.persistent);
+
+export async function saveGlobalEosFlow(input: unknown) {
   const session = await requireEosTestAccess();
-  const userOnlyLoses = z.boolean().parse(input);
+  const flow = saveFlowSchema.parse(input);
   const saved = await updateEosTestConfig({
-    userOnlyLoses,
+    ...flow,
     actor: session.username,
   });
   revalidatePath("/eos");
   return saved;
 }
 
-export async function searchEosDevUsers(input: unknown) {
+export async function searchEosUsers(input: unknown) {
   await requireEosTestAccess();
   const query = z.string().trim().min(2).max(100).parse(input);
-  const db = getBattleTestDevReadDrizzleDb();
+  const config = await getEosTestConfig();
+  const db = config.environment === "prod"
+    ? getProdReadDrizzleDb()
+    : getBattleTestDevReadDrizzleDb();
   const prefix = `${escapeLikePattern(query.toLowerCase())}%`;
   const rows = await db
     .select({
@@ -54,12 +66,15 @@ const saveUserConfigSchema = z.object({
   username: z.string().trim().min(1).max(100).nullable(),
   rules: z.array(eosUserRuleSchema).min(1).max(20),
   persistent: z.boolean(),
+  randomized: z.boolean(),
   enabled: z.boolean(),
 });
 
 export async function saveEosUserConfig(input: unknown) {
   const session = await requireEosTestAccess();
-  const parsed = saveUserConfigSchema.parse(input);
+  const parsed = saveUserConfigSchema
+    .refine((flow) => !flow.randomized || flow.persistent)
+    .parse(input);
   const saved = await updateEosUserConfig({
     ...parsed,
     actor: session.username,

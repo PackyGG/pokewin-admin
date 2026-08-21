@@ -482,11 +482,12 @@ test("EOS test config routes read and update the persisted setting", async () =>
   let enabled = false;
   const config: BattleTestConfigSource = {
     async get() {
-      return { userOnlyLoses: enabled, updatedAt: null, updatedBy: null };
+      return { environment: "prod", userOnlyLoses: enabled, updatedAt: null, updatedBy: null };
     },
     async set(userOnlyLoses, actor) {
       enabled = userOnlyLoses;
       return {
+        environment: "prod",
         userOnlyLoses,
         updatedAt: "2026-08-07T00:00:00.000Z",
         updatedBy: actor,
@@ -498,7 +499,12 @@ test("EOS test config routes read and update the persisted setting", async () =>
 
   const before = await app.inject({ method: "GET", url: EOS_RANDOM_BLOCK_CONFIG_PATH });
   assert.equal(before.statusCode, 200);
-  assert.equal(before.json().data.userOnlyLoses, false);
+  assert.deepEqual(before.json().data, {
+    environment: "prod",
+    userOnlyLoses: false,
+    updatedAt: null,
+    updatedBy: null,
+  });
 
   const updated = await app.inject({
     method: "PUT",
@@ -507,6 +513,7 @@ test("EOS test config routes read and update the persisted setting", async () =>
   });
   assert.equal(updated.statusCode, 200);
   assert.deepEqual(updated.json().data, {
+    environment: "prod",
     userOnlyLoses: true,
     updatedAt: "2026-08-07T00:00:00.000Z",
     updatedBy: "motha",
@@ -514,8 +521,51 @@ test("EOS test config routes read and update the persisted setting", async () =>
   await app.close();
 });
 
+test("EOS global config accepts repeating weighted-random flows", async () => {
+  let savedInput: unknown[] | null = null;
+  const config: BattleTestConfigSource = {
+    async get() {
+      return { userOnlyLoses: false, updatedAt: null, updatedBy: null };
+    },
+    async set() {
+      throw new Error("legacy setter must not handle flow payloads");
+    },
+    async setFlow(rules, persistent, randomized, enabled, actor) {
+      savedInput = [rules, persistent, randomized, enabled, actor];
+      return {
+        environment: "prod",
+        userOnlyLoses: false,
+        rules,
+        currentRuleIndex: 0,
+        remainingInRule: rules[0]!.count,
+        persistent,
+        randomized,
+        enabled,
+        updatedAt: "2026-08-21T00:00:00.000Z",
+        updatedBy: actor,
+      };
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, undefined, undefined, config);
+  const rules = [
+    { target: "loss", strategy: "lowest_profit", count: 3 },
+    { target: "win", strategy: "random", count: 1 },
+  ];
+  const response = await app.inject({
+    method: "PUT",
+    url: EOS_RANDOM_BLOCK_CONFIG_PATH,
+    payload: { rules, persistent: true, randomized: true, enabled: true, actor: "hifoen" },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(savedInput, [rules, true, true, true, "hifoen"]);
+  assert.equal(response.json().data.randomized, true);
+  await app.close();
+});
+
 test("EOS user sequence config routes list, reset, and delete rules", async () => {
   const saved = {
+    environment: "prod" as const,
     userId: "cm1234567890abcdefghijklmnopqrst",
     username: "tester",
     rules: [{ target: "loss" as const, strategy: "lowest_profit" as const, count: 2 }],
@@ -578,6 +628,77 @@ test("EOS user sequence config routes list, reset, and delete rules", async () =
   });
   assert.equal(removed.statusCode, 204);
   assert.equal(deleted, saved.userId);
+  await app.close();
+});
+
+test("battle retries reuse one durable EOS response and consume one rule", async () => {
+  const battleId = "11111111-1111-4111-8111-111111111111";
+  let selects = 0;
+  let consumes = 0;
+  let saved: Record<string, unknown> | null = null;
+  const source: EosRandomBlockSource = {
+    async select() {
+      selects += 1;
+      return {
+        provider: "https://eos.example",
+        chainInfo,
+        selectedIndex: 0,
+        selectedBlock: blocks[0]!,
+        candidates: blocks,
+      };
+    },
+  };
+  const outcomes: BattleOutcomeSource = {
+    async simulate() {
+      return {
+        battleId,
+        mode: "normal",
+        crazyMode: false,
+        currency: "real",
+        creatorUserID: "test-user-123",
+        outcomes: blocks.map((candidate) => ({
+          blockNumber: candidate.blockNumber,
+          winningTeam: 1,
+          creatorTeam: 1,
+          creatorWonBattle: true,
+          creatorCost: 10,
+          creatorProfitLoss: 5,
+        })),
+      };
+    },
+  };
+  const config: BattleTestConfigSource = {
+    async get() {
+      return { environment: "prod", userOnlyLoses: false, updatedAt: null, updatedBy: null };
+    },
+    async set() {
+      throw new Error("not used");
+    },
+    async getBattleSelection() {
+      return saved;
+    },
+    async consumeUserInstruction() {
+      consumes += 1;
+      return { target: "any", strategy: "random" };
+    },
+    async saveBattleSelection(_userId, _battleId, response) {
+      saved ??= response;
+      return saved;
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, source, outcomes, config);
+  const request = {
+    method: "POST" as const,
+    url: EOS_CHAIN_INFO_PATH,
+    payload: { userID: "test-user-123", battleID: battleId },
+  };
+  const first = await app.inject(request);
+  const retry = await app.inject(request);
+  assert.equal(first.statusCode, 200);
+  assert.deepEqual(retry.json(), first.json());
+  assert.equal(selects, 1);
+  assert.equal(consumes, 1);
   await app.close();
 });
 

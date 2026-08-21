@@ -78,7 +78,7 @@ import {
   isUnauthenticatedEosRandomBlockRequest,
   registerEosRandomBlockRoutes,
 } from "./eos-random-block-routes.js";
-import { DevBattleOutcomeSimulator } from "./battle-outcome-simulator.js";
+import { BattleOutcomeSimulator } from "./battle-outcome-simulator.js";
 import { PgBattleTestConfigStore } from "./battle-test-config.js";
 import { IngestDelivery } from "./ingest-delivery.js";
 import {
@@ -2304,8 +2304,14 @@ await registerFiatEligibilityOverrideRoutes(app, db);
 await registerEosRandomBlockRoutes(
   app,
   undefined,
-  db.battleTestDevSource && config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER
-    ? new DevBattleOutcomeSimulator(
+  config.BATTLE_TEST_ENVIRONMENT === "prod"
+    && config.BATTLE_TEST_PROD_SERVER_SEED_PEPPER
+    ? new BattleOutcomeSimulator(
+        db.source,
+        config.BATTLE_TEST_PROD_SERVER_SEED_PEPPER,
+      )
+    : db.battleTestDevSource && config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER
+    ? new BattleOutcomeSimulator(
         db.battleTestDevSource,
         config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER,
       )

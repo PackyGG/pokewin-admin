@@ -609,7 +609,7 @@ export function simulateBattle(input: {
   };
 }
 
-export class DevBattleOutcomeSimulator implements BattleOutcomeSource {
+export class BattleOutcomeSimulator implements BattleOutcomeSource {
   constructor(
     private readonly pool: pg.Pool,
     private readonly pepper: string,

@@ -18,16 +18,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import type {
+  EosTestConfig,
   EosUserConfig,
   EosUserRule,
 } from "@/lib/antifraud/eos-test-config-api";
 import {
   removeEosUserConfig,
   saveEosUserConfig,
-  searchEosDevUsers,
+  searchEosUsers,
 } from "./actions";
 
-type UserResult = Awaited<ReturnType<typeof searchEosDevUsers>>[number];
+type UserResult = Awaited<ReturnType<typeof searchEosUsers>>[number];
 
 const defaultRules: EosUserRule[] = [
   { target: "loss", strategy: "lowest_profit", count: 1 },
@@ -123,20 +124,27 @@ function RuleFields({
   );
 }
 
-export function EosUserSequences({ initial }: { initial: EosUserConfig[] }) {
+export function EosUserSequences({
+  environment,
+  initial,
+}: {
+  environment: EosTestConfig["environment"];
+  initial: EosUserConfig[];
+}) {
   const [configs, setConfigs] = useState(initial);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<UserResult[]>([]);
   const [selected, setSelected] = useState<UserResult | null>(null);
   const [rules, setRules] = useState<EosUserRule[]>(cloneRules(defaultRules));
   const [persistent, setPersistent] = useState(true);
+  const [randomized, setRandomized] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [isPending, startTransition] = useTransition();
 
   function search() {
     startTransition(async () => {
       try {
-        setResults(await searchEosDevUsers(query));
+        setResults(await searchEosUsers(query));
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "User search failed");
       }
@@ -147,6 +155,7 @@ export function EosUserSequences({ initial }: { initial: EosUserConfig[] }) {
     setSelected(user);
     setRules(cloneRules(existing?.rules ?? defaultRules));
     setPersistent(existing?.persistent ?? true);
+    setRandomized(existing?.randomized ?? false);
     setEnabled(existing?.enabled ?? true);
     setResults([]);
   }
@@ -176,8 +185,9 @@ export function EosUserSequences({ initial }: { initial: EosUserConfig[] }) {
         const saved = await saveEosUserConfig({
           userId: selected.userId,
           username: selected.username ?? selected.displayUsername,
-          rules: persistent ? [rules[0]!] : rules,
+          rules,
           persistent,
+          randomized,
           enabled,
         });
         setConfigs((current) => [
@@ -187,7 +197,7 @@ export function EosUserSequences({ initial }: { initial: EosUserConfig[] }) {
         setRules(cloneRules(saved.rules));
         toast.success(
           persistent
-            ? "Permanent EOS outcome control saved"
+            ? "Repeating EOS outcome flow saved"
             : "EOS outcome sequence saved and reset to step 1",
         );
       } catch (error) {
@@ -209,8 +219,6 @@ export function EosUserSequences({ initial }: { initial: EosUserConfig[] }) {
     });
   }
 
-  const permanentRule = rules[0] ?? defaultRules[0]!;
-
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
       <Card>
@@ -220,7 +228,8 @@ export function EosUserSequences({ initial }: { initial: EosUserConfig[] }) {
             Per-user outcome control
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            A personal rule overrides the global “user only loses” setting while it is active.
+            A personal rule overrides the global “user only loses” setting while it is active
+            in the {environment} control namespace.
           </p>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -232,7 +241,7 @@ export function EosUserSequences({ initial }: { initial: EosUserConfig[] }) {
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && query.trim().length >= 2) search();
                 }}
-                placeholder="Search dev user ID or username"
+                placeholder={`Search ${environment} user ID or username`}
               />
               <Button
                 type="button"
@@ -295,15 +304,18 @@ export function EosUserSequences({ initial }: { initial: EosUserConfig[] }) {
                     }`}
                   >
                     <span className="flex items-center gap-2 text-sm font-semibold">
-                      <Repeat2 className="size-4" /> Always apply
+                      <Repeat2 className="size-4" /> Repeat flow
                     </span>
                     <span className="mt-1 block text-xs text-muted-foreground">
-                      Every future battle until you disable or remove it.
+                      Loop these steps until you disable or remove the flow.
                     </span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPersistent(false)}
+                    onClick={() => {
+                      setPersistent(false);
+                      setRandomized(false);
+                    }}
                     className={`rounded-lg border p-3 text-left transition-colors ${
                       !persistent ? "border-primary bg-primary/5" : "hover:bg-muted/40"
                     }`}
@@ -318,30 +330,32 @@ export function EosUserSequences({ initial }: { initial: EosUserConfig[] }) {
                 </div>
               </div>
 
-              {persistent ? (
-                <div className="space-y-3 rounded-lg bg-muted/35 p-4">
+              {persistent && (
+                <div className="flex items-center justify-between gap-5 rounded-lg border p-3">
                   <div>
-                    <p className="text-sm font-semibold">Rule for every battle</p>
+                    <p className="text-sm font-semibold">Randomize step order</p>
                     <p className="text-xs text-muted-foreground">
-                      This rule never expires and its counter does not decrease.
+                      Pick a step per battle; each step count becomes its relative weight.
                     </p>
                   </div>
-                  <RuleFields
-                    rule={permanentRule}
-                    index={0}
-                    showCount={false}
-                    onChange={(patch) => updateRule(0, patch)}
+                  <Switch
+                    aria-label="Randomize user flow"
+                    checked={randomized}
+                    onCheckedChange={setRandomized}
                   />
                 </div>
-              ) : (
-                <div className="space-y-3">
+              )}
+
+              <div className="space-y-3">
                   {rules.map((rule, index) => (
                     <div key={index} className="space-y-3 rounded-lg bg-muted/35 p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <p className="text-sm font-semibold">Step {index + 1}</p>
                           <p className="text-xs text-muted-foreground">
-                            This step runs for {rule.count} {rule.count === 1 ? "battle" : "battles"}.
+                            {randomized
+                              ? `Weight ${rule.count}`
+                              : `Runs for ${rule.count} ${rule.count === 1 ? "battle" : "battles"}.`}
                           </p>
                         </div>
                         <Button
@@ -376,19 +390,18 @@ export function EosUserSequences({ initial }: { initial: EosUserConfig[] }) {
                   >
                     <Plus className="size-4" /> Add next step
                   </Button>
-                </div>
-              )}
+              </div>
 
               <div className="flex justify-end">
                 <Button type="button" disabled={isPending} onClick={save}>
                   {isPending && <Loader2 className="size-4 animate-spin" />}
-                  {persistent ? "Save permanent rule" : "Save and restart sequence"}
+                  {persistent ? "Save repeating flow" : "Save and restart sequence"}
                 </Button>
               </div>
             </div>
           ) : (
             <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-              Search for a dev user to create a permanent rule or a finite outcome sequence.
+              Search for a {environment} user to create a repeating or one-time outcome flow.
             </div>
           )}
         </CardContent>
@@ -440,7 +453,7 @@ export function EosUserSequences({ initial }: { initial: EosUserConfig[] }) {
                 </div>
                 {config.persistent && activeRule ? (
                   <p className="text-xs text-muted-foreground">
-                    Every battle: {ruleSummary(activeRule)}. Stays active until disabled.
+                    {config.randomized ? "Weighted random flow" : "Repeating flow"}: {config.rules.length} step(s).
                   </p>
                 ) : activeRule ? (
                   <p className="text-xs text-muted-foreground">

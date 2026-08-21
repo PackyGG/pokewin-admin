@@ -47,6 +47,10 @@ const schema = z.object({
   BATTLE_TEST_ENVIRONMENT: z.enum(["dev", "prod"]).default("dev"),
   BATTLE_TEST_DEV_DATABASE_URL: z.string().min(1).optional(),
   BATTLE_TEST_DEV_SERVER_SEED_PEPPER: z.string().min(32).optional(),
+  // Production battle simulation reads only from SOURCE_DATABASE_URL. Its
+  // decryption secret is separate so a dev deployment cannot decrypt live
+  // battle seeds by inheriting a shared variable accidentally.
+  BATTLE_TEST_PROD_SERVER_SEED_PEPPER: z.string().min(32).optional(),
   // Runtime traffic may use a transaction-mode pooler. Migrations must not:
   // their session advisory lock and session-level timeout override require one
   // stable, direct PostgreSQL connection for the entire migration run.
@@ -226,11 +230,37 @@ export function loadConfig(): Config {
   }
   const config = parsed.data;
   if (
+    config.NODE_ENV === "production"
+    && process.env.BATTLE_TEST_ENVIRONMENT === undefined
+  ) {
+    throw new Error(
+      "Invalid configuration: BATTLE_TEST_ENVIRONMENT must be explicit in production",
+    );
+  }
+  if (
     config.NODE_ENV !== "test" &&
     (!config.MAXMIND_ACCOUNT_ID || !config.MAXMIND_LICENSE_KEY)
   ) {
     throw new Error(
       "Invalid configuration: MAXMIND_ACCOUNT_ID and MAXMIND_LICENSE_KEY are required",
+    );
+  }
+  if (
+    config.BATTLE_TEST_ENVIRONMENT === "prod"
+    && !config.BATTLE_TEST_PROD_SERVER_SEED_PEPPER
+  ) {
+    throw new Error(
+      "Invalid configuration: production battle testing requires BATTLE_TEST_PROD_SERVER_SEED_PEPPER",
+    );
+  }
+  if (
+    config.NODE_ENV === "production"
+    && config.BATTLE_TEST_ENVIRONMENT === "dev"
+    && (!config.BATTLE_TEST_DEV_DATABASE_URL
+      || !config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER)
+  ) {
+    throw new Error(
+      "Invalid configuration: dev battle testing requires its database and pepper in production deployments",
     );
   }
   if (config.API_TOKEN === config.API_ADMIN_TOKEN) {
