@@ -10,7 +10,9 @@ import {
   getEosTestConfig,
   listEosUserSelections,
   updateEosTestConfig,
+  updateEosTestEnabled,
   updateEosUserConfig,
+  updateEosUserEnabled,
   updateEosUserForceLosses,
 } from "@/lib/antifraud/eos-test-config-api";
 import { getBattleTestDevReadDrizzleDb } from "@/lib/battle-test-dev-db";
@@ -18,6 +20,8 @@ import { getProdReadDrizzleDb } from "@/lib/db";
 import { readDbEnvFromCookie } from "@/lib/db-env";
 import { user } from "@/lib/db-schema/main/schema";
 import { requireEosTestAccess } from "@/lib/eos-test-access";
+import { eosPlayerIntelligenceInputSchema } from "@/lib/eos-player-intelligence-shared";
+import { getEosPlayerIntelligence } from "@/lib/queries/eos-player-intelligence";
 import { escapeLikePattern } from "@/lib/utils/sql-like";
 
 const saveFlowSchema = z.object({
@@ -36,6 +40,20 @@ export async function saveGlobalEosFlow(input: unknown) {
   const flow = saveFlowSchema.parse(input);
   const saved = await updateEosTestConfig(environment, {
     ...flow,
+    actor: session.username,
+  });
+  revalidatePath("/eos");
+  return saved;
+}
+
+export async function setGlobalEosEnabled(input: unknown) {
+  const [session, environment] = await Promise.all([
+    requireEosTestAccess(),
+    readDbEnvFromCookie(),
+  ]);
+  const enabled = z.boolean().parse(input);
+  const saved = await updateEosTestEnabled(environment, {
+    enabled,
     actor: session.username,
   });
   revalidatePath("/eos");
@@ -115,6 +133,17 @@ export async function getEosUserSelections(input: unknown) {
   return listEosUserSelections(environment, userId, 20);
 }
 
+export async function loadEosPlayerIntelligence(input: unknown) {
+  const [, environment] = await Promise.all([
+    requireEosTestAccess(),
+    readDbEnvFromCookie(),
+  ]);
+  return getEosPlayerIntelligence(
+    environment,
+    eosPlayerIntelligenceInputSchema.parse(input),
+  );
+}
+
 const saveUserConfigSchema = z.object({
   userId: z.string().trim().min(1).max(100),
   username: z.string().trim().min(1).max(100).nullable(),
@@ -134,6 +163,23 @@ export async function saveEosUserConfig(input: unknown) {
     .refine((flow) => !flow.randomized || flow.persistent)
     .parse(input);
   const saved = await updateEosUserConfig(environment, {
+    ...parsed,
+    actor: session.username,
+  });
+  revalidatePath("/eos");
+  return saved;
+}
+
+export async function setEosUserEnabled(input: unknown) {
+  const [session, environment] = await Promise.all([
+    requireEosTestAccess(),
+    readDbEnvFromCookie(),
+  ]);
+  const parsed = z.object({
+    userId: z.string().trim().min(1).max(100),
+    enabled: z.boolean(),
+  }).strict().parse(input);
+  const saved = await updateEosUserEnabled(environment, {
     ...parsed,
     actor: session.username,
   });

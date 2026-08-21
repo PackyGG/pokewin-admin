@@ -119,6 +119,11 @@ const userForceLossesUpdateSchema = z.object({
   actor: z.string().trim().min(1).max(120),
 }).strict();
 
+const enabledUpdateSchema = z.object({
+  enabled: z.boolean(),
+  actor: z.string().trim().min(1).max(120),
+}).strict();
+
 const userSelectionQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
 }).strict();
@@ -553,6 +558,10 @@ export async function registerEosRandomBlockRoutes(
       instruction = await selectedConfig.consumeUserInstruction(
         userID,
         battleSummary.battleId,
+        {
+          hasWin: simulatedOutcomes.some((outcome) => outcome.creatorWonBattle),
+          hasLoss: simulatedOutcomes.some((outcome) => !outcome.creatorWonBattle),
+        },
       );
     }
     let userOnlyLoses = false;
@@ -719,6 +728,34 @@ export async function registerEosRandomBlockRoutes(
       );
       return { data: saved };
     });
+    app.patch(`${EOS_RANDOM_BLOCK_CONFIG_PATH}/enabled`, async (request, reply) => {
+      const resolution = resolveEnvironment(request, "config");
+      if (!resolution.ok) return sendEnvironmentError(reply, resolution);
+      const selectedConfig = resolution.resources.testConfig!;
+      if (!selectedConfig.setEnabled) {
+        return reply.code(503).send({ error: "environment_unavailable" });
+      }
+      const parsed = enabledUpdateSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid_request" });
+      }
+      const saved = await selectedConfig.setEnabled(
+        parsed.data.enabled,
+        parsed.data.actor,
+      );
+      if (!saved) return reply.code(404).send({ error: "config_not_found" });
+      request.log.info(
+        {
+          event: "eos_random_block.global_enabled_updated",
+          requestId: request.id,
+          environment: resolution.resources.environment ?? saved.environment ?? null,
+          actor: parsed.data.actor,
+          enabled: parsed.data.enabled,
+        },
+        "EOS battle test global flow paused or resumed",
+      );
+      return { data: saved };
+    });
     const hasUserConfigRoutes = routedConfigs.some((config) =>
       config.listUsers && config.setUser && config.deleteUser
     );
@@ -795,6 +832,42 @@ export async function registerEosRandomBlockRoutes(
               rules: parsed.data.rules,
             },
             "EOS battle test user sequence updated",
+          );
+          return { data: saved };
+        },
+      );
+      app.patch(
+        `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/:userId/enabled`,
+        async (request, reply) => {
+          const resolution = resolveEnvironment(request, "config");
+          if (!resolution.ok) return sendEnvironmentError(reply, resolution);
+          const selectedConfig = resolution.resources.testConfig!;
+          if (!selectedConfig.setUserEnabled) {
+            return reply.code(503).send({ error: "environment_unavailable" });
+          }
+          const userId = z.string().trim().min(1).max(100).safeParse(
+            (request.params as { userId?: unknown }).userId,
+          );
+          const parsed = enabledUpdateSchema.safeParse(request.body);
+          if (!userId.success || !parsed.success) {
+            return reply.code(400).send({ error: "invalid_request" });
+          }
+          const saved = await selectedConfig.setUserEnabled(
+            userId.data,
+            parsed.data.enabled,
+            parsed.data.actor,
+          );
+          if (!saved) return reply.code(404).send({ error: "user_config_not_found" });
+          request.log.info(
+            {
+              event: "eos_random_block.user_enabled_updated",
+              requestId: request.id,
+              environment: resolution.resources.environment ?? saved.environment ?? null,
+              actor: parsed.data.actor,
+              userId: userId.data,
+              enabled: parsed.data.enabled,
+            },
+            "EOS battle test user flow paused or resumed",
           );
           return { data: saved };
         },

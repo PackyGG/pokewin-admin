@@ -172,11 +172,12 @@ function serviceError(response: Response, subject: "global" | "user" | "overview
 async function request(
   environment: DbEnv,
   init?: RequestInit,
+  path = PATH,
 ): Promise<EosTestConfig> {
   const { baseUrl, token } = connection();
   let response: Response;
   try {
-    response = await fetch(`${baseUrl}${PATH}`, {
+    response = await fetch(`${baseUrl}${path}`, {
       ...init,
       headers: {
         accept: "application/json",
@@ -217,6 +218,16 @@ export function updateEosTestConfig(environment: DbEnv, input: {
   actor: string;
 }): Promise<EosTestConfig> {
   return request(environment, { method: "PUT", body: JSON.stringify(input) });
+}
+
+export function updateEosTestEnabled(environment: DbEnv, input: {
+  enabled: boolean;
+  actor: string;
+}): Promise<EosTestConfig> {
+  return request(environment, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  }, `${PATH}/enabled`);
 }
 
 async function userRequest<T>(
@@ -344,6 +355,29 @@ export async function updateEosUserForceLosses(environment: DbEnv, input: {
       method: "PATCH",
       body: JSON.stringify({
         forceLosses: input.forceLosses,
+        actor: input.actor,
+      }),
+    },
+  );
+  if (result.data.environment !== environment) {
+    throw new Error("The EOS user flow service returned the wrong environment.");
+  }
+  return result.data;
+}
+
+export async function updateEosUserEnabled(environment: DbEnv, input: {
+  userId: string;
+  enabled: boolean;
+  actor: string;
+}): Promise<EosUserConfig> {
+  const result = await userRequest(
+    environment,
+    `${USERS_PATH}/${encodeURIComponent(input.userId)}/enabled`,
+    z.object({ data: userConfigSchema }),
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        enabled: input.enabled,
         actor: input.actor,
       }),
     },

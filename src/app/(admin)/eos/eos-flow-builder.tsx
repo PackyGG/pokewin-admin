@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -7,7 +8,9 @@ import {
   ListOrdered,
   Plus,
   Repeat2,
+  RotateCcw,
   Sparkles,
+  Copy,
   Trash2,
 } from "lucide-react";
 
@@ -56,12 +59,20 @@ type FlowPreset = {
 
 const presets: FlowPreset[] = [
   {
-    name: "Win, win, lose",
-    description: "Two low wins, then the lowest available losing multiplier.",
+    name: "Lose only",
+    description: "Always choose the lowest creator P&L among available losses.",
     mode: "repeat",
     rules: [
-      { ...emptyRule, target: "win", strategy: "lowest_multiplier", count: 2 },
-      { ...emptyRule, target: "loss", strategy: "lowest_multiplier", count: 1 },
+      { ...emptyRule, target: "loss", strategy: "lowest_profit", count: 1 },
+    ],
+  },
+  {
+    name: "Loss, loss, low win",
+    description: "Retry two losses, then one lowest-multiplier win, and repeat.",
+    mode: "repeat",
+    rules: [
+      { ...emptyRule, target: "loss", strategy: "lowest_profit", count: 2 },
+      { ...emptyRule, target: "win", strategy: "lowest_multiplier", count: 1 },
     ],
   },
   {
@@ -69,7 +80,7 @@ const presets: FlowPreset[] = [
     description: "Weighted mix: 80% losses and 20% low wins.",
     mode: "random",
     rules: [
-      { ...emptyRule, target: "loss", strategy: "random", count: 4 },
+      { ...emptyRule, target: "loss", strategy: "lowest_profit", count: 4 },
       { ...emptyRule, target: "win", strategy: "lowest_multiplier", count: 1 },
     ],
   },
@@ -78,7 +89,7 @@ const presets: FlowPreset[] = [
     description: "Random outcomes constrained to multipliers from 0× to 2×.",
     mode: "random",
     rules: [
-      { ...emptyRule, target: "loss", strategy: "lowest_multiplier", count: 3, maxMultiplier: 2 },
+      { ...emptyRule, target: "loss", strategy: "lowest_profit", count: 3 },
       { ...emptyRule, target: "win", strategy: "lowest_multiplier", count: 2, maxMultiplier: 2 },
     ],
   },
@@ -89,6 +100,23 @@ const presets: FlowPreset[] = [
     rules: [
       { ...emptyRule, target: "win", strategy: "random", count: 1 },
       { ...emptyRule, target: "loss", strategy: "random", count: 1 },
+    ],
+  },
+  {
+    name: "Lowest outcome",
+    description: "Choose the lowest creator P&L without requiring a win or loss.",
+    mode: "repeat",
+    rules: [
+      { ...emptyRule, target: "any", strategy: "lowest_profit", count: 1 },
+    ],
+  },
+  {
+    name: "Rare capped wins",
+    description: "90% lowest losses and 10% wins capped at a 1.5× multiplier.",
+    mode: "random",
+    rules: [
+      { ...emptyRule, target: "loss", strategy: "lowest_profit", count: 9 },
+      { ...emptyRule, target: "win", strategy: "lowest_multiplier", count: 1, maxMultiplier: 1.5 },
     ],
   },
 ];
@@ -136,6 +164,11 @@ export function EosFlowBuilder({
   onPersistentChange: (persistent: boolean) => void;
   onRandomizedChange: (randomized: boolean) => void;
 }) {
+  const [presetUndo, setPresetUndo] = useState<{
+    rules: EosUserRule[];
+    persistent: boolean;
+    randomized: boolean;
+  } | null>(null);
   const mode = currentMode(persistent, randomized);
   const total = rules.reduce((sum, rule) => sum + rule.count, 0);
 
@@ -158,12 +191,43 @@ export function EosFlowBuilder({
     onRulesChange(next);
   }
 
+  function duplicateRule(index: number) {
+    if (rules.length >= 20) return;
+    const next = [...rules];
+    next.splice(index + 1, 0, { ...rules[index]! });
+    onRulesChange(next);
+  }
+
+  const orderedPreview = randomized
+    ? null
+    : rules.flatMap((rule) => Array.from(
+      { length: Math.min(rule.count, 12) },
+      () => rule.target === "win" ? "W" : rule.target === "loss" ? "L" : "A",
+    )).slice(0, 12);
+
   return (
     <div className="space-y-5">
       <section className="space-y-2" aria-labelledby={`${id}-presets`}>
-        <div className="flex items-center gap-2">
-          <Sparkles className="size-4 text-primary" />
-          <h3 id={`${id}-presets`} className="text-sm font-semibold">Quick patterns</h3>
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <Sparkles className="size-4 text-primary" />
+            <h3 id={`${id}-presets`} className="text-sm font-semibold">Quick patterns</h3>
+          </span>
+          {presetUndo && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                onRulesChange(presetUndo.rules);
+                onPersistentChange(presetUndo.persistent);
+                onRandomizedChange(presetUndo.randomized);
+                setPresetUndo(null);
+              }}
+            >
+              <RotateCcw className="size-3.5" />Undo preset
+            </Button>
+          )}
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           {presets.map((preset) => (
@@ -172,6 +236,11 @@ export function EosFlowBuilder({
               type="button"
               className="rounded-lg border p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => {
+                setPresetUndo({
+                  rules: rules.map((rule) => ({ ...rule })),
+                  persistent,
+                  randomized,
+                });
                 onRulesChange(preset.rules.map((rule) => ({ ...rule })));
                 setMode(preset.mode);
               }}
@@ -211,6 +280,25 @@ export function EosFlowBuilder({
         </div>
       </fieldset>
 
+      {orderedPreview && orderedPreview.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/25 px-3 py-2">
+          <span className="text-xs font-medium text-muted-foreground">Outcome preview</span>
+          {orderedPreview.map((outcome, index) => (
+            <Badge
+              key={`${id}-preview-${index}`}
+              variant={outcome === "L" ? "destructive" : outcome === "W" ? "default" : "secondary"}
+              className="size-6 justify-center rounded-full p-0 text-[10px]"
+            >
+              {outcome}
+            </Badge>
+          ))}
+          {total > orderedPreview.length && (
+            <span className="text-xs text-muted-foreground">+{total - orderedPreview.length} more</span>
+          )}
+          {persistent && <Badge variant="outline"><Repeat2 className="size-3" />loops</Badge>}
+        </div>
+      )}
+
       <section className="space-y-3" aria-labelledby={`${id}-steps`}>
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
@@ -242,6 +330,7 @@ export function EosFlowBuilder({
                   <p className="mt-2 truncate text-xs text-muted-foreground">{eosRuleSummary(rule)}</p>
                 </div>
                 <div className="flex items-center">
+                  <Button type="button" size="icon" variant="ghost" disabled={rules.length >= 20} aria-label={`Duplicate step ${index + 1}`} onClick={() => duplicateRule(index)}><Copy className="size-4" /></Button>
                   {!randomized && (
                     <>
                       <Button type="button" size="icon" variant="ghost" disabled={index === 0} aria-label={`Move step ${index + 1} up`} onClick={() => moveRule(index, -1)}><ArrowUp className="size-4" /></Button>
@@ -281,6 +370,16 @@ export function EosFlowBuilder({
                 </label>
               </div>
               {invalidRange && <p role="alert" className="mt-2 text-xs font-medium text-destructive">Minimum multiplier cannot be higher than maximum.</p>}
+              {rule.target === "loss" && (rule.strategy === "lowest_multiplier" || rule.strategy === "highest_multiplier") && (
+                <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+                  Creator losses normally pay 0×. Lowest profit gives a meaningful loss ordering.
+                </p>
+              )}
+              {rule.target === "loss" && (rule.minMultiplier ?? 0) > 0 && (
+                <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+                  A loss rarely satisfies a minimum multiplier above 0×, so the range may fall back.
+                </p>
+              )}
             </div>
           );
         })}

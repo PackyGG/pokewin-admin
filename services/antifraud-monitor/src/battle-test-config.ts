@@ -43,6 +43,11 @@ export type BattleTestUserInstruction = Pick<
   mode?: "force_losses";
 };
 
+export type BattleTestInstructionContext = {
+  hasWin: boolean;
+  hasLoss: boolean;
+};
+
 export type BattleTestSelectionCandidateAudit = {
   blockNumber: number;
   winningTeam: number;
@@ -134,6 +139,10 @@ export interface BattleTestConfigSource {
     actor: string,
     forceAllLosses?: boolean,
   ): Promise<BattleTestConfig>;
+  setEnabled?(
+    enabled: boolean,
+    actor: string,
+  ): Promise<BattleTestConfig | null>;
   listUsers?(): Promise<BattleTestUserConfig[]>;
   setUser?(
     userId: string,
@@ -158,6 +167,11 @@ export interface BattleTestConfigSource {
     forceLosses: boolean,
     actor: string,
   ): Promise<BattleTestUserConfig | null>;
+  setUserEnabled?(
+    userId: string,
+    enabled: boolean,
+    actor: string,
+  ): Promise<BattleTestUserConfig | null>;
   listUserSelections?(
     userId: string,
     limit: number,
@@ -167,6 +181,7 @@ export interface BattleTestConfigSource {
   consumeUserInstruction?(
     userId: string,
     battleId: string,
+    context?: BattleTestInstructionContext,
   ): Promise<BattleTestUserInstruction | null>;
   getBattleSelection?(
     userId: string,
@@ -415,6 +430,24 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
     return result.rows.map(mapUserRow);
   }
 
+  async setEnabled(
+    enabled: boolean,
+    actor: string,
+  ): Promise<BattleTestConfig | null> {
+    const result = await this.pool.query<ConfigRow>(
+      `UPDATE battle_test_config
+       SET enabled = $2, updated_at = now(), updated_by = $3
+       WHERE environment = $1
+       RETURNING user_only_loses, rules, current_rule_index, remaining_in_rule,
+                 persistent, randomized, enabled, force_all_losses, updated_at, updated_by`,
+      [this.environment, enabled, actor],
+    );
+    if (!result.rows[0]) return null;
+    const value = mapRow(result.rows[0], this.environment);
+    this.cached = { value, expiresAt: Date.now() + CACHE_MS };
+    return value;
+  }
+
   async setUser(
     userId: string,
     username: string | null,
@@ -501,6 +534,23 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
     return result.rows[0] ? mapUserRow(result.rows[0]) : null;
   }
 
+  async setUserEnabled(
+    userId: string,
+    enabled: boolean,
+    actor: string,
+  ): Promise<BattleTestUserConfig | null> {
+    const result = await this.pool.query<UserConfigRow>(
+      `UPDATE battle_test_user_sequences
+       SET enabled = $3, updated_at = now(), updated_by = $4
+       WHERE environment = $1 AND user_id = $2
+       RETURNING environment, user_id::text, username, rules, current_rule_index,
+                 remaining_in_rule, persistent, randomized, enabled, force_losses,
+                 updated_at, updated_by`,
+      [this.environment, userId, enabled, actor],
+    );
+    return result.rows[0] ? mapUserRow(result.rows[0]) : null;
+  }
+
   async deleteUser(userId: string): Promise<void> {
     await this.pool.query(
       "DELETE FROM battle_test_user_sequences WHERE environment = $1 AND user_id = $2",
@@ -511,6 +561,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
   async consumeUserInstruction(
     userId: string,
     battleId = "00000000-0000-0000-0000-000000000000",
+    context?: BattleTestInstructionContext,
   ): Promise<BattleTestUserInstruction | null> {
     const client = await this.pool.connect();
     let releaseError: Error | undefined;
@@ -581,6 +632,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
           userId,
           row,
           source: "user",
+          context,
         });
       } else {
         const global = await client.query<ConfigRow>(
@@ -598,6 +650,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
             table: "battle_test_config",
             row: global.rows[0],
             source: "global",
+            context,
           });
         }
       }
@@ -1035,6 +1088,7 @@ async function consumeFlow(
     userId?: string;
     row: FlowRow;
     source: "user" | "global";
+    context?: BattleTestInstructionContext;
   },
 ): Promise<BattleTestUserInstruction | null> {
   const rules = parseRules(input.row.rules);
@@ -1060,6 +1114,13 @@ async function consumeFlow(
 
   const rule = rules[input.row.current_rule_index];
   if (!rule) return null;
+  const targetAvailable = rule.target === "any"
+    || input.context === undefined
+    || (rule.target === "win" ? input.context.hasWin : input.context.hasLoss);
+  // Ordered flows describe outcomes, not attempts. Keep an unavailable win or
+  // loss at the front of the sequence so the next battle retries it instead
+  // of silently consuming the step with the opposite fallback outcome.
+  if (!targetAvailable) return instructionForRule(rule, input.source);
   const remaining = input.row.remaining_in_rule > 0
     ? input.row.remaining_in_rule
     : rule.count;

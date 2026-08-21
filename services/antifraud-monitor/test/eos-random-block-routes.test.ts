@@ -600,6 +600,7 @@ test("EOS test config routes read and update the persisted setting", async () =>
 
 test("EOS global config accepts repeating weighted-random flows", async () => {
   let savedInput: unknown[] | null = null;
+  let enabledUpdate: unknown[] | null = null;
   const config: BattleTestConfigSource = {
     async get() {
       return { userOnlyLoses: false, updatedAt: null, updatedBy: null };
@@ -621,6 +622,22 @@ test("EOS global config accepts repeating weighted-random flows", async () => {
         randomized,
         enabled,
         forceAllLosses,
+        updatedAt: "2026-08-21T00:00:00.000Z",
+        updatedBy: actor,
+      };
+    },
+    async setEnabled(enabled, actor) {
+      enabledUpdate = [enabled, actor];
+      return {
+        environment: "prod",
+        userOnlyLoses: false,
+        rules: [],
+        currentRuleIndex: 1,
+        remainingInRule: 2,
+        persistent: true,
+        randomized: false,
+        enabled,
+        forceAllLosses: false,
         updatedAt: "2026-08-21T00:00:00.000Z",
         updatedBy: actor,
       };
@@ -660,6 +677,16 @@ test("EOS global config accepts repeating weighted-random flows", async () => {
   assert.deepEqual(savedInput, [rules, true, true, true, "hifoen", true]);
   assert.equal(response.json().data.randomized, true);
   assert.equal(response.json().data.forceAllLosses, true);
+
+  const paused = await app.inject({
+    method: "PATCH",
+    url: `${EOS_RANDOM_BLOCK_CONFIG_PATH}/enabled`,
+    payload: { enabled: false, actor: "motha" },
+  });
+  assert.equal(paused.statusCode, 200);
+  assert.deepEqual(enabledUpdate, [false, "motha"]);
+  assert.equal(paused.json().data.currentRuleIndex, 1);
+  assert.equal(paused.json().data.remainingInRule, 2);
   await app.close();
 });
 
@@ -788,6 +815,12 @@ test("EOS user sequence config routes list, reset, and delete rules", async () =
       assert.equal(actor, "motha");
       return { ...saved, forceLosses };
     },
+    async setUserEnabled(userId, enabled, actor) {
+      assert.equal(userId, saved.userId);
+      assert.equal(enabled, false);
+      assert.equal(actor, "motha");
+      return { ...saved, enabled };
+    },
     async listUserSelections(userId, limit) {
       assert.equal(userId, saved.userId);
       assert.equal(limit, 20);
@@ -823,6 +856,14 @@ test("EOS user sequence config routes list, reset, and delete rules", async () =
   });
   assert.equal(forced.statusCode, 200);
   assert.equal(forced.json().data.forceLosses, true);
+
+  const paused = await app.inject({
+    method: "PATCH",
+    url: `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/${saved.userId}/enabled`,
+    payload: { enabled: false, actor: "motha" },
+  });
+  assert.equal(paused.statusCode, 200);
+  assert.equal(paused.json().data.enabled, false);
 
   const invalidForce = await app.inject({
     method: "PATCH",

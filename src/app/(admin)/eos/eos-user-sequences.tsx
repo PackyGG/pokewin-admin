@@ -1,9 +1,20 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, ListOrdered, Loader2, Search, Trash2, UserRoundCog } from "lucide-react";
 import { toast } from "sonner";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +32,7 @@ import {
   removeEosUserConfig,
   saveEosUserConfig,
   searchEosUsers,
+  setEosUserEnabled,
   setEosUserForceLosses,
 } from "./actions";
 import { EosFlowBuilder, eosRuleSummary, isEosFlowValid } from "./eos-flow-builder";
@@ -39,25 +51,40 @@ function cloneRules(rules: EosUserRule[]): EosUserRule[] {
   return rules.map((rule) => ({ ...rule }));
 }
 
-export function EosUserSequences({ environment, initial, forceAllLosses }: {
+export function EosUserSequences({ environment, initial, forceAllLosses, focusUser }: {
   environment: EosTestConfig["environment"];
   initial: EosUserConfig[];
   forceAllLosses: boolean;
+  focusUser?: UserResult | null;
 }) {
+  const router = useRouter();
+  const focusedConfig = focusUser
+    ? initial.find((config) => config.userId === focusUser.userId)
+    : undefined;
   const [configs, setConfigs] = useState(initial);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<UserResult[]>([]);
-  const [selected, setSelected] = useState<UserResult | null>(null);
-  const [rules, setRules] = useState<EosUserRule[]>(cloneRules(defaultRules));
-  const [persistent, setPersistent] = useState(true);
-  const [randomized, setRandomized] = useState(false);
-  const [enabled, setEnabled] = useState(true);
-  const [forceLosses, setForceLosses] = useState(false);
+  const [selected, setSelected] = useState<UserResult | null>(focusUser ?? null);
+  const [rules, setRules] = useState<EosUserRule[]>(
+    cloneRules(focusedConfig?.rules ?? defaultRules),
+  );
+  const [persistent, setPersistent] = useState(focusedConfig?.persistent ?? true);
+  const [randomized, setRandomized] = useState(focusedConfig?.randomized ?? false);
+  const [enabled, setEnabled] = useState(focusedConfig?.enabled ?? true);
+  const [forceLosses, setForceLosses] = useState(focusedConfig?.forceLosses ?? false);
   const [history, setHistory] = useState<EosUserSelection[] | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [configFilter, setConfigFilter] = useState("");
+  const [removeTarget, setRemoveTarget] = useState<EosUserConfig | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isHistoryPending, startHistoryTransition] = useTransition();
   const valid = isEosFlowValid(rules);
+  const visibleConfigs = configs.filter((config) => {
+    const needle = configFilter.trim().toLowerCase();
+    return needle.length === 0
+      || config.userId.toLowerCase().includes(needle)
+      || config.username?.toLowerCase().includes(needle);
+  });
 
   function search() {
     startTransition(async () => {
@@ -111,10 +138,39 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
         });
         setConfigs((current) => [saved, ...current.filter((config) => config.userId !== saved.userId)]);
         setRules(cloneRules(saved.rules));
+        setPersistent(saved.persistent);
+        setRandomized(saved.randomized);
+        setEnabled(saved.enabled);
         setForceLosses(saved.forceLosses);
+        router.refresh();
         toast.success("Personal EOS flow saved and restarted");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Outcome control save failed");
+      }
+    });
+  }
+
+  function updateEnabled(next: boolean) {
+    if (!selected) return;
+    const existing = configs.some((config) => config.userId === selected.userId);
+    if (!existing) {
+      setEnabled(next);
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const saved = await setEosUserEnabled({
+          userId: selected.userId,
+          enabled: next,
+        });
+        setConfigs((current) => [saved, ...current.filter((config) => config.userId !== saved.userId)]);
+        setEnabled(saved.enabled);
+        router.refresh();
+        toast.success(next
+          ? "Personal flow resumed at its saved position"
+          : "Personal flow paused at its current position");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Personal flow status update failed");
       }
     });
   }
@@ -134,6 +190,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
         });
         setConfigs((current) => [saved, ...current.filter((config) => config.userId !== saved.userId)]);
         setForceLosses(saved.forceLosses);
+        router.refresh();
         toast.success(next
           ? "Lose-only override enabled for this user"
           : "Lose-only override disabled for this user");
@@ -149,6 +206,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
         await removeEosUserConfig(userId);
         setConfigs((current) => current.filter((config) => config.userId !== userId));
         if (selected?.userId === userId) setSelected(null);
+        router.refresh();
         toast.success("Personal EOS outcome control removed");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Outcome control removal failed");
@@ -207,7 +265,12 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
                   <div className="flex justify-end">
                     <label className="flex items-center gap-3 rounded-lg border bg-background px-3 py-2 text-sm font-medium">
                       Personal flow {enabled ? "enabled" : "paused"}
-                      <Switch aria-label="Enable personal EOS flow" checked={enabled} onCheckedChange={setEnabled} />
+                      <Switch
+                        aria-label="Enable personal EOS flow"
+                        checked={enabled}
+                        disabled={isPending}
+                        onCheckedChange={updateEnabled}
+                      />
                     </label>
                   </div>
                   <div className={`flex flex-col gap-4 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between ${
@@ -237,7 +300,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
                   </div>
                   <EosFlowBuilder id={`user-eos-flow-${selected.userId}`} rules={rules} persistent={persistent} randomized={randomized} onRulesChange={setRules} onPersistentChange={setPersistent} onRandomizedChange={setRandomized} />
                   <div className="flex justify-end border-t pt-4">
-                    <Button type="button" disabled={isPending || !valid} onClick={save}>{isPending && <Loader2 className="size-4 animate-spin" />}Save personal flow</Button>
+                    <Button type="button" disabled={isPending || !valid} onClick={save}>{isPending && <Loader2 className="size-4 animate-spin" />}Save &amp; restart personal flow</Button>
                   </div>
                 </TabsContent>
                 <TabsContent value="history" className="space-y-3 pt-2">
@@ -305,10 +368,21 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base"><ListOrdered className="size-4 text-primary" />Configured users</CardTitle>
           <p className="text-sm text-muted-foreground">{configs.length} personal {configs.length === 1 ? "flow" : "flows"}</p>
+          <div className="relative pt-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={configFilter}
+              onChange={(event) => setConfigFilter(event.target.value)}
+              className="h-8 pl-8 text-xs"
+              placeholder="Filter configured users"
+              aria-label="Filter configured EOS users"
+            />
+          </div>
         </CardHeader>
         <CardContent className="max-h-[70vh] space-y-3 overflow-y-auto">
           {configs.length === 0 && <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No personal outcome controls configured.</p>}
-          {configs.map((config) => {
+          {configs.length > 0 && visibleConfigs.length === 0 && <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No configured users match this filter.</p>}
+          {visibleConfigs.map((config) => {
             const activeRule = config.rules[config.currentRuleIndex];
             const totalBattles = config.rules.reduce((sum, rule) => sum + rule.count, 0);
             const completedBattles = config.rules.slice(0, config.currentRuleIndex).reduce((sum, rule) => sum + rule.count, 0) + (activeRule ? activeRule.count - config.remainingInRule : totalBattles);
@@ -324,7 +398,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
                   <div className="flex items-center gap-1">
                     {config.forceLosses && <Badge variant="destructive">Lose only</Badge>}
                     <Badge variant={config.enabled ? "default" : "secondary"}>{status}</Badge>
-                    <Button type="button" size="icon" variant="ghost" aria-label={`Remove ${config.username ?? config.userId}`} onClick={() => remove(config.userId)}><Trash2 className="size-4" /></Button>
+                    <Button type="button" size="icon" variant="ghost" aria-label={`Remove ${config.username ?? config.userId}`} onClick={() => setRemoveTarget(config)}><Trash2 className="size-4" /></Button>
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -345,6 +419,32 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
           })}
         </CardContent>
       </Card>
+      <AlertDialog
+        open={removeTarget !== null}
+        onOpenChange={(open) => { if (!open) setRemoveTarget(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this personal EOS flow?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removeTarget?.username ?? removeTarget?.userId} will immediately fall back to
+              the global flow. Existing battle decision history remains available until retention removes it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (removeTarget) remove(removeTarget.userId);
+                setRemoveTarget(null);
+              }}
+            >
+              Remove personal flow
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -84,6 +84,57 @@ test("persistent user rules stay active without consuming their counter", async 
   );
 });
 
+test("an unavailable ordered outcome does not consume its flow step", async () => {
+  const statements: string[] = [];
+  const client = {
+    async query(text: string) {
+      statements.push(text);
+      if (text.includes("INSERT INTO battle_test_eos_selections")) {
+        return { rows: [{ battle_id: "test-battle" }] };
+      }
+      if (text.includes("FROM battle_test_user_sequences")) {
+        return {
+          rows: [{
+            environment: "prod",
+            user_id: "test-user-123",
+            username: "tester",
+            rules: [
+              { target: "win", strategy: "lowest_profit", count: 1 },
+              { target: "loss", strategy: "lowest_profit", count: 1 },
+            ],
+            current_rule_index: 0,
+            remaining_in_rule: 1,
+            persistent: true,
+            randomized: false,
+            enabled: true,
+            force_losses: false,
+            updated_at: new Date("2026-08-22T00:00:00.000Z"),
+            updated_by: "motha",
+          }],
+        };
+      }
+      if (text.includes("SELECT force_all_losses")) {
+        return { rows: [{ force_all_losses: false }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = { async connect() { return client; } };
+  const store = new PgBattleTestConfigStore(pool as never, "prod");
+
+  const instruction = await store.consumeUserInstruction(
+    "test-user-123",
+    "00000000-0000-0000-0000-000000000001",
+    { hasWin: false, hasLoss: true },
+  );
+
+  assert.equal(instruction?.target, "win");
+  assert.equal(statements.some((statement) =>
+    statement.includes("UPDATE battle_test_user_sequences")
+  ), false);
+});
+
 test("every user-sequence query is scoped to the deployment's environment", async () => {
   const calls: Array<{ text: string; params: unknown[] }> = [];
   const record = async (text: string, params: unknown[] = []) => {
@@ -424,6 +475,30 @@ test("per-user force-losses updates only the environment-scoped override", async
   assert.match(call!.text, /WHERE environment = \$1 AND user_id = \$2/);
   assert.doesNotMatch(call!.text, /current_rule_index\s*=/);
   assert.deepEqual(call!.params, ["prod", "test-user-123", true, "motha"]);
+});
+
+test("pause and resume updates preserve global and per-user flow positions", async () => {
+  const calls: Array<{ text: string; params: unknown[] }> = [];
+  const pool = {
+    async query(text: string, params: unknown[]) {
+      calls.push({ text, params });
+      return { rows: [] };
+    },
+  };
+  const store = new PgBattleTestConfigStore(pool as never, "prod");
+
+  assert.equal(await store.setEnabled(false, "motha"), null);
+  assert.equal(await store.setUserEnabled("test-user-123", false, "motha"), null);
+
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.doesNotMatch(call.text, /current_rule_index\s*=/);
+    assert.doesNotMatch(call.text, /remaining_in_rule\s*=/);
+  }
+  assert.match(calls[0]!.text, /WHERE environment = \$1/);
+  assert.deepEqual(calls[0]!.params, ["prod", false, "motha"]);
+  assert.match(calls[1]!.text, /WHERE environment = \$1 AND user_id = \$2/);
+  assert.deepEqual(calls[1]!.params, ["prod", "test-user-123", false, "motha"]);
 });
 
 test("force-all-losses takes priority over an enabled global flow", async () => {
