@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { ListOrdered, Loader2, Search, Trash2, UserRoundCog } from "lucide-react";
+import { AlertTriangle, ListOrdered, Loader2, Search, Trash2, UserRoundCog } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -9,8 +9,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import type { EosTestConfig, EosUserConfig, EosUserRule } from "@/lib/antifraud/eos-test-config-api";
-import { removeEosUserConfig, saveEosUserConfig, searchEosUsers } from "./actions";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type {
+  EosTestConfig,
+  EosUserConfig,
+  EosUserRule,
+  EosUserSelection,
+} from "@/lib/antifraud/eos-test-config-api";
+import {
+  getEosUserSelections,
+  removeEosUserConfig,
+  saveEosUserConfig,
+  searchEosUsers,
+  setEosUserForceLosses,
+} from "./actions";
 import { EosFlowBuilder, eosRuleSummary, isEosFlowValid } from "./eos-flow-builder";
 
 type UserResult = Awaited<ReturnType<typeof searchEosUsers>>[number];
@@ -40,7 +52,11 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
   const [persistent, setPersistent] = useState(true);
   const [randomized, setRandomized] = useState(false);
   const [enabled, setEnabled] = useState(true);
+  const [forceLosses, setForceLosses] = useState(false);
+  const [history, setHistory] = useState<EosUserSelection[] | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [isHistoryPending, startHistoryTransition] = useTransition();
   const valid = isEosFlowValid(rules);
 
   function search() {
@@ -59,7 +75,22 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
     setPersistent(existing?.persistent ?? true);
     setRandomized(existing?.randomized ?? false);
     setEnabled(existing?.enabled ?? true);
+    setForceLosses(existing?.forceLosses ?? false);
+    setHistory(null);
+    setHistoryError(null);
     setResults([]);
+  }
+
+  function loadHistory(userId = selected?.userId) {
+    if (!userId) return;
+    setHistoryError(null);
+    startHistoryTransition(async () => {
+      try {
+        setHistory(await getEosUserSelections(userId));
+      } catch (error) {
+        setHistoryError(error instanceof Error ? error.message : "Battle history failed to load");
+      }
+    });
   }
 
   function save() {
@@ -76,12 +107,38 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
           persistent,
           randomized,
           enabled,
+          forceLosses,
         });
         setConfigs((current) => [saved, ...current.filter((config) => config.userId !== saved.userId)]);
         setRules(cloneRules(saved.rules));
+        setForceLosses(saved.forceLosses);
         toast.success("Personal EOS flow saved and restarted");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Outcome control save failed");
+      }
+    });
+  }
+
+  function updateForceLosses(next: boolean) {
+    if (!selected) return;
+    const existing = configs.some((config) => config.userId === selected.userId);
+    if (!existing) {
+      setForceLosses(next);
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const saved = await setEosUserForceLosses({
+          userId: selected.userId,
+          forceLosses: next,
+        });
+        setConfigs((current) => [saved, ...current.filter((config) => config.userId !== saved.userId)]);
+        setForceLosses(saved.forceLosses);
+        toast.success(next
+          ? "Lose-only override enabled for this user"
+          : "Lose-only override disabled for this user");
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "User override update failed");
       }
     });
   }
@@ -136,15 +193,107 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
                   <p className="truncate text-sm font-semibold">{selected.displayUsername ?? selected.username ?? "Unnamed user"}</p>
                   <p className="break-all font-mono text-[11px] text-muted-foreground">{selected.userId}</p>
                 </div>
-                <label className="flex items-center gap-3 rounded-lg border bg-background px-3 py-2 text-sm font-medium">
-                  Personal flow {enabled ? "enabled" : "paused"}
-                  <Switch aria-label="Enable personal EOS flow" checked={enabled} onCheckedChange={setEnabled} />
-                </label>
               </div>
-              <EosFlowBuilder id={`user-eos-flow-${selected.userId}`} rules={rules} persistent={persistent} randomized={randomized} onRulesChange={setRules} onPersistentChange={setPersistent} onRandomizedChange={setRandomized} />
-              <div className="flex justify-end border-t pt-4">
-                <Button type="button" disabled={isPending || !valid} onClick={save}>{isPending && <Loader2 className="size-4 animate-spin" />}Save personal flow</Button>
-              </div>
+              <Tabs defaultValue="flow" onValueChange={(value) => {
+                if (value === "history" && history === null && !isHistoryPending) {
+                  loadHistory(selected.userId);
+                }
+              }}>
+                <TabsList>
+                  <TabsTrigger value="flow">Flow controls</TabsTrigger>
+                  <TabsTrigger value="history">Battle history</TabsTrigger>
+                </TabsList>
+                <TabsContent value="flow" className="space-y-5 pt-2">
+                  <div className="flex justify-end">
+                    <label className="flex items-center gap-3 rounded-lg border bg-background px-3 py-2 text-sm font-medium">
+                      Personal flow {enabled ? "enabled" : "paused"}
+                      <Switch aria-label="Enable personal EOS flow" checked={enabled} onCheckedChange={setEnabled} />
+                    </label>
+                  </div>
+                  <div className={`flex flex-col gap-4 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between ${
+                    forceLosses
+                      ? "border-destructive/60 bg-destructive/10"
+                      : "border-amber-500/40 bg-amber-500/5"
+                  }`}>
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className={`mt-0.5 size-5 shrink-0 ${forceLosses ? "text-destructive" : "text-amber-500"}`} />
+                      <div>
+                        <p className="text-sm font-semibold">Lose only for this user</p>
+                        <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
+                          Overrides this user&apos;s saved flow without resetting it. Selects a loss;
+                          if no loss is possible, it selects the lowest creator outcome.
+                        </p>
+                      </div>
+                    </div>
+                    <label className="flex shrink-0 items-center gap-3 rounded-lg border bg-background px-3 py-2 text-sm font-semibold">
+                      {forceLosses ? "Override active" : "Override off"}
+                      <Switch
+                        aria-label="Force losses for this EOS user"
+                        checked={forceLosses}
+                        disabled={isPending}
+                        onCheckedChange={updateForceLosses}
+                      />
+                    </label>
+                  </div>
+                  <EosFlowBuilder id={`user-eos-flow-${selected.userId}`} rules={rules} persistent={persistent} randomized={randomized} onRulesChange={setRules} onPersistentChange={setPersistent} onRandomizedChange={setRandomized} />
+                  <div className="flex justify-end border-t pt-4">
+                    <Button type="button" disabled={isPending || !valid} onClick={save}>{isPending && <Loader2 className="size-4 animate-spin" />}Save personal flow</Button>
+                  </div>
+                </TabsContent>
+                <TabsContent value="history" className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs text-muted-foreground">Recent {environment} EOS decisions. Stored for 30 days.</p>
+                    <Button type="button" size="sm" variant="outline" disabled={isHistoryPending} onClick={() => loadHistory(selected.userId)}>
+                      {isHistoryPending && <Loader2 className="size-4 animate-spin" />}Refresh
+                    </Button>
+                  </div>
+                  {historyError && (
+                    <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{historyError}</div>
+                  )}
+                  {isHistoryPending && history === null && (
+                    <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading battle history</div>
+                  )}
+                  {history?.length === 0 && (
+                    <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">No auditable EOS battles yet. New battles will appear here.</div>
+                  )}
+                  {history?.map((entry) => {
+                    const wins = entry.candidates.filter((candidate) => candidate.creatorWonBattle).length;
+                    const status = entry.fallbackReason === "target_unavailable"
+                      ? `Requested ${entry.requestedTarget} unavailable`
+                      : entry.fallbackReason === "range_unavailable"
+                        ? "Multiplier range unavailable"
+                        : entry.requestedTarget ? "Matched request" : "Random selection";
+                    return (
+                      <details key={entry.battleId} className="group rounded-lg border bg-card p-3">
+                        <summary className="cursor-pointer list-none space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs font-medium">{new Date(entry.selectedAt).toLocaleString()}</span>
+                            <Badge variant={entry.fallbackReason ? "destructive" : "secondary"}>{status}</Badge>
+                          </div>
+                          <div className="grid gap-2 text-xs sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+                            <div>
+                              <span className="text-muted-foreground">Requested </span>
+                              <span className="font-semibold uppercase">{entry.requestedTarget ?? "random"}</span>
+                              {entry.requestedStrategy && <span className="text-muted-foreground"> · {entry.requestedStrategy.replaceAll("_", " ")}</span>}
+                            </div>
+                            <span className="hidden text-muted-foreground sm:inline">→</span>
+                            <div className="sm:text-right">
+                              <span className="text-muted-foreground">EOS selected </span>
+                              <span className={`font-semibold uppercase ${entry.selected.creatorWonBattle ? "text-emerald-600" : "text-destructive"}`}>{entry.selected.creatorWonBattle ? "win" : "loss"}</span>
+                              <span className="text-muted-foreground"> · {entry.selected.creatorMultiplier?.toFixed(2) ?? "—"}× · {entry.selected.creatorProfitLoss.toFixed(2)}</span>
+                            </div>
+                          </div>
+                        </summary>
+                        <div className="mt-3 space-y-2 border-t pt-3 text-xs text-muted-foreground">
+                          <p>{wins} winning and {entry.candidates.length - wins} losing candidates were available in the five-block window.</p>
+                          <p>Source: {entry.controlKind.replaceAll("_", " ")} · Selected block {entry.selected.blockNumber} · Random baseline {entry.randomBlockNumber}</p>
+                          <p className="break-all font-mono text-[10px]">Battle {entry.battleId}</p>
+                        </div>
+                      </details>
+                    );
+                  })}
+                </TabsContent>
+              </Tabs>
             </div>
           ) : (
             <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">Search for a {environment} user to create or edit a personal flow.</div>
@@ -173,6 +322,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses }: {
                     <p className="truncate font-mono text-[10px] text-muted-foreground">{config.userId}</p>
                   </button>
                   <div className="flex items-center gap-1">
+                    {config.forceLosses && <Badge variant="destructive">Lose only</Badge>}
                     <Badge variant={config.enabled ? "default" : "secondary"}>{status}</Badge>
                     <Button type="button" size="icon" variant="ghost" aria-label={`Remove ${config.username ?? config.userId}`} onClick={() => remove(config.userId)}><Trash2 className="size-4" /></Button>
                   </div>

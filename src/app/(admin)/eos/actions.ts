@@ -8,8 +8,10 @@ import {
   deleteEosUserConfig,
   eosUserRuleSchema,
   getEosTestConfig,
+  listEosUserSelections,
   updateEosTestConfig,
   updateEosUserConfig,
+  updateEosUserForceLosses,
 } from "@/lib/antifraud/eos-test-config-api";
 import { getBattleTestDevReadDrizzleDb } from "@/lib/battle-test-dev-db";
 import { getProdReadDrizzleDb } from "@/lib/db";
@@ -34,6 +36,23 @@ export async function saveGlobalEosFlow(input: unknown) {
   const flow = saveFlowSchema.parse(input);
   const saved = await updateEosTestConfig(environment, {
     ...flow,
+    actor: session.username,
+  });
+  revalidatePath("/eos");
+  return saved;
+}
+
+export async function setEosUserForceLosses(input: unknown) {
+  const [session, environment] = await Promise.all([
+    requireEosTestAccess(),
+    readDbEnvFromCookie(),
+  ]);
+  const parsed = z.object({
+    userId: z.string().trim().min(1).max(100),
+    forceLosses: z.boolean(),
+  }).strict().parse(input);
+  const saved = await updateEosUserForceLosses(environment, {
+    ...parsed,
     actor: session.username,
   });
   revalidatePath("/eos");
@@ -87,6 +106,15 @@ export async function searchEosUsers(input: unknown) {
   return rows;
 }
 
+export async function getEosUserSelections(input: unknown) {
+  const [, environment] = await Promise.all([
+    requireEosTestAccess(),
+    readDbEnvFromCookie(),
+  ]);
+  const userId = z.string().trim().min(1).max(100).parse(input);
+  return listEosUserSelections(environment, userId, 20);
+}
+
 const saveUserConfigSchema = z.object({
   userId: z.string().trim().min(1).max(100),
   username: z.string().trim().min(1).max(100).nullable(),
@@ -94,6 +122,7 @@ const saveUserConfigSchema = z.object({
   persistent: z.boolean(),
   randomized: z.boolean(),
   enabled: z.boolean(),
+  forceLosses: z.boolean(),
 });
 
 export async function saveEosUserConfig(input: unknown) {

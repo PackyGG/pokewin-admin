@@ -15,6 +15,7 @@ import {
 import type {
   BattleTestConfigSource,
   BattleTestEnvironment,
+  BattleTestSelectionAuditInput,
   BattleTestUserInstruction,
 } from "./battle-test-config.js";
 
@@ -107,8 +108,18 @@ const userConfigUpdateSchema = z.object({
   persistent: z.boolean().default(false),
   randomized: z.boolean().default(false),
   enabled: z.boolean(),
+  forceLosses: z.boolean().optional(),
   actor: z.string().trim().min(1).max(120),
 }).strict().refine((flow) => !flow.randomized || flow.persistent);
+
+const userForceLossesUpdateSchema = z.object({
+  forceLosses: z.boolean(),
+  actor: z.string().trim().min(1).max(120),
+}).strict();
+
+const userSelectionQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+}).strict();
 
 const chainBlockRequestSchema = z.object({
   block_num_or_id: z.union([
@@ -166,18 +177,13 @@ export function selectBattleTestInstructionOutcome(
         : best;
     });
   }
-  const multiplier = (outcome: BattleCandidateOutcome) =>
-    outcome.creatorMultiplier
-      ?? (outcome.creatorCost > 0
-        ? (outcome.creatorProfitLoss + outcome.creatorCost) / outcome.creatorCost
-        : 0);
   const matching = targetMatches.filter((outcome) =>
     (instruction.minMultiplier === null
       || instruction.minMultiplier === undefined
-      || multiplier(outcome) >= instruction.minMultiplier)
+      || outcomeMultiplier(outcome) >= instruction.minMultiplier)
     && (instruction.maxMultiplier === null
       || instruction.maxMultiplier === undefined
-      || multiplier(outcome) <= instruction.maxMultiplier)
+      || outcomeMultiplier(outcome) <= instruction.maxMultiplier)
   );
   // Outcome intent is stronger than the optional range. If the five-block
   // window contains the requested win/loss but none inside the range, retain
@@ -195,16 +201,88 @@ export function selectBattleTestInstructionOutcome(
   }
   if (instruction.strategy === "lowest_multiplier") {
     return eligible.reduce((lowest, outcome) =>
-      multiplier(outcome) < multiplier(lowest) ? outcome : lowest
+      outcomeMultiplier(outcome) < outcomeMultiplier(lowest) ? outcome : lowest
     );
   }
   if (instruction.strategy === "highest_multiplier") {
     return eligible.reduce((highest, outcome) =>
-      multiplier(outcome) > multiplier(highest) ? outcome : highest
+      outcomeMultiplier(outcome) > outcomeMultiplier(highest) ? outcome : highest
     );
   }
   return eligible.find((outcome) => outcome.blockNumber === randomBlockNumber)
     ?? eligible[randomIndex(eligible.length)]!;
+}
+
+function outcomeMultiplier(outcome: BattleCandidateOutcome): number {
+  return outcome.creatorMultiplier
+    ?? (outcome.creatorCost > 0
+      ? (outcome.creatorProfitLoss + outcome.creatorCost) / outcome.creatorCost
+      : 0);
+}
+
+function selectionAudit(
+  outcomes: BattleCandidateOutcome[],
+  selected: BattleCandidateOutcome,
+  instruction: BattleTestUserInstruction | null,
+  userOnlyLoses: boolean,
+  randomBlockNumber: number,
+  battle: { mode: string; crazyMode: boolean; currency: string },
+): BattleTestSelectionAuditInput {
+  const requestedTarget = instruction?.target ?? (userOnlyLoses ? "loss" : null);
+  const requestedStrategy = instruction?.strategy ?? (userOnlyLoses ? "random" : null);
+  const targetMatches = requestedTarget === null || requestedTarget === "any"
+    ? outcomes
+    : outcomes.filter((outcome) => requestedTarget === "win"
+      ? outcome.creatorWonBattle
+      : !outcome.creatorWonBattle);
+  const hasRange = instruction
+    && (instruction.minMultiplier !== null && instruction.minMultiplier !== undefined
+      || instruction.maxMultiplier !== null && instruction.maxMultiplier !== undefined);
+  const rangeMatches = hasRange
+    ? targetMatches.filter((outcome) =>
+        (instruction.minMultiplier === null
+          || instruction.minMultiplier === undefined
+          || outcomeMultiplier(outcome) >= instruction.minMultiplier)
+        && (instruction.maxMultiplier === null
+          || instruction.maxMultiplier === undefined
+          || outcomeMultiplier(outcome) <= instruction.maxMultiplier))
+    : targetMatches;
+  const candidateAudit = (outcome: BattleCandidateOutcome) => ({
+    blockNumber: outcome.blockNumber,
+    winningTeam: outcome.winningTeam,
+    creatorTeam: outcome.creatorTeam,
+    creatorWonBattle: outcome.creatorWonBattle,
+    creatorCost: outcome.creatorCost,
+    creatorProfitLoss: outcome.creatorProfitLoss,
+    creatorMultiplier: outcomeMultiplier(outcome),
+  });
+  const source = instruction?.source
+    ?? (instruction ? "user" : userOnlyLoses ? "global" : "random");
+  return {
+    version: 1,
+    source,
+    controlKind: instruction?.mode === "force_losses"
+      ? source === "global" ? "global_force_losses" : "user_force_losses"
+      : instruction
+        ? source === "global" ? "global_rule" : "user_rule"
+        : userOnlyLoses ? "legacy_global_losses" : "random",
+    randomBlockNumber,
+    battleMode: battle.mode,
+    crazyMode: battle.crazyMode,
+    currency: battle.currency,
+    requestedTarget,
+    requestedStrategy,
+    requestedMinMultiplier: instruction?.minMultiplier ?? null,
+    requestedMaxMultiplier: instruction?.maxMultiplier ?? null,
+    fallbackReason: requestedTarget !== null && requestedTarget !== "any"
+        && targetMatches.length === 0
+      ? "target_unavailable"
+      : hasRange && rangeMatches.length === 0
+        ? "range_unavailable"
+        : null,
+    selected: candidateAudit(selected),
+    candidates: outcomes.map(candidateAudit),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -504,11 +582,20 @@ export async function registerEosRandomBlockRoutes(
       throw new BattleSimulationError("battle_data_incomplete", 409);
     }
     const response = chainInfoForSelectedBlock(selection, selectedBlock);
+    const audit = selectionAudit(
+      simulatedOutcomes,
+      selected,
+      instruction,
+      userOnlyLoses,
+      selection.selectedBlock.blockNumber,
+      battleSummary,
+    );
     const savedResponse = selectedConfig?.saveBattleSelection
       ? await selectedConfig.saveBattleSelection(
           userID,
           battleSummary.battleId,
           response,
+          audit,
         )
       : response;
     return {
@@ -551,7 +638,9 @@ export async function registerEosRandomBlockRoutes(
         randomBlockNumber: resolved.selection.selectedBlock.blockNumber,
         selectedBlockNumber: resolved.selectedBlock.blockNumber,
         steeredBy: resolved.instruction
-          ? `${resolved.instruction.source ?? "user"}_rule`
+          ? resolved.instruction.mode === "force_losses"
+            ? `${resolved.instruction.source ?? "user"}_force_losses`
+            : `${resolved.instruction.source ?? "user"}_rule`
           : resolved.userOnlyLoses
             ? "global_only_loses"
             : "random",
@@ -632,6 +721,31 @@ export async function registerEosRandomBlockRoutes(
         }
         return { data: await selectedConfig.listUsers() };
       });
+      app.get(
+        `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/:userId/selections`,
+        async (request, reply) => {
+          const resolution = resolveEnvironment(request, "config");
+          if (!resolution.ok) return sendEnvironmentError(reply, resolution);
+          const selectedConfig = resolution.resources.testConfig!;
+          if (!selectedConfig.listUserSelections) {
+            return reply.code(503).send({ error: "environment_unavailable" });
+          }
+          const userId = z.string().trim().min(1).max(100).safeParse(
+            (request.params as { userId?: unknown }).userId,
+          );
+          const query = userSelectionQuerySchema.safeParse(request.query);
+          if (!userId.success || !query.success) {
+            return reply.code(400).send({ error: "invalid_request" });
+          }
+          return {
+            environment: resolution.resources.environment,
+            data: await selectedConfig.listUserSelections(
+              userId.data,
+              query.data.limit,
+            ),
+          };
+        },
+      );
       app.put(
         `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/:userId`,
         async (request, reply) => {
@@ -651,7 +765,7 @@ export async function registerEosRandomBlockRoutes(
           const saved = selectedConfig.setUserFlow
             ? await selectedConfig.setUserFlow(userId.data, parsed.data.username,
                 parsed.data.rules, parsed.data.persistent, parsed.data.randomized,
-                parsed.data.enabled, parsed.data.actor)
+                parsed.data.enabled, parsed.data.actor, parsed.data.forceLosses)
             : await selectedConfig.setUser(userId.data, parsed.data.username,
                 parsed.data.rules, parsed.data.persistent, parsed.data.enabled,
                 parsed.data.actor);
@@ -666,9 +780,46 @@ export async function registerEosRandomBlockRoutes(
               enabled: parsed.data.enabled,
               persistent: parsed.data.persistent,
               randomized: parsed.data.randomized,
+              forceLosses: parsed.data.forceLosses,
               rules: parsed.data.rules,
             },
             "EOS battle test user sequence updated",
+          );
+          return { data: saved };
+        },
+      );
+      app.patch(
+        `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/:userId/force-losses`,
+        async (request, reply) => {
+          const resolution = resolveEnvironment(request, "config");
+          if (!resolution.ok) return sendEnvironmentError(reply, resolution);
+          const selectedConfig = resolution.resources.testConfig!;
+          if (!selectedConfig.setUserForceLosses) {
+            return reply.code(503).send({ error: "environment_unavailable" });
+          }
+          const userId = z.string().trim().min(1).max(100).safeParse(
+            (request.params as { userId?: unknown }).userId,
+          );
+          const parsed = userForceLossesUpdateSchema.safeParse(request.body);
+          if (!userId.success || !parsed.success) {
+            return reply.code(400).send({ error: "invalid_request" });
+          }
+          const saved = await selectedConfig.setUserForceLosses(
+            userId.data,
+            parsed.data.forceLosses,
+            parsed.data.actor,
+          );
+          if (!saved) return reply.code(404).send({ error: "user_config_not_found" });
+          request.log.info(
+            {
+              event: "eos_random_block.user_force_losses_updated",
+              requestId: request.id,
+              environment: resolution.resources.environment ?? saved.environment ?? null,
+              actor: parsed.data.actor,
+              userId: userId.data,
+              forceLosses: parsed.data.forceLosses,
+            },
+            "EOS battle test per-user loss override updated",
           );
           return { data: saved };
         },

@@ -30,6 +30,7 @@ export type BattleTestUserConfig = {
   persistent: boolean;
   randomized?: boolean;
   enabled: boolean;
+  forceLosses: boolean;
   updatedAt: string;
   updatedBy: string | null;
 };
@@ -37,7 +38,51 @@ export type BattleTestUserConfig = {
 export type BattleTestUserInstruction = Pick<
   BattleTestUserRule,
   "target" | "strategy" | "minMultiplier" | "maxMultiplier"
-> & { source?: "user" | "global" };
+> & {
+  source?: "user" | "global";
+  mode?: "force_losses";
+};
+
+export type BattleTestSelectionCandidateAudit = {
+  blockNumber: number;
+  winningTeam: number;
+  creatorTeam: number;
+  creatorWonBattle: boolean;
+  creatorCost: number;
+  creatorProfitLoss: number;
+  creatorMultiplier: number | null;
+};
+
+export type BattleTestSelectionAudit = {
+  battleId: string;
+  createdAt: string;
+  selectedAt: string;
+  version: 1;
+  source: "user" | "global" | "random";
+  controlKind:
+    | "user_rule"
+    | "global_rule"
+    | "user_force_losses"
+    | "global_force_losses"
+    | "legacy_global_losses"
+    | "random";
+  randomBlockNumber: number;
+  battleMode: string;
+  crazyMode: boolean;
+  currency: string;
+  requestedTarget: BattleTestOutcomeTarget | null;
+  requestedStrategy: BattleTestSelectionStrategy | null;
+  requestedMinMultiplier: number | null;
+  requestedMaxMultiplier: number | null;
+  fallbackReason: "target_unavailable" | "range_unavailable" | null;
+  selected: BattleTestSelectionCandidateAudit;
+  candidates: BattleTestSelectionCandidateAudit[];
+};
+
+export type BattleTestSelectionAuditInput = Omit<
+  BattleTestSelectionAudit,
+  "battleId" | "createdAt" | "selectedAt"
+>;
 
 export type BattleTestConfig = {
   environment?: BattleTestEnvironment;
@@ -81,7 +126,17 @@ export interface BattleTestConfigSource {
     randomized: boolean,
     enabled: boolean,
     actor: string,
+    forceLosses?: boolean,
   ): Promise<BattleTestUserConfig>;
+  setUserForceLosses?(
+    userId: string,
+    forceLosses: boolean,
+    actor: string,
+  ): Promise<BattleTestUserConfig | null>;
+  listUserSelections?(
+    userId: string,
+    limit: number,
+  ): Promise<BattleTestSelectionAudit[]>;
   deleteUser?(userId: string): Promise<void>;
   consumeUserInstruction?(
     userId: string,
@@ -95,6 +150,7 @@ export interface BattleTestConfigSource {
     userId: string,
     battleId: string,
     response: Record<string, unknown>,
+    audit?: BattleTestSelectionAuditInput,
   ): Promise<Record<string, unknown>>;
 }
 
@@ -121,6 +177,7 @@ type UserConfigRow = {
   persistent: boolean;
   randomized: boolean;
   enabled: boolean;
+  force_losses: boolean;
   updated_at: Date | string;
   updated_by: string | null;
 };
@@ -204,6 +261,7 @@ function mapUserRow(row: UserConfigRow): BattleTestUserConfig {
     persistent: row.persistent,
     randomized: row.randomized,
     enabled: row.enabled,
+    forceLosses: row.force_losses,
     updatedAt: new Date(row.updated_at).toISOString(),
     updatedBy: row.updated_by,
   };
@@ -319,7 +377,8 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
     const result = await this.pool.query<UserConfigRow>(
       `
         SELECT environment, user_id::text, username, rules, current_rule_index,
-               remaining_in_rule, persistent, randomized, enabled, updated_at, updated_by
+               remaining_in_rule, persistent, randomized, enabled, force_losses,
+               updated_at, updated_by
         FROM battle_test_user_sequences
         WHERE environment = $1
         ORDER BY updated_at DESC
@@ -351,6 +410,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
     randomized: boolean,
     enabled: boolean,
     actor: string,
+    forceLosses?: boolean,
   ): Promise<BattleTestUserConfig> {
     const normalizedRules = parseRules(rules);
     if (normalizedRules.length === 0 || normalizedRules.length !== rules.length) {
@@ -363,8 +423,10 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
       `
         INSERT INTO battle_test_user_sequences (
           environment, user_id, username, rules, current_rule_index,
-          remaining_in_rule, persistent, randomized, enabled, updated_at, updated_by
-        ) VALUES ($9, $1, $2, $3::jsonb, 0, $4, $5, $6, $7, now(), $8)
+          remaining_in_rule, persistent, randomized, enabled, force_losses,
+          updated_at, updated_by
+        ) VALUES ($9, $1, $2, $3::jsonb, 0, $4, $5, $6, $7,
+                  COALESCE($10, false), now(), $8)
         ON CONFLICT (environment, user_id) DO UPDATE SET
           username = EXCLUDED.username,
           rules = EXCLUDED.rules,
@@ -373,10 +435,12 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
           persistent = EXCLUDED.persistent,
           randomized = EXCLUDED.randomized,
           enabled = EXCLUDED.enabled,
+          force_losses = COALESCE($10, battle_test_user_sequences.force_losses),
           updated_at = now(),
           updated_by = EXCLUDED.updated_by
         RETURNING environment, user_id::text, username, rules, current_rule_index,
-                  remaining_in_rule, persistent, randomized, enabled, updated_at, updated_by
+                  remaining_in_rule, persistent, randomized, enabled, force_losses,
+                  updated_at, updated_by
       `,
       [
         userId,
@@ -388,9 +452,27 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
         enabled,
         actor,
         this.environment,
+        forceLosses ?? null,
       ],
     );
     return mapUserRow(result.rows[0]!);
+  }
+
+  async setUserForceLosses(
+    userId: string,
+    forceLosses: boolean,
+    actor: string,
+  ): Promise<BattleTestUserConfig | null> {
+    const result = await this.pool.query<UserConfigRow>(
+      `UPDATE battle_test_user_sequences
+       SET force_losses = $3, updated_at = now(), updated_by = $4
+       WHERE environment = $1 AND user_id = $2
+       RETURNING environment, user_id::text, username, rules, current_rule_index,
+                 remaining_in_rule, persistent, randomized, enabled, force_losses,
+                 updated_at, updated_by`,
+      [this.environment, userId, forceLosses, actor],
+    );
+    return result.rows[0] ? mapUserRow(result.rows[0]) : null;
   }
 
   async deleteUser(userId: string): Promise<void> {
@@ -433,7 +515,8 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
       const result = await client.query<UserConfigRow>(
         `
           SELECT environment, user_id::text, username, rules, current_rule_index,
-                 remaining_in_rule, persistent, randomized, enabled, updated_at, updated_by
+                 remaining_in_rule, persistent, randomized, enabled, force_losses,
+                 updated_at, updated_by
           FROM battle_test_user_sequences
           WHERE environment = $1 AND user_id = $2
           FOR UPDATE
@@ -454,6 +537,16 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
           minMultiplier: null,
           maxMultiplier: null,
           source: "global",
+          mode: "force_losses",
+        };
+      } else if (row?.force_losses) {
+        instruction = {
+          target: "loss",
+          strategy: "lowest_profit",
+          minMultiplier: null,
+          maxMultiplier: null,
+          source: "user",
+          mode: "force_losses",
         };
       } else if (row?.enabled) {
         instruction = await consumeFlow(client, {
@@ -537,22 +630,156 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
       : null;
   }
 
+  async listUserSelections(
+    userId: string,
+    limit: number,
+  ): Promise<BattleTestSelectionAudit[]> {
+    const result = await this.pool.query<{
+      battle_id: string;
+      audit: unknown;
+      created_at: Date | string;
+      selected_at: Date | string;
+    }>(
+      `SELECT battle_id::text, audit, created_at, selected_at
+       FROM battle_test_eos_selections
+       WHERE environment = $1 AND user_id = $2
+         AND audit IS NOT NULL AND response IS NOT NULL AND selected_at IS NOT NULL
+       ORDER BY created_at DESC
+       LIMIT $3`,
+      [this.environment, userId, Math.max(1, Math.min(50, limit))],
+    );
+    return result.rows.flatMap((row) => {
+      const audit = parseSelectionAudit(row.audit);
+      return audit ? [{
+        battleId: row.battle_id,
+        createdAt: new Date(row.created_at).toISOString(),
+        selectedAt: new Date(row.selected_at).toISOString(),
+        ...audit,
+      }] : [];
+    });
+  }
+
   async saveBattleSelection(
     userId: string,
     battleId: string,
     response: Record<string, unknown>,
+    audit?: BattleTestSelectionAuditInput,
   ): Promise<Record<string, unknown>> {
     const result = await this.pool.query<{ response: Record<string, unknown> }>(
       `UPDATE battle_test_eos_selections
        SET response = COALESCE(response, $4::jsonb),
+           audit = CASE WHEN response IS NULL THEN $5::jsonb ELSE audit END,
            selected_at = COALESCE(selected_at, now())
        WHERE environment = $1 AND battle_id = $2 AND user_id = $3
        RETURNING response`,
-      [this.environment, battleId, userId, JSON.stringify(response)],
+      [
+        this.environment,
+        battleId,
+        userId,
+        JSON.stringify(response),
+        audit ? JSON.stringify(audit) : null,
+      ],
     );
     if (!result.rows[0]) throw new Error("EOS battle reservation is missing");
     return result.rows[0].response;
   }
+}
+
+function parseSelectionCandidateAudit(
+  value: unknown,
+): BattleTestSelectionCandidateAudit | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  return Number.isSafeInteger(row.blockNumber)
+      && Number.isSafeInteger(row.winningTeam)
+      && Number.isSafeInteger(row.creatorTeam)
+      && typeof row.creatorWonBattle === "boolean"
+      && typeof row.creatorCost === "number"
+      && Number.isFinite(row.creatorCost)
+      && typeof row.creatorProfitLoss === "number"
+      && Number.isFinite(row.creatorProfitLoss)
+      && (row.creatorMultiplier === null
+        || (typeof row.creatorMultiplier === "number"
+          && Number.isFinite(row.creatorMultiplier)))
+    ? {
+        blockNumber: row.blockNumber as number,
+        winningTeam: row.winningTeam as number,
+        creatorTeam: row.creatorTeam as number,
+        creatorWonBattle: row.creatorWonBattle,
+        creatorCost: row.creatorCost,
+        creatorProfitLoss: row.creatorProfitLoss,
+        creatorMultiplier: row.creatorMultiplier as number | null,
+      }
+    : null;
+}
+
+function parseSelectionAudit(value: unknown): BattleTestSelectionAuditInput | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const selected = parseSelectionCandidateAudit(row.selected);
+  const candidates = Array.isArray(row.candidates)
+    ? row.candidates.map(parseSelectionCandidateAudit)
+    : [];
+  const source = row.source === "user" || row.source === "global"
+      || row.source === "random"
+    ? row.source
+    : null;
+  const controlKinds = new Set<BattleTestSelectionAuditInput["controlKind"]>([
+    "user_rule",
+    "global_rule",
+    "user_force_losses",
+    "global_force_losses",
+    "legacy_global_losses",
+    "random",
+  ]);
+  const controlKind = typeof row.controlKind === "string"
+      && controlKinds.has(row.controlKind as BattleTestSelectionAuditInput["controlKind"])
+    ? row.controlKind as BattleTestSelectionAuditInput["controlKind"]
+    : null;
+  const target = row.requestedTarget === null
+      || (typeof row.requestedTarget === "string"
+        && TARGETS.has(row.requestedTarget as BattleTestOutcomeTarget))
+    ? row.requestedTarget as BattleTestOutcomeTarget | null
+    : undefined;
+  const strategy = row.requestedStrategy === null
+      || (typeof row.requestedStrategy === "string"
+        && STRATEGIES.has(row.requestedStrategy as BattleTestSelectionStrategy))
+    ? row.requestedStrategy as BattleTestSelectionStrategy | null
+    : undefined;
+  const fallbackReason = row.fallbackReason === null
+      || row.fallbackReason === "target_unavailable"
+      || row.fallbackReason === "range_unavailable"
+    ? row.fallbackReason
+    : undefined;
+  const requestedMinMultiplier = parseMultiplier(row.requestedMinMultiplier);
+  const requestedMaxMultiplier = parseMultiplier(row.requestedMaxMultiplier);
+  return row.version === 1 && source && controlKind
+      && Number.isSafeInteger(row.randomBlockNumber)
+      && typeof row.battleMode === "string" && row.battleMode.length <= 50
+      && typeof row.crazyMode === "boolean"
+      && typeof row.currency === "string" && row.currency.length <= 50
+      && target !== undefined && strategy !== undefined
+      && requestedMinMultiplier !== undefined
+      && requestedMaxMultiplier !== undefined
+      && fallbackReason !== undefined && selected
+      && candidates.length === 5 && candidates.every(Boolean)
+    ? {
+        version: 1,
+        source,
+        controlKind,
+        randomBlockNumber: row.randomBlockNumber as number,
+        battleMode: row.battleMode,
+        crazyMode: row.crazyMode,
+        currency: row.currency,
+        requestedTarget: target,
+        requestedStrategy: strategy,
+        requestedMinMultiplier,
+        requestedMaxMultiplier,
+        fallbackReason,
+        selected,
+        candidates: candidates as BattleTestSelectionCandidateAudit[],
+      }
+    : null;
 }
 
 function parseInstruction(value: unknown): BattleTestUserInstruction | null {
@@ -565,6 +792,11 @@ function parseInstruction(value: unknown): BattleTestUserInstruction | null {
     : record.source === "user" || record.source === "global"
       ? record.source
       : null;
+  const mode = record.mode === undefined
+    ? undefined
+    : record.mode === "force_losses"
+      ? record.mode
+      : null;
   return typeof record.target === "string"
       && TARGETS.has(record.target as BattleTestOutcomeTarget)
       && typeof record.strategy === "string"
@@ -574,12 +806,14 @@ function parseInstruction(value: unknown): BattleTestUserInstruction | null {
       && (minMultiplier === null || maxMultiplier === null
         || minMultiplier <= maxMultiplier)
       && source !== null
+      && mode !== null
     ? {
         target: record.target as BattleTestOutcomeTarget,
         strategy: record.strategy as BattleTestSelectionStrategy,
         minMultiplier,
         maxMultiplier,
         ...(source ? { source } : {}),
+        ...(mode ? { mode } : {}),
       }
     : null;
 }

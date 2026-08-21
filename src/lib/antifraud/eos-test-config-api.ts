@@ -53,13 +53,58 @@ const userConfigSchema = z.object({
   persistent: z.boolean().default(false),
   randomized: z.boolean().default(false),
   enabled: z.boolean(),
+  forceLosses: z.boolean().default(false),
   updatedAt: z.string(),
   updatedBy: z.string().nullable(),
+});
+
+const userSelectionCandidateSchema = z.object({
+  blockNumber: z.number().int().positive(),
+  winningTeam: z.number().int(),
+  creatorTeam: z.number().int(),
+  creatorWonBattle: z.boolean(),
+  creatorCost: z.number(),
+  creatorProfitLoss: z.number(),
+  creatorMultiplier: z.number().nullable(),
+});
+
+const userSelectionSchema = z.object({
+  battleId: z.string().uuid(),
+  createdAt: z.string(),
+  selectedAt: z.string(),
+  version: z.literal(1),
+  source: z.enum(["user", "global", "random"]),
+  controlKind: z.enum([
+    "user_rule",
+    "global_rule",
+    "user_force_losses",
+    "global_force_losses",
+    "legacy_global_losses",
+    "random",
+  ]),
+  randomBlockNumber: z.number().int().positive(),
+  battleMode: z.string().max(50),
+  crazyMode: z.boolean(),
+  currency: z.string().max(50),
+  requestedTarget: z.enum(["loss", "win", "any"]).nullable(),
+  requestedStrategy: z.enum([
+    "random",
+    "lowest_profit",
+    "highest_profit",
+    "lowest_multiplier",
+    "highest_multiplier",
+  ]).nullable(),
+  requestedMinMultiplier: z.number().nullable(),
+  requestedMaxMultiplier: z.number().nullable(),
+  fallbackReason: z.enum(["target_unavailable", "range_unavailable"]).nullable(),
+  selected: userSelectionCandidateSchema,
+  candidates: z.array(userSelectionCandidateSchema).length(5),
 });
 
 export type EosTestConfig = z.infer<typeof configSchema>;
 export type EosUserRule = z.infer<typeof eosUserRuleSchema>;
 export type EosUserConfig = z.infer<typeof userConfigSchema>;
+export type EosUserSelection = z.infer<typeof userSelectionSchema>;
 
 const TIMEOUT_MS = 5_000;
 const PATH = "/v1/testing/eos-random-block/config";
@@ -197,6 +242,7 @@ export async function updateEosUserConfig(environment: DbEnv, input: {
   persistent: boolean;
   randomized: boolean;
   enabled: boolean;
+  forceLosses?: boolean;
   actor: string;
 }): Promise<EosUserConfig> {
   const result = await userRequest(
@@ -211,12 +257,57 @@ export async function updateEosUserConfig(environment: DbEnv, input: {
         persistent: input.persistent,
         randomized: input.randomized,
         enabled: input.enabled,
+        ...(input.forceLosses === undefined
+          ? {}
+          : { forceLosses: input.forceLosses }),
         actor: input.actor,
       }),
     },
   );
   if (result.data.environment !== environment) {
     throw new Error("The EOS user flow service returned the wrong environment.");
+  }
+  return result.data;
+}
+
+export async function updateEosUserForceLosses(environment: DbEnv, input: {
+  userId: string;
+  forceLosses: boolean;
+  actor: string;
+}): Promise<EosUserConfig> {
+  const result = await userRequest(
+    environment,
+    `${USERS_PATH}/${encodeURIComponent(input.userId)}/force-losses`,
+    z.object({ data: userConfigSchema }),
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        forceLosses: input.forceLosses,
+        actor: input.actor,
+      }),
+    },
+  );
+  if (result.data.environment !== environment) {
+    throw new Error("The EOS user flow service returned the wrong environment.");
+  }
+  return result.data;
+}
+
+export async function listEosUserSelections(
+  environment: DbEnv,
+  userId: string,
+  limit = 20,
+): Promise<EosUserSelection[]> {
+  const result = await userRequest(
+    environment,
+    `${USERS_PATH}/${encodeURIComponent(userId)}/selections?limit=${limit}`,
+    z.object({
+      environment: z.enum(["dev", "prod"]),
+      data: z.array(userSelectionSchema),
+    }),
+  );
+  if (result.environment !== environment) {
+    throw new Error("The EOS user history service returned the wrong environment.");
   }
   return result.data;
 }

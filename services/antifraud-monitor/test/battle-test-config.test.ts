@@ -316,6 +316,7 @@ test("force-all-losses takes priority without advancing an enabled personal flow
           persistent: true,
           randomized: false,
           enabled: true,
+          force_losses: true,
           updated_at: new Date("2026-08-21T00:00:00.000Z"),
           updated_by: "motha",
         }] };
@@ -342,10 +343,87 @@ test("force-all-losses takes priority without advancing an enabled personal flow
     minMultiplier: null,
     maxMultiplier: null,
     source: "global",
+    mode: "force_losses",
   });
   assert.equal(statements.some((statement) =>
     statement.includes("UPDATE battle_test_user_sequences SET current_rule_index")
   ), false);
+});
+
+test("per-user force-losses overrides a paused flow without advancing it", async () => {
+  const statements: string[] = [];
+  const client = {
+    async query(text: string) {
+      statements.push(text);
+      if (text.includes("INSERT INTO battle_test_eos_selections")) {
+        return { rows: [{ battle_id: "test-battle" }] };
+      }
+      if (text.includes("FROM battle_test_user_sequences")) {
+        return { rows: [{
+          environment: "prod",
+          user_id: "test-user-123",
+          username: "tester",
+          rules: [{ target: "win", strategy: "highest_multiplier", count: 3 }],
+          current_rule_index: 0,
+          remaining_in_rule: 3,
+          persistent: false,
+          randomized: false,
+          enabled: false,
+          force_losses: true,
+          updated_at: new Date("2026-08-22T00:00:00.000Z"),
+          updated_by: "motha",
+        }] };
+      }
+      if (text.includes("SELECT force_all_losses FROM battle_test_config")) {
+        return { rows: [{ force_all_losses: false }] };
+      }
+      if (text.includes("SELECT user_only_loses")) {
+        throw new Error("global flow must not be read during a per-user override");
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = {
+    async connect() { return client; },
+    async query() { return { rows: [] }; },
+  };
+  const store = new PgBattleTestConfigStore(pool as never, "prod");
+
+  assert.deepEqual(await store.consumeUserInstruction(
+    "test-user-123",
+    "00000000-0000-0000-0000-000000000001",
+  ), {
+    target: "loss",
+    strategy: "lowest_profit",
+    minMultiplier: null,
+    maxMultiplier: null,
+    source: "user",
+    mode: "force_losses",
+  });
+  assert.equal(statements.some((statement) =>
+    statement.includes("UPDATE battle_test_user_sequences SET current_rule_index")
+  ), false);
+});
+
+test("per-user force-losses updates only the environment-scoped override", async () => {
+  let call: { text: string; params: unknown[] } | null = null;
+  const pool = {
+    async query(text: string, params: unknown[]) {
+      call = { text, params };
+      return { rows: [] };
+    },
+  };
+  const store = new PgBattleTestConfigStore(pool as never, "prod");
+
+  assert.equal(await store.setUserForceLosses(
+    "test-user-123",
+    true,
+    "motha",
+  ), null);
+  assert.match(call!.text, /WHERE environment = \$1 AND user_id = \$2/);
+  assert.doesNotMatch(call!.text, /current_rule_index\s*=/);
+  assert.deepEqual(call!.params, ["prod", "test-user-123", true, "motha"]);
 });
 
 test("force-all-losses takes priority over an enabled global flow", async () => {

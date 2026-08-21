@@ -754,6 +754,7 @@ test("EOS user sequence config routes list, reset, and delete rules", async () =
     remainingInRule: 2,
     persistent: true,
     enabled: true,
+    forceLosses: false,
     updatedAt: "2026-08-07T00:00:00.000Z",
     updatedBy: "motha",
   };
@@ -780,6 +781,17 @@ test("EOS user sequence config routes list, reset, and delete rules", async () =
     async deleteUser(userId) {
       deleted = userId;
     },
+    async setUserForceLosses(userId, forceLosses, actor) {
+      assert.equal(userId, saved.userId);
+      assert.equal(forceLosses, true);
+      assert.equal(actor, "motha");
+      return { ...saved, forceLosses };
+    },
+    async listUserSelections(userId, limit) {
+      assert.equal(userId, saved.userId);
+      assert.equal(limit, 20);
+      return [];
+    },
   };
   const app = Fastify({ logger: false });
   await registerEosRandomBlockRoutes(app, undefined, undefined, config);
@@ -802,6 +814,28 @@ test("EOS user sequence config routes list, reset, and delete rules", async () =
     },
   });
   assert.deepEqual(updated.json(), { data: saved });
+
+  const forced = await app.inject({
+    method: "PATCH",
+    url: `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/${saved.userId}/force-losses`,
+    payload: { forceLosses: true, actor: "motha" },
+  });
+  assert.equal(forced.statusCode, 200);
+  assert.equal(forced.json().data.forceLosses, true);
+
+  const invalidForce = await app.inject({
+    method: "PATCH",
+    url: `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/${saved.userId}/force-losses`,
+    payload: { forceLosses: "true", actor: "motha" },
+  });
+  assert.equal(invalidForce.statusCode, 400);
+
+  const history = await app.inject({
+    method: "GET",
+    url: `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/${saved.userId}/selections`,
+  });
+  assert.equal(history.statusCode, 200);
+  assert.deepEqual(history.json().data, []);
 
   const removed = await app.inject({
     method: "DELETE",
@@ -888,6 +922,7 @@ test("force-all-losses uses the safest fallback and keeps it stable on retry", a
   let selects = 0;
   let consumes = 0;
   let saved: Record<string, unknown> | null = null;
+  let savedAudit: Record<string, unknown> | undefined;
   const source: EosRandomBlockSource = {
     async select() {
       selects += 1;
@@ -946,8 +981,9 @@ test("force-all-losses uses the safest fallback and keeps it stable on retry", a
         source: "global",
       };
     },
-    async saveBattleSelection(_userId, _battleId, response) {
+    async saveBattleSelection(_userId, _battleId, response, audit) {
       saved ??= response;
+      savedAudit ??= audit as unknown as Record<string, unknown>;
       return saved;
     },
   };
@@ -966,6 +1002,10 @@ test("force-all-losses uses the safest fallback and keeps it stable on retry", a
   assert.deepEqual(retry.json(), first.json());
   assert.equal(selects, 1);
   assert.equal(consumes, 1);
+  assert.equal(savedAudit?.fallbackReason, "target_unavailable");
+  assert.equal(savedAudit?.requestedTarget, "loss");
+  assert.equal(savedAudit?.controlKind, "global_rule");
+  assert.equal((savedAudit?.candidates as unknown[]).length, 5);
   await app.close();
 });
 
