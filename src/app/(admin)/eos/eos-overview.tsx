@@ -2,12 +2,13 @@ import { BarChart3, ShieldAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import type {
   EosTestOverview,
   EosTestOverviewPeriod,
@@ -15,19 +16,18 @@ import type {
 import { cn } from "@/lib/utils";
 
 const PERIOD_LABELS: Record<EosTestOverviewPeriod["period"], string> = {
-  "24h": "Last 24 hours",
-  "7d": "Last 7 days",
-  "30d": "Last 30 days",
+  "24h": "24 hours",
+  "7d": "7 days",
+  "30d": "30 days",
 };
 
 function formatAmount(value: number) {
   const normalized = Object.is(value, -0) ? 0 : value;
-  const amount = new Intl.NumberFormat("en-US", {
+  return `${new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2,
     signDisplay: "exceptZero",
-  }).format(normalized);
-  return `${amount} real`;
+  }).format(normalized)} real`;
 }
 
 function formatRate(part: number, total: number) {
@@ -38,139 +38,34 @@ function formatRate(part: number, total: number) {
   }).format(part / total);
 }
 
-function PeriodCard({ data }: { data: EosTestOverviewPeriod | undefined }) {
-  if (!data) return null;
-  const impact = data.estimatedCreatorProfitReduction;
-
+function ImpactValue({ value }: { value: number }) {
   return (
-    <Card size="sm">
-      <CardHeader className="border-b">
-        <div className="flex items-center justify-between gap-3">
-          <CardTitle>{PERIOD_LABELS[data.period]}</CardTitle>
-          <Badge variant="outline">{data.steeredBattles} controlled</Badge>
-        </div>
-        <CardDescription>Compared with the original random block</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            Estimated control impact
-          </p>
-          <p className={cn(
-            "mt-1 text-2xl font-bold tabular-nums",
-            impact > 0 && "text-emerald-600 dark:text-emerald-400",
-            impact < 0 && "text-destructive",
-          )}>
-            {formatAmount(impact)}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Creator P&amp;L reduction; positive means the selected result paid the creator less.
-          </p>
-        </div>
-
-        <dl className="grid grid-cols-2 gap-x-5 gap-y-3 border-t pt-4 text-sm">
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">Creator wins avoided</dt>
-            <dd className="font-semibold tabular-nums">{data.creatorWinsAvoided}</dd>
-          </div>
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">Selected loss rate</dt>
-            <dd className="font-semibold tabular-nums">
-              {formatRate(data.selectedLosses, data.steeredBattles)}
-            </dd>
-          </div>
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">Matched controls</dt>
-            <dd className="font-semibold tabular-nums">{data.matchedBattles}</dd>
-          </div>
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">Fallback rate</dt>
-            <dd className="font-semibold tabular-nums">
-              {formatRate(data.fallbackBattles, data.steeredBattles)}
-            </dd>
-          </div>
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">Force-loss battles</dt>
-            <dd className="font-semibold tabular-nums">{data.forceLossBattles}</dd>
-          </div>
-          <div className="min-w-0">
-            <dt className="text-xs text-muted-foreground">All audited battles</dt>
-            <dd className="font-semibold tabular-nums">{data.battleCount}</dd>
-          </div>
-        </dl>
-
-        <div className="space-y-2 rounded-lg bg-muted/30 px-3 py-2.5 text-xs">
-          <div className="flex justify-between gap-3">
-            <span className="text-muted-foreground">Random baseline creator P&amp;L</span>
-            <span className="font-medium tabular-nums">
-              {formatAmount(data.randomBaselineCreatorProfitLoss)}
-            </span>
-          </div>
-          <div className="flex justify-between gap-3">
-            <span className="text-muted-foreground">Selected creator P&amp;L</span>
-            <span className="font-medium tabular-nums">
-              {formatAmount(data.selectedCreatorProfitLoss)}
-            </span>
-          </div>
-          {data.fallbackBattles > 0 && (
-            <div className="flex justify-between gap-3 text-amber-700 dark:text-amber-400">
-              <span>Unavailable fallbacks</span>
-              <span className="font-medium tabular-nums">
-                Outcome {data.targetUnavailableBattles} · Range {data.rangeUnavailableBattles}
-              </span>
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function RealBalanceOverview({ overview }: { overview: EosTestOverview }) {
-  const periods = overview.periods.filter((period) => period.currency === "real");
-  if (periods.every((period) => period.steeredBattles === 0)) {
-    return (
-      <Card>
-        <CardContent className="flex min-h-48 flex-col items-center justify-center gap-2 text-center">
-          <BarChart3 className="size-8 text-muted-foreground" />
-          <p className="font-medium">No controlled real-balance battles tracked yet</p>
-          <p className="max-w-md text-sm text-muted-foreground">
-            This overview fills automatically when an enabled EOS global or per-user control
-            selects a battle result.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-      {(["24h", "7d", "30d"] as const).map((period) => (
-        <PeriodCard
-          key={period}
-          data={periods.find((entry) => entry.period === period)}
-        />
-      ))}
-    </div>
+    <span className={cn(
+      "font-semibold tabular-nums",
+      value > 0 && "text-emerald-600 dark:text-emerald-400",
+      value < 0 && "text-destructive",
+    )}>
+      {formatAmount(value)}
+    </span>
   );
 }
 
 export function EosOverview({ overview }: { overview: EosTestOverview | null }) {
   if (!overview) {
     return (
-      <Card>
-        <CardContent className="flex min-h-48 flex-col items-center justify-center gap-2 text-center">
-          <ShieldAlert className="size-8 text-amber-600 dark:text-amber-400" />
-          <p className="font-medium">Overview is temporarily unavailable</p>
-          <p className="max-w-md text-sm text-muted-foreground">
-            Global and per-user controls are still connected. Reload this page to retry the
-            impact report.
-          </p>
-        </CardContent>
-      </Card>
+      <div className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-xl border bg-card p-6 text-center">
+        <ShieldAlert className="size-6 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+        <p className="font-medium">Results are temporarily unavailable</p>
+        <p className="max-w-md text-sm text-muted-foreground">
+          Controls remain connected. Reload the page to retry the report.
+        </p>
+      </div>
     );
   }
 
+  const rows = (["24h", "7d", "30d"] as const).map((period) =>
+    overview.periods.find((entry) => entry.currency === "real" && entry.period === period)
+  ).filter((row): row is EosTestOverviewPeriod => row !== undefined);
   const trackingDate = overview.trackingStartedAt
     ? new Intl.DateTimeFormat("en-GB", {
       dateStyle: "medium",
@@ -180,23 +75,83 @@ export function EosOverview({ overview }: { overview: EosTestOverview | null }) 
     : null;
 
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2.5 rounded-lg border bg-muted/20 px-3 py-2.5 text-xs">
-        <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-        <div>
-          <p className="font-medium">Creator-side estimate, not booked revenue</p>
-          <p className="mt-0.5 leading-5 text-muted-foreground">
-            Impact compares the selected creator P&amp;L with the exact original random EOS block.
-            It is not canonical house GGR and does not include opponent transfers or refunds.
-          </p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {trackingDate ? `Data available since ${trackingDate} (Berlin time)` : "Waiting for the first audited battle"}
-            {" · "}30-day audit retention
-          </p>
-        </div>
+    <div className="space-y-3">
+      <div className="flex flex-col gap-1 rounded-lg bg-muted/30 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between">
+        <span className="text-muted-foreground">
+          Estimated creator-side impact compared with the original random EOS block.
+        </span>
+        <span className="shrink-0 text-muted-foreground">
+          {trackingDate ? `Since ${trackingDate}` : "Waiting for tracked battles"} · 30-day retention
+        </span>
       </div>
 
-      <RealBalanceOverview overview={overview} />
+      {rows.length === 0 || rows.every((row) => row.steeredBattles === 0) ? (
+        <div className="flex min-h-36 flex-col items-center justify-center gap-2 rounded-xl border bg-card p-6 text-center">
+          <BarChart3 className="size-6 text-muted-foreground" aria-hidden="true" />
+          <p className="font-medium">No controlled real-balance battles yet</p>
+          <p className="text-sm text-muted-foreground">
+            Results appear after an enabled global or personal control selects an outcome.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-xl border bg-card">
+          <Table className="min-w-[900px]">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Period</TableHead>
+                <TableHead className="text-right">Controlled</TableHead>
+                <TableHead className="text-right">Control impact</TableHead>
+                <TableHead className="text-right">Selected P&amp;L</TableHead>
+                <TableHead className="text-right">Random baseline</TableHead>
+                <TableHead className="text-right">Loss rate</TableHead>
+                <TableHead className="text-right">Wins avoided</TableHead>
+                <TableHead className="text-right">Fallbacks</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row) => (
+                <TableRow key={row.period}>
+                  <TableCell className="font-medium">{PERIOD_LABELS[row.period]}</TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">
+                    {row.steeredBattles}
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                      / {row.battleCount}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <ImpactValue value={row.estimatedCreatorProfitReduction} />
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatAmount(row.selectedCreatorProfitLoss)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground">
+                    {formatAmount(row.randomBaselineCreatorProfitLoss)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatRate(row.selectedLosses, row.steeredBattles)}
+                  </TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">
+                    {row.creatorWinsAvoided}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {row.fallbackBattles > 0 ? (
+                      <Badge className="border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                        {row.fallbackBattles}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">0</span>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      <p className="px-1 text-xs text-muted-foreground">
+        Control impact is an estimate, not booked house revenue. It excludes opponent transfers and refunds.
+      </p>
     </div>
   );
 }
