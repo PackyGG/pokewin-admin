@@ -45,9 +45,11 @@ export function FinanceCardSkeleton({
 export function FinancesOverviewSkeleton() {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      {Array.from({ length: 4 }).map((_, card) => (
-        <FinanceCardSkeleton key={card} withChips={card === 1} />
-      ))}
+      <div className="lg:col-span-2">
+        <FinanceCardSkeleton />
+      </div>
+      <FinanceCardSkeleton withChips />
+      <FinanceCardSkeleton />
     </div>
   );
 }

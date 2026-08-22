@@ -60,10 +60,7 @@ test("the 7d finance period is the current Monday-Sunday UTC week", () => {
     Object.values(financeWeekBounds(sunday)).map((date) => date.toISOString()),
     ["2026-08-03T00:00:00.000Z", "2026-08-10T00:00:00.000Z"],
   );
-  assert.equal(
-    financeWeekDateRange(wednesday),
-    "Aug 3, 2026 – Aug 9, 2026",
-  );
+  assert.equal(financeWeekDateRange(wednesday), "Aug 3, 2026 – Aug 9, 2026");
   assert.equal(
     financePeriodSince("14d", wednesday).toISOString(),
     "2026-07-22T16:45:00.000Z",
@@ -98,14 +95,16 @@ test("finance overview is owner-gated and reuses canonical profit math", () => {
   assert.match(page, /getSalaryExpenseSummary\(period\)/);
   assert.match(page, /value=\{salaries\.periodExpense\}/);
   assert.match(query, /monthly \* \(hours \/ \(30 \* 24\)\)/);
-  assert.match(page, /Weekly P&amp;L/);
-  assert.match(
-    page,
-    /Cash profit minus weekly salary accrual, one quarter of active/,
-  );
+  assert.match(page, /Net result this week/);
+  assert.match(page, /Cash P&amp;L − tracked costs = net result/);
+  assert.match(page, /Actual profit after costs/);
+  assert.match(page, /Includes weekly salary accrual, one quarter of active/);
   assert.match(query, /financePeriodSince\(period, now\)/);
   assert.match(page, /getWeeklyOperatingExpenseSummary\(now\)/);
-  assert.match(page, /monthlySubscriptions: operatingExpenses\.monthlySubscriptions/);
+  assert.match(
+    page,
+    /monthlySubscriptions: operatingExpenses\.monthlySubscriptions/,
+  );
   assert.match(page, /oneTimeExpenses: operatingExpenses\.oneTimeExpenses/);
   assert.match(query, /\.from\(recurring_expenses\)/);
   assert.match(query, /recurring_expenses\.is_active/);

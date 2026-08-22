@@ -112,6 +112,18 @@ test("subscriptions match common vendors to branded logos", () => {
     "Auth0",
     "Clerk",
     "Resend",
+    "1Password",
+    "PostHog",
+    "Claude / Anthropic",
+    "Cursor",
+    "OpenAI Codex",
+    "Redis",
+    "ClickHouse",
+    "Docker",
+    "Grafana Cloud",
+    "Better Stack",
+    "Elastic",
+    "Algolia",
   ]) {
     assert.match(brands, new RegExp(`label: "${vendor}"`));
   }

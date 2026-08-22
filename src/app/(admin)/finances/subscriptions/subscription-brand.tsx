@@ -1,19 +1,26 @@
 import type { IconType } from "react-icons";
 import { FaAws, FaSlack } from "react-icons/fa6";
 import {
+  Si1Password,
+  SiAlgolia,
   SiAppwrite,
+  SiAnthropic,
   SiAuth0,
+  SiBetterstack,
+  SiClickhouse,
   SiClerk,
   SiCloudflare,
   SiCloudinary,
   SiDatadog,
   SiDigitalocean,
   SiDiscord,
+  SiDocker,
   SiDropbox,
   SiFigma,
   SiGithub,
   SiGoogle,
   SiGithubcopilot,
+  SiGrafana,
   SiHetzner,
   SiHubspot,
   SiIntercom,
@@ -24,8 +31,10 @@ import {
   SiNeon,
   SiNotion,
   SiPostgresql,
+  SiPosthog,
   SiRailway,
   SiResend,
+  SiRedis,
   SiSentry,
   SiShopify,
   SiStripe,
@@ -34,6 +43,8 @@ import {
   SiVercel,
   SiX,
   SiZoom,
+  SiCursor,
+  SiElasticsearch,
 } from "react-icons/si";
 import { Building2 } from "lucide-react";
 
@@ -216,10 +227,40 @@ const BRANDS: Brand[] = [
     className: "bg-[#0b5cff]/12 text-[#0b5cff]",
   },
   {
+    label: "OpenAI Codex",
+    pattern: /\b(?:openai\s+)?codex\b/i,
+    mark: "CX",
+    className: "bg-foreground/10 text-foreground",
+  },
+  {
     label: "OpenAI / ChatGPT",
     pattern: /\b(openai|chatgpt)\b/i,
     mark: "AI",
     className: "bg-foreground/10 text-foreground",
+  },
+  {
+    label: "Claude / Anthropic",
+    pattern: /\b(claude|anthropic)\b/i,
+    icon: SiAnthropic,
+    className: "bg-[#d97757]/12 text-[#c66545] dark:text-[#e28b6d]",
+  },
+  {
+    label: "Cursor",
+    pattern: /\bcursor\b/i,
+    icon: SiCursor,
+    className: "bg-foreground/10 text-foreground",
+  },
+  {
+    label: "1Password",
+    pattern: /\b(1password|onepassword)\b/i,
+    icon: Si1Password,
+    className: "bg-[#3b66bc]/12 text-[#3b66bc] dark:text-[#6f98ec]",
+  },
+  {
+    label: "PostHog",
+    pattern: /\bposthog\b/i,
+    icon: SiPosthog,
+    className: "bg-[#f9bd2b]/14 text-[#d99000] dark:text-[#f9bd2b]",
   },
   {
     label: "Slack",
@@ -232,6 +273,18 @@ const BRANDS: Brand[] = [
     pattern: /\bdatadog\b/i,
     icon: SiDatadog,
     className: "bg-[#632ca6]/12 text-[#632ca6] dark:text-[#a879dd]",
+  },
+  {
+    label: "Redis",
+    pattern: /\bredis\b/i,
+    icon: SiRedis,
+    className: "bg-[#ff4438]/12 text-[#e43a30] dark:text-[#ff5f55]",
+  },
+  {
+    label: "ClickHouse",
+    pattern: /\bclickhouse\b/i,
+    icon: SiClickhouse,
+    className: "bg-[#ffcc01]/14 text-[#b99000] dark:text-[#ffcc01]",
   },
   {
     label: "MongoDB",
@@ -310,6 +363,36 @@ const BRANDS: Brand[] = [
     pattern: /\b(jira|atlassian)\b/i,
     icon: SiJira,
     className: "bg-[#0052cc]/12 text-[#1868db]",
+  },
+  {
+    label: "Docker",
+    pattern: /\bdocker\b/i,
+    icon: SiDocker,
+    className: "bg-[#2496ed]/12 text-[#2496ed]",
+  },
+  {
+    label: "Grafana Cloud",
+    pattern: /\bgrafana(?: cloud)?\b/i,
+    icon: SiGrafana,
+    className: "bg-[#f46800]/12 text-[#f46800]",
+  },
+  {
+    label: "Better Stack",
+    pattern: /\bbetter\s?stack\b/i,
+    icon: SiBetterstack,
+    className: "bg-foreground/10 text-foreground",
+  },
+  {
+    label: "Elastic",
+    pattern: /\b(elastic|elasticsearch)\b/i,
+    icon: SiElasticsearch,
+    className: "bg-[#00bfb3]/12 text-[#009c93] dark:text-[#20d4ca]",
+  },
+  {
+    label: "Algolia",
+    pattern: /\balgolia\b/i,
+    icon: SiAlgolia,
+    className: "bg-[#003dff]/12 text-[#3159d9] dark:text-[#6c88ff]",
   },
 ];
 
