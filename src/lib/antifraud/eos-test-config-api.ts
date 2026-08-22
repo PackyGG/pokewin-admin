@@ -101,6 +101,27 @@ const userSelectionSchema = z.object({
   candidates: z.array(userSelectionCandidateSchema).length(5),
 });
 
+const selectionSummarySchema = z.object({
+  battleId: z.string().uuid(),
+  userId: z.string().min(1).max(100),
+  createdAt: z.string(),
+  selectedAt: z.string(),
+  auditAvailable: z.boolean(),
+  configured: z.boolean(),
+  controlKind: z.enum([
+    "user_rule",
+    "global_rule",
+    "user_force_losses",
+    "global_force_losses",
+    "legacy_global_losses",
+    "random",
+    "legacy_controlled",
+    "legacy_random",
+  ]),
+  requestedTarget: z.enum(["loss", "win", "any"]).nullable(),
+  fallbackReason: z.enum(["target_unavailable", "range_unavailable"]).nullable(),
+});
+
 const overviewPeriodSchema = z.object({
   period: z.enum(["24h", "7d", "30d"]),
   currency: z.enum(["real", "coin"]),
@@ -130,6 +151,7 @@ export type EosTestConfig = z.infer<typeof configSchema>;
 export type EosUserRule = z.infer<typeof eosUserRuleSchema>;
 export type EosUserConfig = z.infer<typeof userConfigSchema>;
 export type EosUserSelection = z.infer<typeof userSelectionSchema>;
+export type EosSelectionSummary = z.infer<typeof selectionSummarySchema>;
 export type EosTestOverview = z.infer<typeof overviewSchema>;
 export type EosTestOverviewPeriod = z.infer<typeof overviewPeriodSchema>;
 
@@ -137,6 +159,7 @@ const TIMEOUT_MS = 5_000;
 const PATH = "/v1/testing/eos-random-block/config";
 const USERS_PATH = `${PATH}/users`;
 const OVERVIEW_PATH = `${PATH}/overview`;
+const SELECTIONS_PATH = `${PATH}/selections`;
 const ENVIRONMENT_HEADER = "x-pokewin-environment";
 
 function connection(): { baseUrl: string; token: string } {
@@ -403,6 +426,29 @@ export async function listEosUserSelections(
   );
   if (result.environment !== environment) {
     throw new Error("The EOS user history service returned the wrong environment.");
+  }
+  return result.data;
+}
+
+export async function listEosSelectionSummaries(
+  environment: DbEnv,
+  limit = 50,
+  userId?: string,
+): Promise<EosSelectionSummary[]> {
+  const search = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(50, limit))),
+  });
+  if (userId) search.set("userId", userId);
+  const result = await userRequest(
+    environment,
+    `${SELECTIONS_PATH}?${search.toString()}`,
+    z.object({
+      environment: z.enum(["dev", "prod"]),
+      data: z.array(selectionSummarySchema),
+    }),
+  );
+  if (result.environment !== environment) {
+    throw new Error("The EOS battle history service returned the wrong environment.");
   }
   return result.data;
 }

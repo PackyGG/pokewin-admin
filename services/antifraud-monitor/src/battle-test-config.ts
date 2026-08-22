@@ -89,6 +89,18 @@ export type BattleTestSelectionAuditInput = Omit<
   "battleId" | "createdAt" | "selectedAt"
 >;
 
+export type BattleTestSelectionSummary = {
+  battleId: string;
+  userId: string;
+  createdAt: string;
+  selectedAt: string;
+  auditAvailable: boolean;
+  configured: boolean;
+  controlKind: BattleTestSelectionAudit["controlKind"] | "legacy_controlled" | "legacy_random";
+  requestedTarget: BattleTestOutcomeTarget | null;
+  fallbackReason: BattleTestSelectionAudit["fallbackReason"];
+};
+
 export type BattleTestOverviewPeriod = {
   period: "24h" | "7d" | "30d";
   currency: "real" | "coin";
@@ -176,6 +188,10 @@ export interface BattleTestConfigSource {
     userId: string,
     limit: number,
   ): Promise<BattleTestSelectionAudit[]>;
+  listSelections?(
+    limit: number,
+    userId?: string,
+  ): Promise<BattleTestSelectionSummary[]>;
   getOverview?(): Promise<BattleTestOverview>;
   deleteUser?(userId: string): Promise<void>;
   consumeUserInstruction?(
@@ -735,6 +751,53 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
         selectedAt: new Date(row.selected_at).toISOString(),
         ...audit,
       }] : [];
+    });
+  }
+
+  async listSelections(
+    limit: number,
+    userId?: string,
+  ): Promise<BattleTestSelectionSummary[]> {
+    const result = await this.pool.query<{
+      battle_id: string;
+      user_id: string;
+      instruction: unknown;
+      audit: unknown;
+      created_at: Date | string;
+      selected_at: Date | string;
+    }>(
+      `SELECT battle_id::text, user_id::text, instruction, audit,
+              created_at, selected_at
+       FROM battle_test_eos_selections
+       WHERE environment = $1
+         AND response IS NOT NULL AND selected_at IS NOT NULL
+         AND created_at >= now() - interval '30 days'
+         ${userId ? "AND user_id = $3" : ""}
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [
+        this.environment,
+        Math.max(1, Math.min(200, limit)),
+        ...(userId ? [userId] : []),
+      ],
+    );
+    return result.rows.map((row) => {
+      const audit = parseSelectionAudit(row.audit);
+      const instruction = parseInstruction(row.instruction);
+      return {
+        battleId: row.battle_id,
+        userId: row.user_id,
+        createdAt: new Date(row.created_at).toISOString(),
+        selectedAt: new Date(row.selected_at).toISOString(),
+        auditAvailable: audit !== null,
+        configured: audit
+          ? audit.controlKind !== "random"
+          : instruction !== null,
+        controlKind: audit?.controlKind
+          ?? (instruction ? "legacy_controlled" : "legacy_random"),
+        requestedTarget: audit?.requestedTarget ?? instruction?.target ?? null,
+        fallbackReason: audit?.fallbackReason ?? null,
+      };
     });
   }
 

@@ -25,10 +25,9 @@ import type {
   EosTestConfig,
   EosUserConfig,
   EosUserRule,
-  EosUserSelection,
 } from "@/lib/antifraud/eos-test-config-api";
 import {
-  getEosUserSelections,
+  getEosUserBattleHistory,
   removeEosUserConfig,
   saveEosUserConfig,
   searchEosUsers,
@@ -72,7 +71,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
   const [randomized, setRandomized] = useState(focusedConfig?.randomized ?? false);
   const [enabled, setEnabled] = useState(focusedConfig?.enabled ?? true);
   const [forceLosses, setForceLosses] = useState(focusedConfig?.forceLosses ?? false);
-  const [history, setHistory] = useState<EosUserSelection[] | null>(null);
+  const [history, setHistory] = useState<Awaited<ReturnType<typeof getEosUserBattleHistory>> | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [configFilter, setConfigFilter] = useState("");
   const [removeTarget, setRemoveTarget] = useState<EosUserConfig | null>(null);
@@ -113,7 +112,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
     setHistoryError(null);
     startHistoryTransition(async () => {
       try {
-        setHistory(await getEosUserSelections(userId));
+        setHistory(await getEosUserBattleHistory(userId));
       } catch (error) {
         setHistoryError(error instanceof Error ? error.message : "Battle history failed to load");
       }
@@ -306,8 +305,9 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
                 <TabsContent value="history" className="space-y-3 pt-2">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs text-muted-foreground">
-                      Recent {environment} EOS decisions for battles this player created. Stored
-                      for 30 days from when tracking began; no historical backfill.
+                      Creator battles from the {environment} database, matched to EOS control
+                      records retained for 30 days. Older records show control use even when
+                      five-candidate audit details were not recorded yet.
                     </p>
                     <Button type="button" size="sm" variant="outline" disabled={isHistoryPending} onClick={() => loadHistory(selected.userId)}>
                       {isHistoryPending && <Loader2 className="size-4 animate-spin" />}Refresh
@@ -319,44 +319,114 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
                   {isHistoryPending && history === null && (
                     <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading battle history</div>
                   )}
-                  {history?.length === 0 && (
-                    <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                      No recorded EOS decisions for this creator yet. History starts with new
-                      battles they create after tracking was enabled; joined battles and older
-                      flow steps cannot be backfilled.
+                  {history && (
+                    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                      {[
+                        ["Creator battles", history.summary.creatorBattles],
+                        ["Config active", history.summary.controlledBattles],
+                        ["Detailed audits", history.summary.auditedBattles],
+                        ["Legacy details", history.summary.legacyBattles],
+                        ["Missing audit", history.summary.missingAudit],
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-lg border bg-muted/20 p-3">
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+                          <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
+                        </div>
+                      ))}
                     </div>
                   )}
-                  {history?.map((entry) => {
-                    const wins = entry.candidates.filter((candidate) => candidate.creatorWonBattle).length;
-                    const status = entry.fallbackReason === "target_unavailable"
-                      ? `Requested ${entry.requestedTarget} unavailable`
-                      : entry.fallbackReason === "range_unavailable"
+                  {history && history.summary.missingAudit > 0 && (
+                    <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                      {history.summary.missingAudit} creator {history.summary.missingAudit === 1 ? "battle has" : "battles have"} an EOS block but no monitor decision. This means the backend bypassed or failed the controlled EOS route for those battles.
+                    </div>
+                  )}
+                  {history?.entries.length === 0 && (
+                    <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                      No EOS-backed battles created by this player in the last 30 days.
+                    </div>
+                  )}
+                  {history?.entries.map((entry) => {
+                    const decision = entry.decision;
+                    const selectionSummary = entry.selectionSummary;
+                    const observed = entry.observed;
+                    const wins = decision?.candidates.filter((candidate) => candidate.creatorWonBattle).length ?? 0;
+                    const status = decision?.fallbackReason === "target_unavailable"
+                      ? `Requested ${decision.requestedTarget} unavailable`
+                      : decision?.fallbackReason === "range_unavailable"
                         ? "Multiplier range unavailable"
-                        : entry.requestedTarget ? "Matched request" : "Random selection";
+                        : decision?.requestedTarget ? "Matched request"
+                          : decision ? "Random selection"
+                            : selectionSummary?.configured ? "Control active · legacy details"
+                              : selectionSummary ? "No config · legacy random"
+                                : entry.beforeTracking ? "Before audit tracking" : "Decision missing";
+                    const creatorWon = decision?.selected.creatorWonBattle
+                      ?? observed?.creatorWonBattle
+                      ?? null;
+                    const profit = decision?.selected.creatorProfitLoss
+                      ?? observed?.creatorProfitLoss
+                      ?? null;
+                    const multiplier = decision?.selected.creatorMultiplier
+                      ?? observed?.creatorMultiplier
+                      ?? null;
+                    const currency = decision?.currency ?? observed?.currency ?? "";
                     return (
                       <details key={entry.battleId} className="group rounded-lg border bg-card p-3">
                         <summary className="cursor-pointer list-none space-y-2">
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-xs font-medium">{new Date(entry.selectedAt).toLocaleString()}</span>
-                            <Badge variant={entry.fallbackReason ? "destructive" : "secondary"}>{status}</Badge>
+                            <span className="text-xs font-medium">{new Date(entry.occurredAt).toLocaleString()}</span>
+                            <Badge
+                              variant={(!decision && !selectionSummary && !entry.beforeTracking)
+                                || decision?.fallbackReason ? "destructive" : "secondary"}
+                            >
+                              {status}
+                            </Badge>
                           </div>
                           <div className="grid gap-2 text-xs sm:grid-cols-[1fr_auto_1fr] sm:items-center">
                             <div>
-                              <span className="text-muted-foreground">Requested </span>
-                              <span className="font-semibold uppercase">{entry.requestedTarget ?? "random"}</span>
-                              {entry.requestedStrategy && <span className="text-muted-foreground"> · {entry.requestedStrategy.replaceAll("_", " ")}</span>}
+                              {decision ? (
+                                <>
+                                  <span className="text-muted-foreground">Requested outcome </span>
+                                  <span className="font-semibold uppercase">{decision.requestedTarget ?? "random"}</span>
+                                  {decision.requestedStrategy && <span className="text-muted-foreground"> · {decision.requestedStrategy.replaceAll("_", " ")}</span>}
+                                </>
+                              ) : selectionSummary?.configured ? (
+                                <>
+                                  <span className="text-muted-foreground">Requested outcome </span>
+                                  <span className="font-semibold uppercase">
+                                    {selectionSummary.requestedTarget ?? "controlled"}
+                                  </span>
+                                  <span className="text-muted-foreground"> · legacy record</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-muted-foreground">Observed battle </span>
+                                  <span className="font-semibold uppercase">{observed?.mode ?? "unknown mode"}</span>
+                                  <span className="text-muted-foreground"> · {observed?.status ?? "unknown status"}</span>
+                                </>
+                              )}
                             </div>
                             <span className="hidden text-muted-foreground sm:inline">→</span>
                             <div className="sm:text-right">
-                              <span className="text-muted-foreground">EOS selected </span>
-                              <span className={`font-semibold uppercase ${entry.selected.creatorWonBattle ? "text-emerald-600" : "text-destructive"}`}>{entry.selected.creatorWonBattle ? "win" : "loss"}</span>
-                              <span className="text-muted-foreground"> · {entry.selected.creatorMultiplier?.toFixed(2) ?? "—"}× · {entry.selected.creatorProfitLoss.toFixed(2)}</span>
+                              <span className="text-muted-foreground">{decision ? "EOS selected outcome " : "Final creator outcome "}</span>
+                              <span className={`font-semibold uppercase ${creatorWon === true ? "text-emerald-600" : creatorWon === false ? "text-destructive" : ""}`}>{creatorWon === null ? "pending" : creatorWon ? "win" : "loss"}</span>
+                              <span className="text-muted-foreground"> · {multiplier?.toFixed(2) ?? "—"}× · profit {profit?.toFixed(2) ?? "—"} {currency}</span>
                             </div>
                           </div>
                         </summary>
                         <div className="mt-3 space-y-2 border-t pt-3 text-xs text-muted-foreground">
-                          <p>{wins} winning and {entry.candidates.length - wins} losing candidates were available in the five-block window.</p>
-                          <p>Source: {entry.controlKind.replaceAll("_", " ")} · Selected block {entry.selected.blockNumber} · Random baseline {entry.randomBlockNumber}</p>
+                          {decision ? (
+                            <>
+                              <p>{wins} winning and {decision.candidates.length - wins} losing creator outcomes were available in the five-block window.</p>
+                              <p>Source: {decision.controlKind.replaceAll("_", " ")} · Selected block {decision.selected.blockNumber} · Random baseline {decision.randomBlockNumber}</p>
+                            </>
+                          ) : (
+                            <p>{selectionSummary
+                              ? "The EOS selection was recorded before detailed five-candidate auditing began. Control state and requested outcome are known, but the candidate window cannot be reconstructed."
+                              : entry.beforeTracking
+                                ? "The completed battle is visible from production data, but it happened before EOS selection tracking began, so its candidate outcomes cannot be reconstructed."
+                                : "The battle has an EOS block but no corresponding monitor record. This is a real integration warning, not an empty-history state."}</p>
+                          )}
+                          {observed && <p>Creator cost {observed.creatorCost.toFixed(2)} {observed.currency} · payout {observed.creatorPayout?.toFixed(2) ?? "—"} {observed.currency} · team {observed.creatorTeam}{observed.winnerTeam === null ? "" : ` · winning team ${observed.winnerTeam}`}</p>}
                           <p className="break-all font-mono text-[10px]">Battle {entry.battleId}</p>
                         </div>
                       </details>

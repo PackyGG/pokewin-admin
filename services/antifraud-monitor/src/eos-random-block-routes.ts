@@ -25,6 +25,8 @@ export const EOS_RANDOM_BLOCK_USER_CONFIG_PATH =
   `${EOS_RANDOM_BLOCK_CONFIG_PATH}/users`;
 export const EOS_RANDOM_BLOCK_OVERVIEW_PATH =
   `${EOS_RANDOM_BLOCK_CONFIG_PATH}/overview`;
+export const EOS_RANDOM_BLOCK_SELECTIONS_PATH =
+  `${EOS_RANDOM_BLOCK_CONFIG_PATH}/selections`;
 export const EOS_CHAIN_INFO_PATH = "/v1/chain/get_info";
 export const EOS_CHAIN_BLOCK_PATH = "/v1/chain/get_block";
 export const EOS_ENVIRONMENT_HEADER = "x-pokewin-environment";
@@ -126,6 +128,11 @@ const enabledUpdateSchema = z.object({
 
 const userSelectionQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
+}).strict();
+
+const selectionSummaryQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(50),
+  userId: z.string().trim().min(1).max(100).optional(),
 }).strict();
 
 const chainBlockRequestSchema = z.object({
@@ -673,6 +680,20 @@ export async function registerEosRandomBlockRoutes(
       )
     : testConfig ? [testConfig] : [];
   if (routedConfigs.length > 0) {
+    app.get(EOS_RANDOM_BLOCK_SELECTIONS_PATH, async (request, reply) => {
+      const resolution = resolveEnvironment(request, "config");
+      if (!resolution.ok) return sendEnvironmentError(reply, resolution);
+      const selectedConfig = resolution.resources.testConfig!;
+      if (!selectedConfig.listSelections) {
+        return reply.code(503).send({ error: "environment_unavailable" });
+      }
+      const query = selectionSummaryQuerySchema.safeParse(request.query);
+      if (!query.success) return reply.code(400).send({ error: "invalid_request" });
+      return {
+        environment: resolution.resources.environment,
+        data: await selectedConfig.listSelections(query.data.limit, query.data.userId),
+      };
+    });
     app.get(EOS_RANDOM_BLOCK_OVERVIEW_PATH, async (request, reply) => {
       const resolution = resolveEnvironment(request, "config");
       if (!resolution.ok) return sendEnvironmentError(reply, resolution);

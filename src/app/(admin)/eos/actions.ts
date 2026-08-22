@@ -8,6 +8,8 @@ import {
   deleteEosUserConfig,
   eosUserRuleSchema,
   getEosTestConfig,
+  getEosTestOverview,
+  listEosSelectionSummaries,
   listEosUserSelections,
   updateEosTestConfig,
   updateEosTestEnabled,
@@ -22,6 +24,10 @@ import { user } from "@/lib/db-schema/main/schema";
 import { requireEosTestAccess } from "@/lib/eos-test-access";
 import { eosPlayerIntelligenceInputSchema } from "@/lib/eos-player-intelligence-shared";
 import { getEosPlayerIntelligence } from "@/lib/queries/eos-player-intelligence";
+import {
+  getEosObservedCreatorBattles,
+  getRecentEosObservedBattles,
+} from "@/lib/queries/eos-user-history";
 import { escapeLikePattern } from "@/lib/utils/sql-like";
 
 const saveFlowSchema = z.object({
@@ -124,13 +130,62 @@ export async function searchEosUsers(input: unknown) {
   return rows;
 }
 
-export async function getEosUserSelections(input: unknown) {
+export async function getEosUserBattleHistory(input: unknown) {
   const [, environment] = await Promise.all([
     requireEosTestAccess(),
     readDbEnvFromCookie(),
   ]);
   const userId = z.string().trim().min(1).max(100).parse(input);
-  return listEosUserSelections(environment, userId, 20);
+  const [observed, selections, summaries, overview] = await Promise.all([
+    getEosObservedCreatorBattles(environment, userId, 30),
+    listEosUserSelections(environment, userId, 50),
+    listEosSelectionSummaries(environment, 50, userId),
+    getEosTestOverview(environment),
+  ]);
+  const decisionsByBattle = new Map(selections.map((entry) => [entry.battleId, entry]));
+  const summariesByBattle = new Map(summaries.map((entry) => [entry.battleId, entry]));
+  const observedIds = new Set(observed.map((entry) => entry.battleId));
+  const trackingStartedAt = overview.trackingStartedAt;
+  const entries = [
+    ...observed.map((battle) => ({
+      battleId: battle.battleId,
+      occurredAt: battle.createdAt,
+      observed: battle,
+      decision: decisionsByBattle.get(battle.battleId) ?? null,
+      selectionSummary: summariesByBattle.get(battle.battleId) ?? null,
+      beforeTracking: trackingStartedAt !== null
+        && new Date(battle.createdAt).getTime() < new Date(trackingStartedAt).getTime(),
+    })),
+    ...selections
+      .filter((entry) => !observedIds.has(entry.battleId))
+      .map((decision) => ({
+        battleId: decision.battleId,
+        occurredAt: decision.selectedAt,
+        observed: null,
+        decision,
+        selectionSummary: summariesByBattle.get(decision.battleId) ?? null,
+        beforeTracking: false,
+      })),
+  ].sort((left, right) =>
+    new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime()
+  );
+
+  return {
+    environment,
+    trackingStartedAt,
+    entries,
+    summary: {
+      creatorBattles: observed.length,
+      controlledBattles: entries.filter((entry) => entry.selectionSummary?.configured).length,
+      auditedBattles: entries.filter((entry) => entry.decision !== null).length,
+      legacyBattles: entries.filter((entry) =>
+        entry.selectionSummary && !entry.selectionSummary.auditAvailable
+      ).length,
+      missingAudit: entries.filter((entry) =>
+        entry.observed && !entry.decision && !entry.selectionSummary && !entry.beforeTracking
+      ).length,
+    },
+  };
 }
 
 export async function loadEosPlayerIntelligence(input: unknown) {
@@ -142,6 +197,26 @@ export async function loadEosPlayerIntelligence(input: unknown) {
     environment,
     eosPlayerIntelligenceInputSchema.parse(input),
   );
+}
+
+export async function loadEosBattles() {
+  const [, environment] = await Promise.all([
+    requireEosTestAccess(),
+    readDbEnvFromCookie(),
+  ]);
+  const [battles, selections] = await Promise.all([
+    getRecentEosObservedBattles(environment, 50),
+    listEosSelectionSummaries(environment, 50),
+  ]);
+  const selectionsByBattle = new Map(selections.map((entry) => [entry.battleId, entry]));
+  return {
+    environment,
+    generatedAt: new Date().toISOString(),
+    rows: battles.map((battle) => ({
+      battle,
+      selection: selectionsByBattle.get(battle.battleId) ?? null,
+    })),
+  };
 }
 
 const saveUserConfigSchema = z.object({

@@ -45,8 +45,8 @@ import { loadEosPlayerIntelligence } from "./actions";
 const SORT_LABELS: Record<EosPlayerIntelligenceInput["sort"], string> = {
   profit: "Highest player profit",
   battles: "Most battles",
-  volume: "Highest $ volume",
-  largest: "Biggest battle",
+  volume: "Highest creator exposure",
+  largest: "Largest creator exposure",
 };
 
 function percent(value: number) {
@@ -127,8 +127,8 @@ export function EosPlayerIntelligencePanel({
               <h2 className="font-semibold">Highest-impact battle creators</h2>
             </div>
             <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
-              Ranks players by estimated profit against the site, battle count, dollar volume,
-              or biggest battle. Only completed battles created by the player are included.
+              Ranks players by estimated profit against the site, battle count, creator-funded
+              exposure, or largest creator exposure. Only completed battles they created count.
             </p>
           </div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
@@ -280,9 +280,9 @@ export function EosPlayerIntelligencePanel({
                     <TableHead className="text-right">Player P&amp;L</TableHead>
                     <TableHead className="text-right">Wins</TableHead>
                     <TableHead className="text-right">Battles</TableHead>
-                    <TableHead className="text-right">Battle volume</TableHead>
-                    <TableHead className="text-right">Average</TableHead>
-                    <TableHead className="text-right">Biggest battle</TableHead>
+                    <TableHead className="text-right">Creator exposure</TableHead>
+                    <TableHead className="text-right">Average exposure</TableHead>
+                    <TableHead className="text-right">Largest exposure</TableHead>
                     <TableHead><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>

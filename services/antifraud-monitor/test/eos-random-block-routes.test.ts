@@ -13,6 +13,7 @@ import {
   EOS_ENVIRONMENT_HEADER,
   EOS_RANDOM_BLOCK_CONFIG_PATH,
   EOS_RANDOM_BLOCK_OVERVIEW_PATH,
+  EOS_RANDOM_BLOCK_SELECTIONS_PATH,
   EOS_RANDOM_BLOCK_PATH,
   EOS_RANDOM_BLOCK_USER_CONFIG_PATH,
   isUnauthenticatedEosRandomBlockRequest,
@@ -1072,6 +1073,9 @@ test("authenticated EOS config routes require and select the environment header"
         periods: [],
       };
     },
+    async listSelections() {
+      return [];
+    },
   });
   const app = Fastify({ logger: false });
   await registerEosRandomBlockRoutes(app, undefined, undefined, undefined, {
@@ -1113,6 +1117,14 @@ test("authenticated EOS config routes require and select the environment header"
     assert.equal(overview.statusCode, 200);
     assert.equal(overview.json().data.environment, environment);
   }
+
+  const selections = await app.inject({
+    method: "GET",
+    url: EOS_RANDOM_BLOCK_SELECTIONS_PATH,
+    headers: { [EOS_ENVIRONMENT_HEADER]: "prod" },
+  });
+  assert.equal(selections.statusCode, 200);
+  assert.equal(selections.json().environment, "prod");
   await app.close();
 });
 

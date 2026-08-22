@@ -635,3 +635,44 @@ test("EOS control overview is environment scoped and maps separated currencies",
   assert.match(calls[0]!.text, /valid\.baseline_profit - valid\.selected_profit/);
   assert.match(calls[0]!.text, /valid\.currency = currencies\.currency/);
 });
+
+test("recent EOS selections expose legacy control state without inventing audit detail", async () => {
+  const calls: Array<{ text: string; params: unknown[] }> = [];
+  const createdAt = new Date("2026-08-21T22:51:28.000Z");
+  const selectedAt = new Date("2026-08-21T22:51:29.000Z");
+  const pool = {
+    async query(text: string, params: unknown[] = []) {
+      calls.push({ text, params });
+      return { rows: [{
+        battle_id: "5991c428-ff52-4147-9bd5-a08e77fb355d",
+        user_id: "test-user",
+        instruction: {
+          target: "loss",
+          strategy: "lowest_profit",
+          minMultiplier: null,
+          maxMultiplier: null,
+          source: "user",
+        },
+        audit: null,
+        created_at: createdAt,
+        selected_at: selectedAt,
+      }] };
+    },
+  };
+  const store = new PgBattleTestConfigStore(pool as never, "prod");
+
+  assert.deepEqual(await store.listSelections(50), [{
+    battleId: "5991c428-ff52-4147-9bd5-a08e77fb355d",
+    userId: "test-user",
+    createdAt: createdAt.toISOString(),
+    selectedAt: selectedAt.toISOString(),
+    auditAvailable: false,
+    configured: true,
+    controlKind: "legacy_controlled",
+    requestedTarget: "loss",
+    fallbackReason: null,
+  }]);
+  assert.deepEqual(calls[0]!.params, ["prod", 50]);
+  assert.match(calls[0]!.text, /response IS NOT NULL AND selected_at IS NOT NULL/);
+  assert.match(calls[0]!.text, /created_at >= now\(\) - interval '30 days'/);
+});

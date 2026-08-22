@@ -11,6 +11,7 @@ import {
   RotateCcw,
   Sparkles,
   Copy,
+  CircleHelp,
   Trash2,
 } from "lucide-react";
 
@@ -36,8 +37,8 @@ const targetLabels: Record<EosUserRule["target"], string> = {
 
 const strategyLabels: Record<EosUserRule["strategy"], string> = {
   random: "Random match",
-  lowest_profit: "Lowest profit",
-  highest_profit: "Highest profit",
+  lowest_profit: "Lowest creator profit",
+  highest_profit: "Highest creator profit",
   lowest_multiplier: "Lowest multiplier",
   highest_multiplier: "Highest multiplier",
 };
@@ -299,6 +300,17 @@ export function EosFlowBuilder({
         </div>
       )}
 
+      <details className="rounded-lg border bg-muted/20 px-3 py-2 text-xs">
+        <summary className="flex cursor-pointer list-none items-center gap-2 font-semibold">
+          <CircleHelp className="size-4 text-primary" />What outcome, profit, and group mode mean
+        </summary>
+        <div className="mt-2 grid gap-2 leading-5 text-muted-foreground sm:grid-cols-3">
+          <p><span className="font-medium text-foreground">Outcome</span> is win or loss for the battle creator&apos;s team—not for every participant.</p>
+          <p><span className="font-medium text-foreground">Creator profit</span> is creator payout minus their paid entry and sponsorship cost. Multiplier is payout divided by that total cost.</p>
+          <p><span className="font-medium text-foreground">Group mode</span> has one shared team, so the creator cannot lose. A loss request falls back to the lowest creator-profit candidate in the five-block window.</p>
+        </div>
+      </details>
+
       <section className="space-y-3" aria-labelledby={`${id}-steps`}>
         <div className="flex flex-wrap items-end justify-between gap-2">
           <div>
@@ -343,14 +355,14 @@ export function EosFlowBuilder({
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="space-y-1.5 text-xs font-medium">
-                  Outcome
+                  Creator outcome
                   <Select value={rule.target} onValueChange={(value) => value && updateRule(index, { target: value as EosUserRule["target"] })}>
                     <SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>{Object.entries(targetLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1.5 text-xs font-medium">
-                  Selection
+                  Choose matching candidate by
                   <Select value={rule.strategy} onValueChange={(value) => value && updateRule(index, { strategy: value as EosUserRule["strategy"] })}>
                     <SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>{Object.entries(strategyLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
