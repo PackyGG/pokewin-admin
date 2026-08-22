@@ -12,12 +12,14 @@ import {
   Sparkles,
   Copy,
   CircleHelp,
+  ChevronDown,
   Trash2,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -207,11 +209,11 @@ export function EosFlowBuilder({
     )).slice(0, 12);
 
   return (
-    <div className="space-y-5">
+    <div className="@container space-y-5">
       <section className="space-y-2" aria-labelledby={`${id}-presets`}>
         <div className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-2">
-            <Sparkles className="size-4 text-primary" />
+            <Sparkles className="size-4 text-primary" aria-hidden="true" />
             <h3 id={`${id}-presets`} className="text-sm font-semibold">Quick patterns</h3>
           </span>
           {presetUndo && (
@@ -226,16 +228,16 @@ export function EosFlowBuilder({
                 setPresetUndo(null);
               }}
             >
-              <RotateCcw className="size-3.5" />Undo preset
+              <RotateCcw className="size-3.5" aria-hidden="true" />Undo preset
             </Button>
           )}
         </div>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 @md:grid-cols-2 @4xl:grid-cols-3">
           {presets.map((preset) => (
             <button
               key={preset.name}
               type="button"
-              className="rounded-lg border p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-lg border border-border/70 px-3 py-2.5 text-left transition-colors hover:border-primary/40 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => {
                 setPresetUndo({
                   rules: rules.map((rule) => ({ ...rule })),
@@ -247,7 +249,7 @@ export function EosFlowBuilder({
               }}
             >
               <span className="block text-sm font-semibold">{preset.name}</span>
-              <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+              <span className="mt-0.5 block text-xs leading-4 text-muted-foreground">
                 {preset.description}
               </span>
             </button>
@@ -257,7 +259,7 @@ export function EosFlowBuilder({
 
       <fieldset className="space-y-2">
         <legend className="text-sm font-semibold">Flow mode</legend>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-3 gap-2">
           {([
             ["once", ListOrdered, "Run once", "Complete each step, then stop."],
             ["repeat", Repeat2, "Repeat in order", "Loop the ordered sequence."],
@@ -268,14 +270,17 @@ export function EosFlowBuilder({
               type="button"
               aria-pressed={mode === value}
               onClick={() => setMode(value)}
-              className={`rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              className={`flex min-w-0 flex-col items-center rounded-lg border px-2 py-2.5 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring @2xl:items-start @2xl:text-left ${
                 mode === value ? "border-primary bg-primary/5" : "hover:bg-muted/40"
               }`}
             >
-              <span className="flex items-center gap-2 text-sm font-semibold">
-                <Icon className="size-4" />{title}
+              <span className="flex min-w-0 items-center gap-1.5 text-xs font-semibold @2xl:text-sm">
+                <Icon className="size-4 shrink-0" aria-hidden="true" />
+                <span className="leading-4">{title}</span>
               </span>
-              <span className="mt-1 block text-xs leading-5 text-muted-foreground">{description}</span>
+              <span className="mt-1 hidden text-xs leading-4 text-muted-foreground @2xl:block">
+                {description}
+              </span>
             </button>
           ))}
         </div>
@@ -296,15 +301,17 @@ export function EosFlowBuilder({
           {total > orderedPreview.length && (
             <span className="text-xs text-muted-foreground">+{total - orderedPreview.length} more</span>
           )}
-          {persistent && <Badge variant="outline"><Repeat2 className="size-3" />loops</Badge>}
+          {persistent && <Badge variant="outline"><Repeat2 className="size-3" aria-hidden="true" />loops</Badge>}
         </div>
       )}
 
-      <details className="rounded-lg border bg-muted/20 px-3 py-2 text-xs">
-        <summary className="flex cursor-pointer list-none items-center gap-2 font-semibold">
-          <CircleHelp className="size-4 text-primary" />What outcome, profit, and group mode mean
+      <details className="group rounded-lg border border-border/70 text-xs">
+        <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg px-3 py-2 font-semibold transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <CircleHelp className="size-4 shrink-0 text-primary" aria-hidden="true" />
+          <span className="min-w-0 flex-1">What outcome, profit, and group mode mean</span>
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true" />
         </summary>
-        <div className="mt-2 grid gap-2 leading-5 text-muted-foreground sm:grid-cols-3">
+        <div className="grid gap-2 border-t px-3 py-2 leading-5 text-muted-foreground @2xl:grid-cols-3">
           <p><span className="font-medium text-foreground">Outcome</span> is win or loss for the battle creator&apos;s team—not for every participant.</p>
           <p><span className="font-medium text-foreground">Creator profit</span> is creator payout minus their paid entry and sponsorship cost. Multiplier is payout divided by that total cost.</p>
           <p><span className="font-medium text-foreground">Group mode</span> has one shared team, so the creator cannot lose. A loss request falls back to the lowest creator-profit candidate in the five-block window.</p>
@@ -332,56 +339,56 @@ export function EosFlowBuilder({
             && rule.minMultiplier > rule.maxMultiplier;
           const probability = total > 0 ? Math.round((rule.count / total) * 100) : 0;
           return (
-            <div key={`${id}-step-${index}`} className="rounded-xl border bg-card p-4 shadow-sm">
-              <div className="mb-4 flex items-start justify-between gap-3">
+            <div key={`${id}-step-${index}`} className="rounded-xl border border-border/70 p-3 @2xl:p-4">
+              <div className="mb-3 flex flex-col gap-2 @md:flex-row @md:items-start @md:justify-between">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="outline">{randomized ? `Rule ${index + 1}` : `Step ${index + 1}`}</Badge>
                     {randomized && <span className="text-xs font-medium text-primary">~{probability}%</span>}
                   </div>
-                  <p className="mt-2 truncate text-xs text-muted-foreground">{eosRuleSummary(rule)}</p>
+                  <p className="mt-1.5 text-xs leading-4 text-muted-foreground">{eosRuleSummary(rule)}</p>
                 </div>
-                <div className="flex items-center">
-                  <Button type="button" size="icon" variant="ghost" disabled={rules.length >= 20} aria-label={`Duplicate step ${index + 1}`} onClick={() => duplicateRule(index)}><Copy className="size-4" /></Button>
+                <div className="flex items-center self-end @md:self-auto">
+                  <Button type="button" size="icon-lg" variant="ghost" disabled={rules.length >= 20} aria-label={`Duplicate step ${index + 1}`} onClick={() => duplicateRule(index)}><Copy className="size-4" aria-hidden="true" /></Button>
                   {!randomized && (
                     <>
-                      <Button type="button" size="icon" variant="ghost" disabled={index === 0} aria-label={`Move step ${index + 1} up`} onClick={() => moveRule(index, -1)}><ArrowUp className="size-4" /></Button>
-                      <Button type="button" size="icon" variant="ghost" disabled={index === rules.length - 1} aria-label={`Move step ${index + 1} down`} onClick={() => moveRule(index, 1)}><ArrowDown className="size-4" /></Button>
+                      <Button type="button" size="icon-lg" variant="ghost" disabled={index === 0} aria-label={`Move step ${index + 1} up`} onClick={() => moveRule(index, -1)}><ArrowUp className="size-4" aria-hidden="true" /></Button>
+                      <Button type="button" size="icon-lg" variant="ghost" disabled={index === rules.length - 1} aria-label={`Move step ${index + 1} down`} onClick={() => moveRule(index, 1)}><ArrowDown className="size-4" aria-hidden="true" /></Button>
                     </>
                   )}
-                  <Button type="button" size="icon" variant="ghost" disabled={rules.length === 1} aria-label={`Remove step ${index + 1}`} onClick={() => onRulesChange(rules.filter((_, ruleIndex) => ruleIndex !== index))}><Trash2 className="size-4" /></Button>
+                  <Button type="button" size="icon-lg" variant="ghost" disabled={rules.length === 1} aria-label={`Remove step ${index + 1}`} onClick={() => onRulesChange(rules.filter((_, ruleIndex) => ruleIndex !== index))}><Trash2 className="size-4" aria-hidden="true" /></Button>
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="space-y-1.5 text-xs font-medium">
-                  Creator outcome
+              <div className="grid gap-3 @md:grid-cols-2 @4xl:grid-cols-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor={`${id}-target-${index}`}>Creator outcome</Label>
                   <Select value={rule.target} onValueChange={(value) => value && updateRule(index, { target: value as EosUserRule["target"] })}>
-                    <SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger>
+                    <SelectTrigger id={`${id}-target-${index}`} className="h-9 w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>{Object.entries(targetLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-1.5 text-xs font-medium">
-                  Choose matching candidate by
+                <div className="space-y-1.5">
+                  <Label htmlFor={`${id}-strategy-${index}`}>Choose matching candidate by</Label>
                   <Select value={rule.strategy} onValueChange={(value) => value && updateRule(index, { strategy: value as EosUserRule["strategy"] })}>
-                    <SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger>
+                    <SelectTrigger id={`${id}-strategy-${index}`} className="h-9 w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>{Object.entries(strategyLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <label className="space-y-1.5 text-xs font-medium">
-                  Minimum multiplier
-                  <Input type="number" min={0} max={10_000} step="0.01" placeholder="No minimum" value={rule.minMultiplier ?? ""} aria-invalid={invalidRange} onChange={(event) => updateRule(index, { minMultiplier: multiplierValue(event.target.value) })} />
-                </label>
-                <label className="space-y-1.5 text-xs font-medium">
-                  Maximum multiplier
-                  <Input type="number" min={0} max={10_000} step="0.01" placeholder="No maximum" value={rule.maxMultiplier ?? ""} aria-invalid={invalidRange} onChange={(event) => updateRule(index, { maxMultiplier: multiplierValue(event.target.value) })} />
-                </label>
-                <label className="space-y-1.5 text-xs font-medium sm:col-span-2 xl:col-span-1">
-                  {randomized ? "Weight" : "Number of battles"}
-                  <Input className="max-w-36" type="number" min={1} max={100} value={rule.count} onChange={(event) => updateRule(index, { count: Math.min(100, Math.max(1, Number(event.target.value) || 1)) })} />
-                </label>
+                <div className="space-y-1.5">
+                  <Label htmlFor={`${id}-minimum-${index}`}>Minimum multiplier</Label>
+                  <Input id={`${id}-minimum-${index}`} type="number" min={0} max={10_000} step="0.01" placeholder="No minimum" value={rule.minMultiplier ?? ""} aria-invalid={invalidRange} aria-describedby={invalidRange ? `${id}-range-error-${index}` : undefined} onChange={(event) => updateRule(index, { minMultiplier: multiplierValue(event.target.value) })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor={`${id}-maximum-${index}`}>Maximum multiplier</Label>
+                  <Input id={`${id}-maximum-${index}`} type="number" min={0} max={10_000} step="0.01" placeholder="No maximum" value={rule.maxMultiplier ?? ""} aria-invalid={invalidRange} aria-describedby={invalidRange ? `${id}-range-error-${index}` : undefined} onChange={(event) => updateRule(index, { maxMultiplier: multiplierValue(event.target.value) })} />
+                </div>
+                <div className="space-y-1.5 @md:col-span-2 @4xl:col-span-1">
+                  <Label htmlFor={`${id}-count-${index}`}>{randomized ? "Weight" : "Number of battles"}</Label>
+                  <Input id={`${id}-count-${index}`} className="w-full" type="number" min={1} max={100} value={rule.count} onChange={(event) => updateRule(index, { count: Math.min(100, Math.max(1, Number(event.target.value) || 1)) })} />
+                </div>
               </div>
-              {invalidRange && <p role="alert" className="mt-2 text-xs font-medium text-destructive">Minimum multiplier cannot be higher than maximum.</p>}
+              {invalidRange && <p id={`${id}-range-error-${index}`} role="alert" className="mt-2 text-xs font-medium text-destructive">Minimum multiplier cannot be higher than maximum.</p>}
               {rule.target === "loss" && (rule.strategy === "lowest_multiplier" || rule.strategy === "highest_multiplier") && (
                 <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-400">
                   Creator losses normally pay 0×. Lowest profit gives a meaningful loss ordering.
@@ -397,7 +404,7 @@ export function EosFlowBuilder({
         })}
 
         <Button type="button" variant="outline" disabled={rules.length >= 20} onClick={() => onRulesChange([...rules, { ...emptyRule }])}>
-          <Plus className="size-4" />Add outcome rule
+          <Plus className="size-4" aria-hidden="true" />Add outcome rule
         </Button>
       </section>
     </div>

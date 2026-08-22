@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ListOrdered, Loader2, Search, Trash2, UserRoundCog } from "lucide-react";
+import { AlertTriangle, ChevronDown, ListOrdered, Loader2, Search, Trash2, UserRoundCog } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -40,7 +40,7 @@ type UserResult = Awaited<ReturnType<typeof searchEosUsers>>[number];
 
 const defaultRules: EosUserRule[] = [{
   target: "loss",
-  strategy: "lowest_multiplier",
+  strategy: "lowest_profit",
   count: 1,
   minMultiplier: null,
   maxMultiplier: null,
@@ -214,9 +214,9 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
   }
 
   return (
-    <div className="grid items-start gap-5 2xl:grid-cols-[minmax(0,1fr)_400px]">
-      <Card className="min-w-0 overflow-hidden">
-        <CardHeader className="border-b bg-muted/20">
+    <div className="mx-auto grid max-w-[1400px] items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <Card className="min-w-0 overflow-visible">
+        <CardHeader className="border-b">
           <CardTitle className="flex items-center gap-2 text-base"><UserRoundCog className="size-4 text-primary" />Per-user outcome control</CardTitle>
           <p className="max-w-3xl text-sm text-muted-foreground">Build a personal {environment} flow. While enabled, it overrides the global flow for this user only.</p>
         </CardHeader>
@@ -232,9 +232,9 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
               <Button type="button" variant="outline" disabled={isPending || query.trim().length < 2} onClick={search}>{isPending ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}Search</Button>
             </div>
             {results.length > 0 && (
-              <div className="divide-y rounded-lg border" role="listbox" aria-label="EOS user search results">
+              <div className="divide-y rounded-lg border" aria-label="EOS user search results">
                 {results.map((user) => (
-                  <button key={user.userId} type="button" role="option" aria-selected={selected?.userId === user.userId} className="flex w-full flex-col gap-1 p-3 text-left hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between" onClick={() => loadConfig(user, configs.find((config) => config.userId === user.userId))}>
+                  <button key={user.userId} type="button" aria-pressed={selected?.userId === user.userId} className="flex w-full flex-col gap-1 p-3 text-left hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between" onClick={() => loadConfig(user, configs.find((config) => config.userId === user.userId))}>
                     <span className="text-sm font-medium">{user.displayUsername ?? user.username ?? "Unnamed user"}</span>
                     <span className="break-all font-mono text-[11px] text-muted-foreground">{user.userId}</span>
                   </button>
@@ -245,7 +245,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
 
           {selected ? (
             <div className="space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/20 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{selected.displayUsername ?? selected.username ?? "Unnamed user"}</p>
                   <p className="break-all font-mono text-[11px] text-muted-foreground">{selected.userId}</p>
@@ -256,7 +256,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
                   loadHistory(selected.userId);
                 }
               }}>
-                <TabsList>
+                <TabsList variant="line">
                   <TabsTrigger value="flow">Flow controls</TabsTrigger>
                   <TabsTrigger value="history">Battle history</TabsTrigger>
                 </TabsList>
@@ -272,13 +272,13 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
                       />
                     </label>
                   </div>
-                  <div className={`flex flex-col gap-4 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between ${
+                  <div className={`flex flex-col gap-4 rounded-xl p-4 ring-1 sm:flex-row sm:items-center sm:justify-between ${
                     forceLosses
-                      ? "border-destructive/60 bg-destructive/10"
-                      : "border-amber-500/40 bg-amber-500/5"
+                      ? "bg-destructive/10 ring-destructive/40"
+                      : "bg-muted/35 ring-foreground/10"
                   }`}>
                     <div className="flex items-start gap-3">
-                      <AlertTriangle className={`mt-0.5 size-5 shrink-0 ${forceLosses ? "text-destructive" : "text-amber-500"}`} />
+                      <AlertTriangle className={`mt-0.5 size-5 shrink-0 ${forceLosses ? "text-destructive" : "text-muted-foreground"}`} aria-hidden="true" />
                       <div>
                         <p className="text-sm font-semibold">Lose only for this user</p>
                         <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
@@ -287,7 +287,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
                         </p>
                       </div>
                     </div>
-                    <label className="flex shrink-0 items-center gap-3 rounded-lg border bg-background px-3 py-2 text-sm font-semibold">
+                    <label className="flex shrink-0 items-center justify-between gap-3 rounded-lg bg-background/80 px-3 py-2 text-sm font-semibold sm:justify-start">
                       {forceLosses ? "Override active" : "Override off"}
                       <Switch
                         aria-label="Force losses for this EOS user"
@@ -298,8 +298,8 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
                     </label>
                   </div>
                   <EosFlowBuilder id={`user-eos-flow-${selected.userId}`} rules={rules} persistent={persistent} randomized={randomized} onRulesChange={setRules} onPersistentChange={setPersistent} onRandomizedChange={setRandomized} />
-                  <div className="flex justify-end border-t pt-4">
-                    <Button type="button" disabled={isPending || !valid} onClick={save}>{isPending && <Loader2 className="size-4 animate-spin" />}Save &amp; restart personal flow</Button>
+                  <div className="sticky bottom-0 z-20 -mx-4 flex justify-end border-t bg-background/90 px-4 py-3 backdrop-blur">
+                    <Button type="button" className="w-full sm:w-auto" disabled={isPending || !valid} onClick={save}>{isPending && <Loader2 className="size-4 animate-spin" />}Save &amp; restart personal flow</Button>
                   </div>
                 </TabsContent>
                 <TabsContent value="history" className="space-y-3 pt-2">
@@ -320,20 +320,24 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
                     <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed p-8 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading battle history</div>
                   )}
                   {history && (
-                    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                       {[
                         ["Creator battles", history.summary.creatorBattles],
                         ["Config active", history.summary.controlledBattles],
                         ["Detailed audits", history.summary.auditedBattles],
-                        ["Legacy details", history.summary.legacyBattles],
-                        ["Missing audit", history.summary.missingAudit],
                       ].map(([label, value]) => (
                         <div key={label} className="rounded-lg border bg-muted/20 p-3">
-                          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+                          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
                           <p className="mt-1 text-lg font-semibold tabular-nums">{value}</p>
                         </div>
                       ))}
                     </div>
+                  )}
+                  {history && (history.summary.legacyBattles > 0 || history.summary.missingAudit > 0) && (
+                    <p className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                      Data quality: {history.summary.legacyBattles} legacy without candidate details
+                      {" · "}{history.summary.missingAudit} missing monitor records
+                    </p>
                   )}
                   {history && history.summary.missingAudit > 0 && (
                     <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
@@ -371,15 +375,14 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
                     const currency = decision?.currency ?? observed?.currency ?? "";
                     return (
                       <details key={entry.battleId} className="group rounded-lg border bg-card p-3">
-                        <summary className="cursor-pointer list-none space-y-2">
+                        <summary className="-m-1 cursor-pointer list-none space-y-2 rounded-md p-1 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-xs font-medium">{new Date(entry.occurredAt).toLocaleString()}</span>
-                            <Badge
-                              variant={(!decision && !selectionSummary && !entry.beforeTracking)
-                                || decision?.fallbackReason ? "destructive" : "secondary"}
-                            >
-                              {status}
-                            </Badge>
+                            <span className="flex items-center gap-2 text-xs font-medium">
+                              <ChevronDown className="size-3.5 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden="true" />
+                              {new Date(entry.occurredAt).toLocaleString()}
+                            </span>
+                            <Badge variant={(!decision && !selectionSummary && !entry.beforeTracking)
+                              || decision?.fallbackReason ? "destructive" : "secondary"}>{status}</Badge>
                           </div>
                           <div className="grid gap-2 text-xs sm:grid-cols-[1fr_auto_1fr] sm:items-center">
                             <div>
@@ -441,7 +444,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
         </CardContent>
       </Card>
 
-      <Card className="2xl:sticky 2xl:top-5">
+      <Card className="xl:sticky xl:top-5">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base"><ListOrdered className="size-4 text-primary" />Configured users</CardTitle>
           <p className="text-sm text-muted-foreground">{configs.length} personal {configs.length === 1 ? "flow" : "flows"}</p>
@@ -456,7 +459,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
             />
           </div>
         </CardHeader>
-        <CardContent className="max-h-[70vh] space-y-3 overflow-y-auto">
+        <CardContent className="max-h-[72vh] space-y-2 overflow-y-auto">
           {configs.length === 0 && <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No personal outcome controls configured.</p>}
           {configs.length > 0 && visibleConfigs.length === 0 && <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No configured users match this filter.</p>}
           {visibleConfigs.map((config) => {
@@ -466,13 +469,13 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
             const progress = totalBattles > 0 ? Math.min(100, Math.round((completedBattles / totalBattles) * 100)) : 0;
             const status = config.enabled ? (config.persistent ? "Running" : "Active") : (activeRule ? "Paused" : "Complete");
             return (
-              <div key={config.userId} className={`space-y-3 rounded-lg border p-3 ${selected?.userId === config.userId ? "border-primary bg-primary/5" : ""}`}>
+              <div key={config.userId} className={`space-y-3 rounded-lg p-3 ring-1 ${selected?.userId === config.userId ? "bg-primary/5 ring-primary/35" : "ring-foreground/10"}`}>
                 <div className="flex items-start justify-between gap-3">
                   <button type="button" className="min-w-0 text-left" onClick={() => loadConfig({ userId: config.userId, username: config.username, displayUsername: null }, config)}>
                     <p className="truncate text-sm font-semibold">{config.username ?? "Unnamed user"}</p>
                     <p className="truncate font-mono text-[10px] text-muted-foreground">{config.userId}</p>
                   </button>
-                  <div className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center justify-end gap-1">
                     {config.forceLosses && <Badge variant="destructive">Lose only</Badge>}
                     <Badge variant={config.enabled ? "default" : "secondary"}>{status}</Badge>
                     <Button type="button" size="icon" variant="ghost" aria-label={`Remove ${config.username ?? config.userId}`} onClick={() => setRemoveTarget(config)}><Trash2 className="size-4" /></Button>

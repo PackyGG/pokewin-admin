@@ -100,8 +100,8 @@ export function EosTestConfigCard({ initial }: { initial: EosTestConfig }) {
   }
 
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="border-b bg-muted/20">
+    <Card className="mx-auto w-full max-w-[1200px] overflow-visible">
+      <CardHeader className="border-b">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-1">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -117,7 +117,7 @@ export function EosTestConfigCard({ initial }: { initial: EosTestConfig }) {
                 : "No global flow has been saved yet"}
             </p>
           </div>
-          <label className="flex items-center gap-3 rounded-lg border bg-background px-3 py-2 text-sm font-medium">
+          <label className="flex items-center gap-3 rounded-lg bg-muted/50 px-3 py-2 text-sm font-medium">
             Global flow {enabled ? "enabled" : "paused"}
             <Switch
               aria-label="Enable global EOS flow"
@@ -128,24 +128,38 @@ export function EosTestConfigCard({ initial }: { initial: EosTestConfig }) {
           </label>
         </div>
       </CardHeader>
-      <CardContent className="space-y-5 pt-6">
-        <div className={`flex flex-col gap-4 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between ${
+      <CardContent className="space-y-6 pt-1">
+        <EosFlowBuilder
+          id="global-eos-flow"
+          rules={rules}
+          persistent={persistent}
+          randomized={randomized}
+          onRulesChange={setRules}
+          onPersistentChange={setPersistent}
+          onRandomizedChange={setRandomized}
+        />
+        <div className={`flex flex-col gap-4 rounded-xl p-4 sm:flex-row sm:items-center sm:justify-between ${
           forceAllLosses
-            ? "border-destructive/60 bg-destructive/10"
-            : "border-amber-500/40 bg-amber-500/5"
+            ? "bg-destructive/10 ring-1 ring-destructive/35"
+            : "bg-muted/35 ring-1 ring-foreground/10"
         }`}>
           <div className="flex items-start gap-3">
-            <AlertTriangle className={`mt-0.5 size-5 shrink-0 ${forceAllLosses ? "text-destructive" : "text-amber-500"}`} />
+            <AlertTriangle
+              aria-hidden="true"
+              className={`mt-0.5 size-5 shrink-0 ${
+                forceAllLosses ? "text-destructive" : "text-muted-foreground"
+              }`}
+            />
             <div>
-              <p className="text-sm font-semibold">Force losses for every battle</p>
+              <p className="text-sm font-semibold">Emergency force-loss override</p>
               <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
-                Overrides every personal and global flow. Selects a creator loss;
-                if the five-block window has no loss, it selects the lowest creator outcome.
+                Overrides every personal and global flow. If no creator loss exists,
+                EOS selects the candidate with the lowest creator profit.
               </p>
             </div>
           </div>
-          <label className="flex shrink-0 items-center gap-3 rounded-lg border bg-background px-3 py-2 text-sm font-semibold">
-            {forceAllLosses ? "Override active" : "Override off"}
+          <label className="flex shrink-0 items-center justify-between gap-3 rounded-lg bg-background/80 px-3 py-2 text-sm font-semibold sm:justify-start">
+            {forceAllLosses ? "Active" : "Off"}
             <Switch
               aria-label="Force losses for every EOS battle"
               checked={forceAllLosses}
@@ -157,20 +171,11 @@ export function EosTestConfigCard({ initial }: { initial: EosTestConfig }) {
             />
           </label>
         </div>
-        <EosFlowBuilder
-          id="global-eos-flow"
-          rules={rules}
-          persistent={persistent}
-          randomized={randomized}
-          onRulesChange={setRules}
-          onPersistentChange={setPersistent}
-          onRandomizedChange={setRandomized}
-        />
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-muted/50 p-3">
+        <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-3 border-t bg-background/90 px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between">
           <span className="flex items-center gap-2 text-xs text-muted-foreground">
             <ShieldCheck className="size-4 text-emerald-500" />Ordered targets retry when unavailable. Saving restarts at rule one.
           </span>
-          <Button type="button" disabled={isPending || !valid} onClick={save}>
+          <Button type="button" className="w-full sm:w-auto" disabled={isPending || !valid} onClick={save}>
             {isPending && <Loader2 className="size-4 animate-spin" />}
             Save &amp; restart global flow
           </Button>

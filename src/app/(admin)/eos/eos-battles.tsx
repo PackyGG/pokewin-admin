@@ -14,6 +14,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { MobileCard } from "@/components/data-table/mobile-card-list";
+import { EmptyState } from "@/components/empty-state";
+import { KpiTile } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,6 +40,7 @@ import { cn } from "@/lib/utils";
 import { loadEosBattles } from "./actions";
 
 type BattleData = Awaited<ReturnType<typeof loadEosBattles>>;
+type BattleRow = BattleData["rows"][number];
 type ControlFilter = "all" | "controlled" | "random" | "legacy" | "missing";
 
 function amount(value: number | null, currency: string) {
@@ -44,26 +48,57 @@ function amount(value: number | null, currency: string) {
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)} ${currency}`;
 }
 
-function controlState(row: BattleData["rows"][number]): ControlFilter {
+function controlState(row: BattleRow): ControlFilter {
   const selection = row.selection;
   if (!selection) return "missing";
   if (!selection.auditAvailable) return "legacy";
   return selection.configured ? "controlled" : "random";
 }
 
-function ControlBadge({ row }: { row: BattleData["rows"][number] }) {
+function ControlBadge({ row }: { row: BattleRow }) {
   const selection = row.selection;
   if (!selection) return <Badge variant="destructive">Not recorded</Badge>;
   if (!selection.auditAvailable) {
     return (
-      <Badge className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300">
-        {selection.configured ? "Control active · legacy" : "Random · legacy"}
+      <Badge className="border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+        {selection.configured ? "Controlled · legacy" : "Random · legacy"}
       </Badge>
     );
   }
-  if (!selection.configured) return <Badge variant="outline">No config · random</Badge>;
-  if (selection.fallbackReason) return <Badge variant="destructive">Config active · fallback</Badge>;
-  return <Badge className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">Config active · applied</Badge>;
+  if (!selection.configured) return <Badge variant="outline">Random · no config</Badge>;
+  if (selection.fallbackReason) return <Badge variant="destructive">Fallback</Badge>;
+  return <Badge variant="secondary">Control applied</Badge>;
+}
+
+function Outcome({ row }: { row: BattleRow }) {
+  const won = row.battle.creatorWonBattle;
+  return (
+    <div>
+      <span className="font-semibold text-foreground">
+        {won === null ? "Pending" : won ? "Win" : "Loss"}
+      </span>
+      <span className="block text-xs text-muted-foreground">
+        Team {row.battle.creatorTeam}
+        {row.battle.winnerTeam === null ? "" : ` · winner ${row.battle.winnerTeam}`}
+      </span>
+    </div>
+  );
+}
+
+function Profit({ row }: { row: BattleRow }) {
+  const { creatorProfitLoss, creatorMultiplier, currency } = row.battle;
+  return (
+    <div className={cn(
+      "font-semibold tabular-nums",
+      (creatorProfitLoss ?? 0) > 0 && "text-rose-600 dark:text-rose-400",
+      (creatorProfitLoss ?? 0) < 0 && "text-emerald-600 dark:text-emerald-400",
+    )}>
+      {amount(creatorProfitLoss, currency)}
+      <span className="block text-xs font-normal text-muted-foreground">
+        {creatorMultiplier?.toFixed(2) ?? "—"}× multiplier
+      </span>
+    </div>
+  );
 }
 
 export function EosBattles({ active }: { active: boolean }) {
@@ -104,16 +139,47 @@ export function EosBattles({ active }: { active: boolean }) {
 
   return (
     <div className="min-w-0 space-y-4">
+      <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+        <KpiTile
+          icon={Activity}
+          label="Loaded battles"
+          value={String(data?.rows.length ?? 0)}
+          sub="Latest EOS-backed battles"
+          accent="blue"
+        />
+        <KpiTile
+          icon={ShieldCheck}
+          label="Control applied"
+          value={String(controlled)}
+          sub="Detailed decisions"
+          accent="emerald"
+        />
+        <KpiTile
+          icon={ShieldQuestion}
+          label="Decision missing"
+          value={String(missing)}
+          sub="Needs investigation"
+          accent={missing > 0 ? "rose" : "blue"}
+        />
+        <KpiTile
+          icon={CircleDollarSign}
+          label="Group battles"
+          value={String(groupBattles)}
+          sub="Shared creator team"
+          accent="purple"
+        />
+      </div>
+
       <Card>
-        <CardHeader className="border-b bg-muted/20">
+        <CardHeader className="border-b">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Activity className="size-4 text-primary" />Latest EOS battles
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="size-4 text-primary" />
+                Latest EOS battles
               </CardTitle>
-              <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
-                Latest 50 creator battles with an EOS block. Outcome means whether the creator&apos;s
-                team won. Profit means creator payout minus their paid entry and sponsorship cost.
+              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                Outcome and P&amp;L are shown from the battle creator&apos;s perspective.
               </p>
             </div>
             <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={refresh}>
@@ -122,78 +188,165 @@ export function EosBattles({ active }: { active: boolean }) {
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4 pt-5">
-          <div className="grid gap-2 sm:grid-cols-4">
-            {[
-              [Activity, "Loaded battles", data?.rows.length ?? 0],
-              [ShieldCheck, "Config applied", controlled],
-              [ShieldQuestion, "Decision missing", missing],
-              [CircleDollarSign, "Group battles", groupBattles],
-            ].map(([Icon, label, value]) => {
-              const MetricIcon = Icon as typeof Activity;
-              return (
-                <div key={label as string} className="rounded-lg border bg-muted/20 p-3">
-                  <div className="flex items-center gap-2 text-muted-foreground"><MetricIcon className="size-3.5" /><span className="text-[10px] font-medium uppercase tracking-wide">{label as string}</span></div>
-                  <p className="mt-1 text-lg font-semibold tabular-nums">{value as number}</p>
-                </div>
-              );
-            })}
+
+        <CardContent className="space-y-4 pt-1">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_14rem]">
+            <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+              Search battles
+              <span className="relative block">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  className="pl-9"
+                  placeholder="Creator, user ID, or battle ID"
+                />
+              </span>
+            </label>
+            <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
+              EOS decision
+              <Select
+                value={controlFilter}
+                onValueChange={(value) => value && setControlFilter(value as ControlFilter)}
+              >
+                <SelectTrigger className="w-full" aria-label="Filter EOS control status">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All control states</SelectItem>
+                  <SelectItem value="controlled">Config applied</SelectItem>
+                  <SelectItem value="random">No config · random</SelectItem>
+                  <SelectItem value="legacy">Legacy record</SelectItem>
+                  <SelectItem value="missing">Decision missing</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
           </div>
 
-          <div className="rounded-lg border border-blue-500/25 bg-blue-500/5 p-3 text-xs leading-5 text-muted-foreground">
-            <span className="font-semibold text-foreground">Group mode:</span> everyone belongs to
-            team 1, so the creator outcome is always a win. A requested loss cannot exist; EOS
-            falls back to the candidate with the lowest creator profit among the five blocks.
-          </div>
-
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} className="pl-9" placeholder="Search creator or battle ID" />
-            </div>
-            <Select value={controlFilter} onValueChange={(value) => value && setControlFilter(value as ControlFilter)}>
-              <SelectTrigger className="w-full sm:w-52" aria-label="Filter EOS control status"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All control states</SelectItem>
-                <SelectItem value="controlled">Config applied</SelectItem>
-                <SelectItem value="random">No config · random</SelectItem>
-                <SelectItem value="legacy">Legacy record</SelectItem>
-                <SelectItem value="missing">Decision missing</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <details className="rounded-lg bg-muted/35 px-3 py-2 text-xs text-muted-foreground">
+            <summary className="cursor-pointer font-medium text-foreground">How group battles are handled</summary>
+            <p className="mt-1.5 max-w-4xl leading-5">
+              Everyone belongs to team 1, so the creator outcome is always a win. When a loss is
+              requested, EOS falls back to the candidate with the lowest creator profit among the
+              five available blocks.
+            </p>
+          </details>
 
           {!data && isPending ? (
-            <div className="flex min-h-52 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading EOS battles</div>
-          ) : rows.length === 0 ? (
-            <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">No battles match these filters.</div>
-          ) : (
-            <div className="overflow-x-auto rounded-lg border">
-              <Table className="min-w-[1040px]">
-                <TableHeader><TableRow>
-                  <TableHead>Creator</TableHead><TableHead>Mode</TableHead><TableHead>Outcome</TableHead>
-                  <TableHead className="text-right">Creator profit</TableHead><TableHead className="text-right">Cost / payout</TableHead>
-                  <TableHead>EOS control</TableHead><TableHead>Time</TableHead><TableHead><span className="sr-only">Open</span></TableHead>
-                </TableRow></TableHeader>
-                <TableBody>
-                  {rows.map((row) => {
-                    const battle = row.battle;
-                    return (
-                      <TableRow key={battle.battleId}>
-                        <TableCell><p className="max-w-44 truncate font-medium">{battle.creatorUsername ?? "Unnamed creator"}</p><p className="max-w-44 truncate font-mono text-[10px] text-muted-foreground">{battle.creatorUserId}</p></TableCell>
-                        <TableCell><Badge variant="outline" className="capitalize">{battle.mode.replaceAll("_", " ")}</Badge></TableCell>
-                        <TableCell><span className={cn("font-semibold uppercase", battle.creatorWonBattle === true && "text-emerald-600 dark:text-emerald-400", battle.creatorWonBattle === false && "text-destructive")}>{battle.creatorWonBattle === null ? "Pending" : battle.creatorWonBattle ? "Win" : "Loss"}</span><span className="block text-[10px] text-muted-foreground">team {battle.creatorTeam}{battle.winnerTeam === null ? "" : ` · winner ${battle.winnerTeam}`}</span></TableCell>
-                        <TableCell className={cn("text-right font-semibold tabular-nums", (battle.creatorProfitLoss ?? 0) > 0 && "text-destructive", (battle.creatorProfitLoss ?? 0) < 0 && "text-emerald-600 dark:text-emerald-400")}>{amount(battle.creatorProfitLoss, battle.currency)}<span className="block text-[10px] font-normal text-muted-foreground">{battle.creatorMultiplier?.toFixed(2) ?? "—"}× payout multiplier</span></TableCell>
-                        <TableCell className="text-right text-xs tabular-nums"><span>{amount(battle.creatorCost, battle.currency)} cost</span><span className="block text-muted-foreground">{amount(battle.creatorPayout, battle.currency)} payout</span></TableCell>
-                        <TableCell><ControlBadge row={row} /><p className="mt-1 text-[10px] text-muted-foreground">{row.selection?.requestedTarget ? `requested ${row.selection.requestedTarget}` : row.selection ? "no requested outcome" : "no monitor record"}</p></TableCell>
-                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{new Date(battle.createdAt).toLocaleString()}</TableCell>
-                        <TableCell><Link href={`/users/${battle.creatorUserId}`} aria-label="Open creator" className={buttonVariants({ size: "icon-sm", variant: "ghost" })}><ArrowUpRight className="size-4" /></Link></TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+            <div className="flex min-h-52 items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              Loading EOS battles
             </div>
+          ) : rows.length === 0 ? (
+            <div className="rounded-lg border">
+              <EmptyState
+                icon={Search}
+                title="No matching battles"
+                description="Try a different creator, battle ID, or EOS decision filter."
+                compact
+              />
+            </div>
+          ) : (
+            <>
+              <div className="overflow-hidden rounded-lg border md:hidden">
+                {rows.map((row) => {
+                  const battle = row.battle;
+                  return (
+                    <MobileCard
+                      key={battle.battleId}
+                      primary={battle.creatorUsername ?? "Unnamed creator"}
+                      secondary={<span className="font-mono">{battle.creatorUserId}</span>}
+                      trailing={<Profit row={row} />}
+                      meta={[
+                        <span key="outcome" className="font-medium text-foreground">
+                          {battle.creatorWonBattle === null ? "Pending" : battle.creatorWonBattle ? "Win" : "Loss"}
+                        </span>,
+                        <span key="mode" className="capitalize">{battle.mode.replaceAll("_", " ")}</span>,
+                        <ControlBadge key="control" row={row} />,
+                      ]}
+                      footer={(
+                        <div className="flex items-center justify-between gap-3">
+                          <span>{new Date(battle.createdAt).toLocaleString()}</span>
+                          <Link
+                            href={`/users/${battle.creatorUserId}`}
+                            className="font-medium text-primary"
+                          >
+                            Open creator
+                          </Link>
+                        </div>
+                      )}
+                    />
+                  );
+                })}
+              </div>
+
+              <div className="hidden overflow-hidden rounded-lg border md:block">
+                <Table className="min-w-[940px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Creator</TableHead>
+                      <TableHead>Mode</TableHead>
+                      <TableHead>Outcome</TableHead>
+                      <TableHead className="text-right">Creator P&amp;L</TableHead>
+                      <TableHead className="text-right">Cost / payout</TableHead>
+                      <TableHead>EOS decision</TableHead>
+                      <TableHead>Time</TableHead>
+                      <TableHead><span className="sr-only">Open</span></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((row) => {
+                      const battle = row.battle;
+                      return (
+                        <TableRow key={battle.battleId}>
+                          <TableCell>
+                            <p className="max-w-44 truncate font-medium">
+                              {battle.creatorUsername ?? "Unnamed creator"}
+                            </p>
+                            <p className="max-w-44 truncate font-mono text-xs text-muted-foreground">
+                              {battle.creatorUserId}
+                            </p>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="capitalize">
+                              {battle.mode.replaceAll("_", " ")}
+                            </Badge>
+                          </TableCell>
+                          <TableCell><Outcome row={row} /></TableCell>
+                          <TableCell className="text-right"><Profit row={row} /></TableCell>
+                          <TableCell className="text-right text-xs tabular-nums">
+                            <span>{amount(battle.creatorCost, battle.currency)} cost</span>
+                            <span className="block text-muted-foreground">
+                              {amount(battle.creatorPayout, battle.currency)} payout
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <ControlBadge row={row} />
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {row.selection?.requestedTarget
+                                ? `Requested ${row.selection.requestedTarget}`
+                                : row.selection ? "No requested outcome" : "No monitor record"}
+                            </p>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                            {new Date(battle.createdAt).toLocaleString()}
+                          </TableCell>
+                          <TableCell>
+                            <Link
+                              href={`/users/${battle.creatorUserId}`}
+                              aria-label="Open creator"
+                              className={buttonVariants({ size: "icon-sm", variant: "ghost" })}
+                            >
+                              <ArrowUpRight className="size-4" />
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

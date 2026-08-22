@@ -3,7 +3,6 @@
 import { useState, type ReactNode } from "react";
 import {
   BarChart3,
-  CheckCircle2,
   Globe2,
   Radar,
   Route,
@@ -13,8 +12,8 @@ import {
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 import type {
   EosTestConfig,
   EosUserConfig,
@@ -34,39 +33,33 @@ type WorkspaceTab = "global" | "users" | "battles" | "signals" | "overview";
 
 const WORKSPACE_TABS = [
   {
-    value: "battles",
-    label: "Battles",
-    description: "Outcomes & controls",
-    icon: Swords,
-  },
-  {
     value: "global",
     label: "Global",
-    description: "Site-wide flow",
     icon: Globe2,
   },
   {
     value: "users",
     label: "Per-user",
-    description: "Personal flows",
     icon: UserRoundCog,
+  },
+  {
+    value: "battles",
+    label: "Battles",
+    icon: Swords,
   },
   {
     value: "signals",
     label: "Intelligence",
-    description: "Player rankings",
     icon: Radar,
   },
   {
     value: "overview",
     label: "Results",
-    description: "Control impact",
     icon: BarChart3,
   },
 ] as const satisfies ReadonlyArray<{
   value: WorkspaceTab;
   label: string;
-  description: string;
   icon: typeof Globe2;
 }>;
 
@@ -90,89 +83,52 @@ export function EosWorkspace({
 
   return (
     <div className="min-w-0 space-y-4">
-      <Card
-        size="sm"
-        className={config.forceAllLosses
-          ? "gap-0 bg-destructive/[0.035] ring-destructive/45"
-          : "gap-0"}
+      <div
+        className={cn(
+          "flex flex-col gap-3 rounded-xl border bg-card px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4",
+          config.forceAllLosses && "border-destructive/40 bg-destructive/[0.035]",
+        )}
       >
-        <CardContent className="px-0">
-          <div className="flex flex-col gap-3 px-4 pb-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                <CheckCircle2 className="size-4" aria-hidden="true" />
-              </span>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="font-semibold">EOS controls online</p>
-                  <Badge variant="outline" className="h-5 text-[10px] uppercase tracking-wide">
-                    {environmentLabel}
-                  </Badge>
-                </div>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  Connected to the {environmentLabel.toLowerCase()} control service
-                </p>
-              </div>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="relative flex size-2 shrink-0" aria-hidden="true">
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60 motion-reduce:hidden" />
+            <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-semibold">EOS controls online</p>
+              <Badge
+                variant="outline"
+                className="h-5 text-[10px] uppercase tracking-[0.12em]"
+              >
+                {environmentLabel}
+              </Badge>
             </div>
-            {config.forceAllLosses ? (
-              <Badge variant="destructive" className="w-fit gap-1.5 py-1">
-                <ShieldAlert className="size-3.5" aria-hidden="true" />
-                Force-loss override active
-              </Badge>
-            ) : (
-              <Badge variant="secondary" className="w-fit gap-1.5 py-1">
-                <CheckCircle2 className="size-3.5" aria-hidden="true" />
-                Emergency override off
-              </Badge>
-            )}
+            <p className="truncate text-xs text-muted-foreground">
+              {config.forceAllLosses
+                ? "Emergency override → loss or lowest fallback"
+                : "Personal flow → global flow → random outcome"}
+            </p>
           </div>
+        </div>
 
-          <div className="grid border-t sm:grid-cols-3 sm:divide-x">
-            <div className="flex items-center justify-between gap-3 border-b px-4 py-3 sm:border-b-0">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Global fallback
-                </p>
-                <p className="mt-0.5 text-sm font-semibold">
-                  {config.enabled ? "Running" : "Paused"}
-                </p>
-              </div>
-              <span
-                className={config.enabled
-                  ? "size-2 rounded-full bg-emerald-500"
-                  : "size-2 rounded-full bg-muted-foreground/45"}
-                aria-label={config.enabled ? "Running" : "Paused"}
-                role="img"
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3 border-b px-4 py-3 sm:border-b-0">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Personal controls
-                </p>
-                <p className="mt-0.5 text-sm font-semibold tabular-nums">
-                  {activePersonalFlows} active
-                  <span className="font-normal text-muted-foreground"> · {userConfigs.length} saved</span>
-                </p>
-              </div>
-              <UserRoundCog className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            </div>
-            <div className="flex items-center gap-3 px-4 py-3">
-              <Route className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <div className="min-w-0">
-                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  Decision priority
-                </p>
-                <p className="mt-0.5 truncate text-sm font-medium">
-                  {config.forceAllLosses
-                    ? "Emergency override → loss or lowest fallback"
-                    : "Personal → global → random"}
-                </p>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <Badge variant="secondary" className="gap-1.5 font-medium">
+            <Route className="size-3" aria-hidden="true" />
+            Global {config.enabled ? "running" : "paused"}
+          </Badge>
+          <Badge variant="secondary" className="gap-1.5 font-medium tabular-nums">
+            <UserRoundCog className="size-3" aria-hidden="true" />
+            {activePersonalFlows} personal active
+          </Badge>
+          {config.forceAllLosses && (
+            <Badge variant="destructive" className="gap-1.5 font-medium">
+              <ShieldAlert className="size-3" aria-hidden="true" />
+              Force-loss active
+            </Badge>
+          )}
+        </div>
+      </div>
 
       <Tabs
         value={tab}
@@ -180,22 +136,18 @@ export function EosWorkspace({
         className="min-w-0 gap-4"
       >
         <TabsList
+          variant="line"
           aria-label="EOS workspace sections"
-          className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl p-1 sm:grid-cols-5"
+          className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b p-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {WORKSPACE_TABS.map(({ value, label, description, icon: Icon }) => (
+          {WORKSPACE_TABS.map(({ value, label, icon: Icon }) => (
             <TabsTrigger
               key={value}
               value={value}
-              className="h-auto min-w-0 justify-start gap-2 px-3 py-2 text-left sm:justify-center xl:justify-start"
+              className="h-10 flex-none gap-2 px-3 sm:px-4"
             >
               <Icon className="size-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0">
-                <span className="block truncate leading-5">{label}</span>
-                <span className="hidden truncate text-[10px] font-normal leading-3 text-muted-foreground xl:block">
-                  {description}
-                </span>
-              </span>
+              <span>{label}</span>
             </TabsTrigger>
           ))}
         </TabsList>

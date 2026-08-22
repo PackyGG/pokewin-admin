@@ -13,7 +13,7 @@ import { logError } from "@/lib/errors/logger";
 import { EosOverview } from "./eos-overview";
 import { EosWorkspace } from "./eos-workspace";
 
-export const metadata = { title: "EOS Battle Testing" };
+export const metadata = { title: "EOS Outcome Controls" };
 
 async function EosOverviewSection({ environment }: { environment: DbEnv }) {
   const overview = await getEosTestOverview(environment).catch((error) => {
@@ -32,10 +32,10 @@ export default async function EosPage() {
   ]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <SectionHeading
         icon={RadioTower}
-        title="EOS battle testing"
+        title="EOS outcome controls"
       />
       <EosWorkspace
         environment={environment}
