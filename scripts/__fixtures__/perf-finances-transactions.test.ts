@@ -32,9 +32,7 @@ const FINANCES_PAGE = "src/app/(admin)/finances/page.tsx";
 test("transaction detail keeps one battle-link lookup, used as a fallback only", () => {
   const source = read(TRANSACTIONS_QUERY);
 
-  const subqueryOccurrences = source.split(
-    "SELECT pf.battle_id",
-  ).length - 1;
+  const subqueryOccurrences = source.split("SELECT pf.battle_id").length - 1;
   assert.equal(
     subqueryOccurrences,
     1,
@@ -66,7 +64,10 @@ test("transaction detail overlaps the battle read instead of tailing it", () => 
   const kickoffAt = source.indexOf("battleInfoPromise = resolveBattleInfo(");
   const awaitAt = source.indexOf("await (battleInfoPromise ??");
   assert.ok(kickoffAt > 0, "the battle lookup is no longer started early");
-  assert.ok(awaitAt > 0, "the battle lookup is no longer awaited via its handle");
+  assert.ok(
+    awaitAt > 0,
+    "the battle lookup is no longer awaited via its handle",
+  );
   assert.ok(
     kickoffAt < awaitAt,
     "the battle lookup must be started before the heavy waves and awaited after them",
@@ -151,7 +152,10 @@ test("finances renders its period control without waiting on a read", () => {
   const overviewAt = source.indexOf("function FinancesOverview");
   const chipsAt = source.indexOf("<PeriodChips");
   const contentBoundaryAt = source.indexOf("<ProfitCardContent");
-  assert.ok(overviewAt > 0 && chipsAt > overviewAt, "PeriodChips moved out of the overview");
+  assert.ok(
+    overviewAt > 0 && chipsAt > overviewAt,
+    "PeriodChips moved out of the overview",
+  );
   assert.ok(
     chipsAt < contentBoundaryAt,
     "PeriodChips must render above the streamed profit content, not inside it",
@@ -164,12 +168,12 @@ test("finances renders its period control without waiting on a read", () => {
  * same number, so they must share one promise rather than issuing a second
  * P&L read.
  */
-test("finances does not read the weekly P&L twice when the week is selected", () => {
+test("finances shares its selected-period P&L across all views", () => {
   const source = read(FINANCES_PAGE);
 
-  assert.match(
-    source,
-    /period === "7d"\s*\?\s*profitPromise/,
-    "the 7d window no longer reuses the selected-period P&L promise — that is a duplicate MAIN read",
+  assert.equal(
+    source.split("getFinanceProfit(period, now)").length - 1,
+    1,
+    "the selected-period P&L is read more than once instead of sharing one promise",
   );
 });

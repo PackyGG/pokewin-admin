@@ -26,22 +26,27 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { REWARD_QUERY_TIMEOUT_MS, safeQuery } from "@/lib/errors/safe-query";
 import {
   FINANCE_PERIODS,
+  financePeriodSince,
   financePeriodLabel,
   financeWeekDateRange,
   parseFinancePeriod,
   type FinancePeriod,
 } from "@/lib/finances/periods";
-import { calculateWeeklyProfit } from "@/lib/finances/weekly-profit";
+import { buildFinanceProfitTimeline } from "@/lib/finances/profit-timeline";
+import { calculateNetProfit } from "@/lib/finances/weekly-profit";
 import { houseAmountTextClass } from "@/lib/house-pov";
 import {
+  getFinanceDailyPnl,
+  getFinanceGamingSummary,
   getFinanceProfit,
+  getOperatingExpenseSummary,
   getSalaryExpenseSummary,
-  getWeeklyOperatingExpenseSummary,
 } from "@/lib/queries/finances-overview";
 import { requireMotha } from "@/lib/salary/motha-gate";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 
+import { FinanceProfitTimeline } from "./finance-profit-timeline";
 import { FinanceCardSkeleton, FinancesOverviewSkeleton } from "./skeleton";
 
 export const metadata = { title: "Finances" };
@@ -103,9 +108,11 @@ function FinanceLink({
 
 type FinanceProfitData = Awaited<ReturnType<typeof getFinanceProfit>>;
 type SalarySummaryData = Awaited<ReturnType<typeof getSalaryExpenseSummary>>;
-type WeeklyOperatingExpenseData = Awaited<
-  ReturnType<typeof getWeeklyOperatingExpenseSummary>
+type OperatingExpenseData = Awaited<
+  ReturnType<typeof getOperatingExpenseSummary>
 >;
+type DailyPnlData = Awaited<ReturnType<typeof getFinanceDailyPnl>>;
+type GamingSummaryData = Awaited<ReturnType<typeof getFinanceGamingSummary>>;
 
 /** `safeQuery` never rejects — it resolves to `{ data, error }` — so its
  *  promises are safe to create here and await inside the children. */
@@ -124,44 +131,35 @@ type QueryResult<T> = Promise<{ data: T | null }>;
  */
 function FinancesOverview({ period }: { period: FinancePeriod }) {
   const now = new Date();
+  const since = financePeriodSince(period, now);
   const profitPromise = safeQuery(
     () => getFinanceProfit(period, now),
     null,
     `finances.profit.${period}`,
     REWARD_QUERY_TIMEOUT_MS,
   );
-  // When the selected window IS the accounting week, the Weekly card and
-  // the Profit card want the identical number — share the one promise
-  // rather than paying a second P&L read against the globally capped
-  // mirror pool.
-  const weeklyCashProfitPromise =
-    period === "7d"
-      ? profitPromise
-      : safeQuery(
-          () => getFinanceProfit("7d", now),
-          null,
-          "finances.profit.7d",
-          REWARD_QUERY_TIMEOUT_MS,
-        );
   const salaryPromise = safeQuery(
-    () => getSalaryExpenseSummary(period),
+    () => getSalaryExpenseSummary(period, now),
     null,
     `finances.salaryExpenses.${period}`,
     REWARD_QUERY_TIMEOUT_MS,
   );
-  const weeklySalaryPromise =
-    period === "7d"
-      ? salaryPromise
-      : safeQuery(
-          () => getSalaryExpenseSummary("7d"),
-          null,
-          "finances.salaryExpenses.7d",
-          REWARD_QUERY_TIMEOUT_MS,
-        );
-  const weeklyOperatingExpensePromise = safeQuery(
-    () => getWeeklyOperatingExpenseSummary(now),
+  const operatingExpensePromise = safeQuery(
+    () => getOperatingExpenseSummary(period, now),
     null,
-    "finances.weeklyOperatingExpenses",
+    `finances.operatingExpenses.${period}`,
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const dailyPnlPromise = safeQuery(
+    () => getFinanceDailyPnl(period, now),
+    [],
+    `finances.dailyPnl.${period}`,
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const gamingPromise = safeQuery(
+    () => getFinanceGamingSummary(period, now),
+    null,
+    `finances.gaming.${period}`,
     REWARD_QUERY_TIMEOUT_MS,
   );
   const label = financePeriodLabel(period);
@@ -170,39 +168,20 @@ function FinancesOverview({ period }: { period: FinancePeriod }) {
     period === "7d" ? `Week to date · ${weekRange} UTC` : `Last ${label}`;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <div className="lg:col-span-2">
-        <Suspense fallback={<FinanceCardSkeleton />}>
-          <WeeklyProfitCard
-            cashProfitPromise={weeklyCashProfitPromise}
-            salaryPromise={weeklySalaryPromise}
-            operatingExpensePromise={weeklyOperatingExpensePromise}
-            weekRange={weekRange}
-          />
-        </Suspense>
-      </div>
-
-      {/* Profit card — the header, INCLUDING the period chips, is static.
-          The chips are the control the admin uses to change window, so
-          they must paint immediately and stay on screen while the new
-          window streams in behind the content boundary below. Only the
-          trend icon depends on the data, so it gets its own hair-thin
-          boundary rather than dragging the whole header back behind the
-          read. */}
-      <Card className="min-h-[310px]">
+    <div className="space-y-4">
+      <Card className="min-h-[330px]">
         <CardHeader className="gap-3 border-b">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Suspense
-                  fallback={<Skeleton className="size-4 shrink-0 rounded" />}
-                >
-                  <ProfitTrendIcon promise={profitPromise} />
-                </Suspense>
-                Cash P&amp;L
+                <BadgeDollarSign
+                  className="size-4 text-emerald-500"
+                  aria-hidden
+                />
+                Net result
               </CardTitle>
               <CardDescription>
-                Before salaries, subscriptions, and logged expenses
+                What the business made after every tracked operating cost
               </CardDescription>
             </div>
             <PeriodChips
@@ -210,176 +189,414 @@ function FinancesOverview({ period }: { period: FinancePeriod }) {
               current={period}
               paramKey="period"
               defaultValue="7d"
-              ariaNoun="profit period"
+              ariaNoun="net profit period"
               className="self-start"
               spinnerSize={12}
             />
           </div>
         </CardHeader>
-
-        <Suspense fallback={<ProfitContentFallback />}>
-          <ProfitCardContent
-            promise={profitPromise}
+        <Suspense fallback={<NetProfitContentFallback />}>
+          <NetProfitContent
+            cashProfitPromise={profitPromise}
+            salaryPromise={salaryPromise}
+            operatingExpensePromise={operatingExpensePromise}
             caption={selectedPeriodCaption}
           />
         </Suspense>
       </Card>
 
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Cash-P&L card — the trend icon and content stream independently.
+          The chips are the control the admin uses to change window, so
+          they live in the static net-result header above. */}
+        <Card className="min-h-[310px]">
+          <CardHeader className="border-b">
+            <CardTitle className="flex items-center gap-2">
+              <Suspense
+                fallback={<Skeleton className="size-4 shrink-0 rounded" />}
+              >
+                <ProfitTrendIcon promise={profitPromise} />
+              </Suspense>
+              Cash P&amp;L
+            </CardTitle>
+            <CardDescription>
+              Before salaries, subscriptions, and logged expenses
+            </CardDescription>
+          </CardHeader>
+
+          <Suspense fallback={<ProfitContentFallback />}>
+            <ProfitCardContent
+              promise={profitPromise}
+              caption={selectedPeriodCaption}
+            />
+          </Suspense>
+        </Card>
+
+        <Suspense fallback={<FinanceCardSkeleton />}>
+          <SalaryExpensesCard
+            promise={salaryPromise}
+            caption={period === "7d" ? `${weekRange} UTC` : `Last ${label}`}
+          />
+        </Suspense>
+      </div>
+
       <Suspense fallback={<FinanceCardSkeleton />}>
-        <SalaryExpensesCard
-          promise={salaryPromise}
-          caption={period === "7d" ? `${weekRange} UTC` : `Last ${label}`}
+        <ProfitTimelineLeg
+          dailyPnlPromise={dailyPnlPromise}
+          salaryPromise={salaryPromise}
+          operatingExpensePromise={operatingExpensePromise}
+          since={since}
+          through={now}
+          caption={selectedPeriodCaption}
+        />
+      </Suspense>
+
+      <Suspense fallback={<FinanceCardSkeleton />}>
+        <RevenueToProfitBridge
+          gamingPromise={gamingPromise}
+          cashProfitPromise={profitPromise}
+          salaryPromise={salaryPromise}
+          operatingExpensePromise={operatingExpensePromise}
+          caption={selectedPeriodCaption}
         />
       </Suspense>
     </div>
   );
 }
 
-async function WeeklyProfitCard({
+async function NetProfitContent({
   cashProfitPromise,
   salaryPromise,
   operatingExpensePromise,
-  weekRange,
+  caption,
 }: {
   cashProfitPromise: QueryResult<FinanceProfitData>;
   salaryPromise: QueryResult<SalarySummaryData>;
-  operatingExpensePromise: QueryResult<WeeklyOperatingExpenseData>;
-  weekRange: string;
+  operatingExpensePromise: QueryResult<OperatingExpenseData>;
+  caption: string;
 }) {
-  // All three reads were started by the synchronous parent, so these awaits
-  // do not serialize their database work.
   const { data: cashProfit } = await cashProfitPromise;
   const { data: salary } = await salaryPromise;
   const { data: operatingExpenses } = await operatingExpensePromise;
-  const weeklyProfit =
+  const netProfit =
     cashProfit && salary && operatingExpenses
-      ? calculateWeeklyProfit({
+      ? calculateNetProfit({
           cashProfit: cashProfit.pnl,
           salaryExpense: salary.periodExpense,
-          monthlySubscriptions: operatingExpenses.monthlySubscriptions,
+          subscriptionExpense: operatingExpenses.subscriptionExpense,
           oneTimeExpenses: operatingExpenses.oneTimeExpenses,
         })
       : null;
-  const trackedCosts = weeklyProfit
-    ? weeklyProfit.salaryExpense +
-      weeklyProfit.subscriptionExpense +
-      weeklyProfit.oneTimeExpenses
-    : 0;
 
   return (
-    <Card className="min-h-[330px]">
-      <CardHeader className="border-b">
-        <CardTitle className="flex items-center gap-2">
-          <BadgeDollarSign
-            className={cn(
-              "size-4",
-              weeklyProfit && weeklyProfit.netProfit < 0
-                ? "text-rose-500"
-                : "text-emerald-500",
-            )}
-            aria-hidden
-          />
-          Net result this week
-        </CardTitle>
-        <CardDescription>
-          What the business made after every tracked operating cost ·{" "}
-          {weekRange} · UTC
-        </CardDescription>
-      </CardHeader>
-
-      <CardContent className="flex flex-1 flex-col gap-4">
-        {weeklyProfit ? (
-          <>
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.35fr)]">
-              <div className="flex min-h-44 flex-col justify-between rounded-xl border bg-muted/20 p-5">
-                <div>
-                  <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                    {weeklyProfit.netProfit >= 0
-                      ? "Actual profit after costs"
-                      : "Actual loss after costs"}
-                  </p>
-                  <p
-                    className={cn(
-                      "mt-2 text-4xl font-bold tracking-tight tabular-nums sm:text-5xl",
-                      houseAmountTextClass(weeklyProfit.netProfit),
-                    )}
-                  >
-                    {weeklyProfit.netProfit >= 0 ? "+" : "−"}
-                    <AnimatedNumber
-                      value={Math.abs(weeklyProfit.netProfit)}
-                      format="currency"
-                    />
-                  </p>
-                </div>
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  This is the number to use when asking what we made this week.
-                </p>
-              </div>
-
-              <div className="space-y-3">
+    <CardContent className="flex flex-1 flex-col gap-4">
+      {netProfit ? (
+        <>
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.35fr)]">
+            <div className="flex min-h-44 flex-col justify-between rounded-xl border bg-muted/20 p-5">
+              <div>
                 <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                  Money flow
+                  {netProfit.netProfit >= 0
+                    ? "Actual profit after costs"
+                    : "Actual loss after costs"}
                 </p>
-                <div className="grid gap-2 sm:grid-cols-3">
-                  <MoneyFlowMetric
-                    label="Cash P&L"
-                    hint="Before operating costs"
-                    value={weeklyProfit.cashProfit}
-                    tone={
-                      weeklyProfit.cashProfit >= 0 ? "positive" : "negative"
-                    }
-                    signed
+                <p
+                  className={cn(
+                    "mt-2 text-4xl font-bold tracking-tight tabular-nums sm:text-5xl",
+                    houseAmountTextClass(netProfit.netProfit),
+                  )}
+                >
+                  {netProfit.netProfit >= 0 ? "+" : "−"}
+                  <AnimatedNumber
+                    value={Math.abs(netProfit.netProfit)}
+                    format="currency"
                   />
-                  <MoneyFlowMetric
-                    label="Tracked costs"
-                    hint="Salary + tools + expenses"
-                    value={trackedCosts}
-                    tone="negative"
-                    prefix="−"
-                  />
-                  <MoneyFlowMetric
-                    label="Net result"
-                    hint="What remains"
-                    value={weeklyProfit.netProfit}
-                    tone={weeklyProfit.netProfit >= 0 ? "positive" : "negative"}
-                    signed
-                    emphasized
-                  />
-                </div>
-                <p className="text-center text-xs font-medium text-muted-foreground">
-                  Cash P&amp;L − tracked costs = net result
                 </p>
               </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                This is the number to use when asking what we made for the
+                selected period.
+              </p>
             </div>
 
-            <div className="grid gap-2 border-t pt-4 sm:grid-cols-3">
-              <CostBreakdownItem
-                href="/salaries"
-                label="Salary accrual"
-                value={weeklyProfit.salaryExpense}
+            <div className="space-y-3">
+              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                Money flow
+              </p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <MoneyFlowMetric
+                  label="Cash P&L"
+                  hint="Before operating costs"
+                  value={netProfit.cashProfit}
+                  tone={netProfit.cashProfit >= 0 ? "positive" : "negative"}
+                  signed
+                />
+                <MoneyFlowMetric
+                  label="Tracked costs"
+                  hint="Salary + tools + expenses"
+                  value={netProfit.operatingCosts}
+                  tone="negative"
+                  prefix="−"
+                />
+                <MoneyFlowMetric
+                  label="Net result"
+                  hint="What remains"
+                  value={netProfit.netProfit}
+                  tone={netProfit.netProfit >= 0 ? "positive" : "negative"}
+                  signed
+                  emphasized
+                />
+              </div>
+              <p className="text-center text-xs font-medium text-muted-foreground">
+                Cash P&amp;L − tracked costs = net result
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-2 border-t pt-4 sm:grid-cols-3">
+            <CostBreakdownItem
+              href="/salaries"
+              label="Salary accrual"
+              value={netProfit.salaryExpense}
+            />
+            <CostBreakdownItem
+              href="/finances/subscriptions"
+              label="Subscriptions"
+              value={netProfit.subscriptionExpense}
+            />
+            <CostBreakdownItem
+              href="/finances/expenses"
+              label="Logged expenses"
+              value={netProfit.oneTimeExpenses}
+            />
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {caption}. Salary and subscriptions are prorated to the exact
+            window; one-time expenses use their recorded date. Unlogged costs
+            are not included.
+          </p>
+        </>
+      ) : (
+        <Unavailable message="Net profit could not be loaded. Refresh to retry." />
+      )}
+    </CardContent>
+  );
+}
+
+function NetProfitContentFallback() {
+  return (
+    <CardContent className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.35fr)]">
+        <Skeleton className="h-44 rounded-xl" />
+        <div className="space-y-3">
+          <Skeleton className="h-3 w-24" />
+          <div className="grid gap-2 sm:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-24 rounded-xl" />
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="grid gap-2 border-t pt-4 sm:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <Skeleton key={index} className="h-16 rounded-lg" />
+        ))}
+      </div>
+    </CardContent>
+  );
+}
+
+async function ProfitTimelineLeg({
+  dailyPnlPromise,
+  salaryPromise,
+  operatingExpensePromise,
+  since,
+  through,
+  caption,
+}: {
+  dailyPnlPromise: QueryResult<DailyPnlData>;
+  salaryPromise: QueryResult<SalarySummaryData>;
+  operatingExpensePromise: QueryResult<OperatingExpenseData>;
+  since: Date;
+  through: Date;
+  caption: string;
+}) {
+  const { data: dailyPnl } = await dailyPnlPromise;
+  const { data: salary } = await salaryPromise;
+  const { data: operatingExpenses } = await operatingExpensePromise;
+
+  if (!dailyPnl || !salary || !operatingExpenses) {
+    return (
+      <Card>
+        <CardHeader className="border-b">
+          <CardTitle>Profit timeline</CardTitle>
+          <CardDescription>{caption}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Unavailable message="The profit timeline could not be loaded. Refresh to retry." />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const timeline = buildFinanceProfitTimeline({
+    since,
+    through,
+    dailyPnl,
+    monthlySalary: salary.monthly,
+    monthlySubscriptions: operatingExpenses.monthlySubscriptions,
+    oneTimeByDate: operatingExpenses.oneTimeByDate,
+  });
+
+  return <FinanceProfitTimeline data={timeline} caption={caption} />;
+}
+
+async function RevenueToProfitBridge({
+  gamingPromise,
+  cashProfitPromise,
+  salaryPromise,
+  operatingExpensePromise,
+  caption,
+}: {
+  gamingPromise: QueryResult<GamingSummaryData>;
+  cashProfitPromise: QueryResult<FinanceProfitData>;
+  salaryPromise: QueryResult<SalarySummaryData>;
+  operatingExpensePromise: QueryResult<OperatingExpenseData>;
+  caption: string;
+}) {
+  const { data: gaming } = await gamingPromise;
+  const { data: cashProfit } = await cashProfitPromise;
+  const { data: salary } = await salaryPromise;
+  const { data: operatingExpenses } = await operatingExpensePromise;
+
+  const profit =
+    cashProfit && salary && operatingExpenses
+      ? calculateNetProfit({
+          cashProfit: cashProfit.pnl,
+          salaryExpense: salary.periodExpense,
+          subscriptionExpense: operatingExpenses.subscriptionExpense,
+          oneTimeExpenses: operatingExpenses.oneTimeExpenses,
+        })
+      : null;
+
+  return (
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle>Revenue-to-profit bridge</CardTitle>
+        <CardDescription>
+          From gaming activity to the amount the business kept · {caption}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {gaming && profit ? (
+          <>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+              <BridgeStep
+                index="01"
+                label="Wager"
+                value={gaming.wager}
+                hint="Staked volume"
+                tone="neutral"
               />
-              <CostBreakdownItem
-                href="/finances/subscriptions"
-                label="Subscriptions"
-                value={weeklyProfit.subscriptionExpense}
+              <BridgeStep
+                index="02"
+                label="GGR"
+                value={gaming.ggr}
+                hint="Wager − gaming payouts"
+                tone={gaming.ggr >= 0 ? "positive" : "negative"}
+                signed
               />
-              <CostBreakdownItem
-                href="/finances/expenses"
-                label="Logged expenses"
-                value={weeklyProfit.oneTimeExpenses}
+              <BridgeStep
+                index="03"
+                label="Cash P&L"
+                value={profit.cashProfit}
+                hint="Balance-sheet result"
+                tone={profit.cashProfit >= 0 ? "positive" : "negative"}
+                signed
+              />
+              <BridgeStep
+                index="04"
+                label="Operating costs"
+                value={profit.operatingCosts}
+                hint="Salary + tools + expenses"
+                tone="negative"
+                prefix="−"
+              />
+              <BridgeStep
+                index="05"
+                label="Final net"
+                value={profit.netProfit}
+                hint="Cash P&L − costs"
+                tone={profit.netProfit >= 0 ? "positive" : "negative"}
+                signed
+                emphasized
               />
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Includes weekly salary accrual, one quarter of active monthly
-              subscriptions, and expenses logged this week. Unlogged costs are
-              not included.
+              Wager is activity volume and GGR is gaming margin. Cash P&amp;L
+              reconciles gaming activity with deposits, withdrawals, user
+              holdings, inventory, and vouchers before tracked operating costs
+              are deducted.
             </p>
           </>
         ) : (
-          <Unavailable message="Weekly P&L could not be loaded. Refresh to retry." />
+          <Unavailable message="The revenue-to-profit bridge could not be loaded. Refresh to retry." />
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function BridgeStep({
+  index,
+  label,
+  value,
+  hint,
+  tone,
+  signed = false,
+  prefix,
+  emphasized = false,
+}: {
+  index: string;
+  label: string;
+  value: number;
+  hint: string;
+  tone: "positive" | "negative" | "neutral";
+  signed?: boolean;
+  prefix?: string;
+  emphasized?: boolean;
+}) {
+  const sign = prefix ?? (signed ? (value >= 0 ? "+" : "−") : "");
+
+  return (
+    <div
+      className={cn(
+        "min-w-0 rounded-xl border p-3.5",
+        emphasized
+          ? "border-foreground/15 bg-foreground/[0.04] ring-1 ring-foreground/10"
+          : "bg-muted/20",
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          {label}
+        </p>
+        <span className="font-mono text-[9px] text-muted-foreground/60">
+          {index}
+        </span>
+      </div>
+      <p
+        className={cn(
+          "mt-2 truncate text-xl font-bold tracking-tight tabular-nums",
+          tone === "positive" && "text-emerald-600 dark:text-emerald-400",
+          tone === "negative" && "text-rose-600 dark:text-rose-400",
+        )}
+      >
+        {sign}
+        {formatCurrency(Math.abs(value))}
+      </p>
+      <p className="mt-1 truncate text-[10px] text-muted-foreground">{hint}</p>
+    </div>
   );
 }
 

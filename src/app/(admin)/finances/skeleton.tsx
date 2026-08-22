@@ -44,11 +44,13 @@ export function FinanceCardSkeleton({
 
 export function FinancesOverviewSkeleton() {
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <div className="lg:col-span-2">
+    <div className="space-y-4">
+      <FinanceCardSkeleton withChips />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <FinanceCardSkeleton />
         <FinanceCardSkeleton />
       </div>
-      <FinanceCardSkeleton withChips />
+      <FinanceCardSkeleton />
       <FinanceCardSkeleton />
     </div>
   );
