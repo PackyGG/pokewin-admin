@@ -1,4 +1,4 @@
-import { BarChart3, CircleDollarSign, Coins, ShieldAlert } from "lucide-react";
+import { BarChart3, ShieldAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -8,7 +8,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   EosTestOverview,
   EosTestOverviewPeriod,
@@ -21,14 +20,14 @@ const PERIOD_LABELS: Record<EosTestOverviewPeriod["period"], string> = {
   "30d": "Last 30 days",
 };
 
-function formatAmount(value: number, currency: EosTestOverviewPeriod["currency"]) {
+function formatAmount(value: number) {
   const normalized = Object.is(value, -0) ? 0 : value;
   const amount = new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2,
     signDisplay: "exceptZero",
   }).format(normalized);
-  return `${amount} ${currency === "real" ? "real" : "coin"}`;
+  return `${amount} real`;
 }
 
 function formatRate(part: number, total: number) {
@@ -62,7 +61,7 @@ function PeriodCard({ data }: { data: EosTestOverviewPeriod | undefined }) {
             impact > 0 && "text-emerald-600 dark:text-emerald-400",
             impact < 0 && "text-destructive",
           )}>
-            {formatAmount(impact, data.currency)}
+            {formatAmount(impact)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             Creator P&amp;L reduction; positive means the selected result paid the creator less.
@@ -104,13 +103,13 @@ function PeriodCard({ data }: { data: EosTestOverviewPeriod | undefined }) {
           <div className="flex justify-between gap-3">
             <span className="text-muted-foreground">Random baseline creator P&amp;L</span>
             <span className="font-medium tabular-nums">
-              {formatAmount(data.randomBaselineCreatorProfitLoss, data.currency)}
+              {formatAmount(data.randomBaselineCreatorProfitLoss)}
             </span>
           </div>
           <div className="flex justify-between gap-3">
             <span className="text-muted-foreground">Selected creator P&amp;L</span>
             <span className="font-medium tabular-nums">
-              {formatAmount(data.selectedCreatorProfitLoss, data.currency)}
+              {formatAmount(data.selectedCreatorProfitLoss)}
             </span>
           </div>
           {data.fallbackBattles > 0 && (
@@ -127,20 +126,14 @@ function PeriodCard({ data }: { data: EosTestOverviewPeriod | undefined }) {
   );
 }
 
-function CurrencyOverview({
-  overview,
-  currency,
-}: {
-  overview: EosTestOverview;
-  currency: EosTestOverviewPeriod["currency"];
-}) {
-  const periods = overview.periods.filter((period) => period.currency === currency);
+function RealBalanceOverview({ overview }: { overview: EosTestOverview }) {
+  const periods = overview.periods.filter((period) => period.currency === "real");
   if (periods.every((period) => period.steeredBattles === 0)) {
     return (
       <Card>
         <CardContent className="flex min-h-48 flex-col items-center justify-center gap-2 text-center">
           <BarChart3 className="size-8 text-muted-foreground" />
-          <p className="font-medium">No controlled {currency} battles tracked yet</p>
+          <p className="font-medium">No controlled real-balance battles tracked yet</p>
           <p className="max-w-md text-sm text-muted-foreground">
             This overview fills automatically when an enabled EOS global or per-user control
             selects a battle result.
@@ -151,7 +144,7 @@ function CurrencyOverview({
   }
 
   return (
-    <div className="grid gap-3 lg:grid-cols-3">
+    <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
       {(["24h", "7d", "30d"] as const).map((period) => (
         <PeriodCard
           key={period}
@@ -203,22 +196,7 @@ export function EosOverview({ overview }: { overview: EosTestOverview | null }) 
         </div>
       </div>
 
-      <Tabs defaultValue="real" className="gap-4">
-        <TabsList variant="line">
-          <TabsTrigger value="real">
-            <CircleDollarSign className="size-4" />Real balance
-          </TabsTrigger>
-          <TabsTrigger value="coin">
-            <Coins className="size-4" />Coins
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="real">
-          <CurrencyOverview overview={overview} currency="real" />
-        </TabsContent>
-        <TabsContent value="coin">
-          <CurrencyOverview overview={overview} currency="coin" />
-        </TabsContent>
-      </Tabs>
+      <RealBalanceOverview overview={overview} />
     </div>
   );
 }

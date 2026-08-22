@@ -214,7 +214,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
   }
 
   return (
-    <div className="mx-auto grid max-w-[1400px] items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+    <div className="grid w-full items-start gap-5 2xl:grid-cols-[minmax(0,1fr)_360px]">
       <Card className="min-w-0 overflow-visible">
         <CardHeader className="border-b">
           <CardTitle className="flex items-center gap-2 text-base"><UserRoundCog className="size-4 text-primary" />Per-user outcome control</CardTitle>
@@ -444,7 +444,7 @@ export function EosUserSequences({ environment, initial, forceAllLosses, focusUs
         </CardContent>
       </Card>
 
-      <Card className="xl:sticky xl:top-5">
+      <Card className="2xl:sticky 2xl:top-5">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base"><ListOrdered className="size-4 text-primary" />Configured users</CardTitle>
           <p className="text-sm text-muted-foreground">{configs.length} personal {configs.length === 1 ? "flow" : "flows"}</p>

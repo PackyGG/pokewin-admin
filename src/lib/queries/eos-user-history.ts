@@ -115,6 +115,7 @@ export async function getEosObservedCreatorBattles(
       ) winners ON b.winner_team IS NOT NULL
       WHERE b.user_id = $1
         AND b.eos_block_hash IS NOT NULL
+        AND b.currency::text = 'real'
         AND b.created_at >= now() - interval '30 days'
       ORDER BY b.created_at DESC, b.id DESC
       LIMIT $2
@@ -158,6 +159,7 @@ export async function getRecentEosObservedBattles(
           AND bp.team_number = b.winner_team
       ) winners ON b.winner_team IS NOT NULL
       WHERE b.eos_block_hash IS NOT NULL
+        AND b.currency::text = 'real'
         AND b.created_at >= now() - interval '30 days'
       ORDER BY b.created_at DESC, b.id DESC
       LIMIT $1

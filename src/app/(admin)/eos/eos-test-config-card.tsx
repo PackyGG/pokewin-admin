@@ -100,7 +100,7 @@ export function EosTestConfigCard({ initial }: { initial: EosTestConfig }) {
   }
 
   return (
-    <Card className="mx-auto w-full max-w-[1200px] overflow-visible">
+    <Card className="w-full overflow-visible">
       <CardHeader className="border-b">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-1">
@@ -129,15 +129,6 @@ export function EosTestConfigCard({ initial }: { initial: EosTestConfig }) {
         </div>
       </CardHeader>
       <CardContent className="space-y-6 pt-1">
-        <EosFlowBuilder
-          id="global-eos-flow"
-          rules={rules}
-          persistent={persistent}
-          randomized={randomized}
-          onRulesChange={setRules}
-          onPersistentChange={setPersistent}
-          onRandomizedChange={setRandomized}
-        />
         <div className={`flex flex-col gap-4 rounded-xl p-4 sm:flex-row sm:items-center sm:justify-between ${
           forceAllLosses
             ? "bg-destructive/10 ring-1 ring-destructive/35"
@@ -171,6 +162,15 @@ export function EosTestConfigCard({ initial }: { initial: EosTestConfig }) {
             />
           </label>
         </div>
+        <EosFlowBuilder
+          id="global-eos-flow"
+          rules={rules}
+          persistent={persistent}
+          randomized={randomized}
+          onRulesChange={setRules}
+          onPersistentChange={setPersistent}
+          onRandomizedChange={setRandomized}
+        />
         <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-3 border-t bg-background/90 px-4 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between">
           <span className="flex items-center gap-2 text-xs text-muted-foreground">
             <ShieldCheck className="size-4 text-emerald-500" />Ordered targets retry when unavailable. Saving restarts at rule one.

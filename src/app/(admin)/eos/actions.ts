@@ -142,7 +142,8 @@ export async function getEosUserBattleHistory(input: unknown) {
     listEosSelectionSummaries(environment, 50, userId),
     getEosTestOverview(environment),
   ]);
-  const decisionsByBattle = new Map(selections.map((entry) => [entry.battleId, entry]));
+  const realSelections = selections.filter((entry) => entry.currency === "real");
+  const decisionsByBattle = new Map(realSelections.map((entry) => [entry.battleId, entry]));
   const summariesByBattle = new Map(summaries.map((entry) => [entry.battleId, entry]));
   const observedIds = new Set(observed.map((entry) => entry.battleId));
   const trackingStartedAt = overview.trackingStartedAt;
@@ -156,7 +157,7 @@ export async function getEosUserBattleHistory(input: unknown) {
       beforeTracking: trackingStartedAt !== null
         && new Date(battle.createdAt).getTime() < new Date(trackingStartedAt).getTime(),
     })),
-    ...selections
+    ...realSelections
       .filter((entry) => !observedIds.has(entry.battleId))
       .map((decision) => ({
         battleId: decision.battleId,
@@ -193,10 +194,8 @@ export async function loadEosPlayerIntelligence(input: unknown) {
     requireEosTestAccess(),
     readDbEnvFromCookie(),
   ]);
-  return getEosPlayerIntelligence(
-    environment,
-    eosPlayerIntelligenceInputSchema.parse(input),
-  );
+  const filters = eosPlayerIntelligenceInputSchema.parse(input);
+  return getEosPlayerIntelligence(environment, { ...filters, currency: "real" });
 }
 
 export async function loadEosBattles() {

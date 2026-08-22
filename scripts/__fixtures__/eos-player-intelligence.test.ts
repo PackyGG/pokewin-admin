@@ -47,4 +47,8 @@ test("EOS creator intelligence filters are closed and access gated", () => {
     actionSource,
     /loadEosPlayerIntelligence[\s\S]*requireEosTestAccess\(\)[\s\S]*readDbEnvFromCookie\(\)/,
   );
+  assert.match(
+    actionSource,
+    /loadEosPlayerIntelligence[\s\S]*currency: "real"/,
+  );
 });

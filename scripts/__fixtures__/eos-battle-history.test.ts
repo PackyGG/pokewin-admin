@@ -21,6 +21,7 @@ test("EOS battle history reads bounded creator battles from the selected environ
   assert.match(querySource, /environment === "prod"[\s\S]*getProdReadDrizzleDb\(\)/);
   assert.match(querySource, /getBattleTestDevReadDrizzleDb\(\)/);
   assert.match(querySource, /b\.created_at >= now\(\) - interval '30 days'/);
+  assert.match(querySource, /b\.currency::text = 'real'/);
   assert.match(querySource, /b\.user_id = \$1/);
   assert.match(querySource, /LIMIT \$2/);
   assert.match(querySource, /b\.eos_block_hash IS NOT NULL/);

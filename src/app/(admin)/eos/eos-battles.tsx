@@ -5,18 +5,14 @@ import Link from "next/link";
 import {
   Activity,
   ArrowUpRight,
-  CircleDollarSign,
   Loader2,
   RefreshCw,
   Search,
-  ShieldCheck,
-  ShieldQuestion,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { MobileCard } from "@/components/data-table/mobile-card-list";
 import { EmptyState } from "@/components/empty-state";
-import { KpiTile } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -138,49 +134,21 @@ export function EosBattles({ active }: { active: boolean }) {
   const groupBattles = data?.rows.filter((row) => row.battle.mode === "group").length ?? 0;
 
   return (
-    <div className="min-w-0 space-y-4">
-      <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-        <KpiTile
-          icon={Activity}
-          label="Loaded battles"
-          value={String(data?.rows.length ?? 0)}
-          sub="Latest EOS-backed battles"
-          accent="blue"
-        />
-        <KpiTile
-          icon={ShieldCheck}
-          label="Control applied"
-          value={String(controlled)}
-          sub="Detailed decisions"
-          accent="emerald"
-        />
-        <KpiTile
-          icon={ShieldQuestion}
-          label="Decision missing"
-          value={String(missing)}
-          sub="Needs investigation"
-          accent={missing > 0 ? "rose" : "blue"}
-        />
-        <KpiTile
-          icon={CircleDollarSign}
-          label="Group battles"
-          value={String(groupBattles)}
-          sub="Shared creator team"
-          accent="purple"
-        />
-      </div>
-
+    <div className="min-w-0">
       <Card>
         <CardHeader className="border-b">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <CardTitle className="flex items-center gap-2">
                 <Activity className="size-4 text-primary" />
-                Latest EOS battles
+                Real-balance battles
               </CardTitle>
-              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Outcome and P&amp;L are shown from the battle creator&apos;s perspective.
-              </p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                <Badge variant="secondary">{data?.rows.length ?? 0} loaded</Badge>
+                <Badge variant="secondary">{controlled} controlled</Badge>
+                {groupBattles > 0 && <Badge variant="outline">{groupBattles} group</Badge>}
+                {missing > 0 && <Badge variant="destructive">{missing} missing</Badge>}
+              </div>
             </div>
             <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={refresh}>
               {isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
@@ -281,14 +249,12 @@ export function EosBattles({ active }: { active: boolean }) {
               </div>
 
               <div className="hidden overflow-hidden rounded-lg border md:block">
-                <Table className="min-w-[940px]">
+                <Table className="min-w-[760px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Creator</TableHead>
-                      <TableHead>Mode</TableHead>
                       <TableHead>Outcome</TableHead>
                       <TableHead className="text-right">Creator P&amp;L</TableHead>
-                      <TableHead className="text-right">Cost / payout</TableHead>
                       <TableHead>EOS decision</TableHead>
                       <TableHead>Time</TableHead>
                       <TableHead><span className="sr-only">Open</span></TableHead>
@@ -306,17 +272,14 @@ export function EosBattles({ active }: { active: boolean }) {
                             <p className="max-w-44 truncate font-mono text-xs text-muted-foreground">
                               {battle.creatorUserId}
                             </p>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="capitalize">
-                              {battle.mode.replaceAll("_", " ")}
-                            </Badge>
+                            <p className="mt-0.5 text-xs capitalize text-muted-foreground">
+                              {battle.mode.replaceAll("_", " ")} · {amount(battle.creatorCost, battle.currency)} cost
+                            </p>
                           </TableCell>
                           <TableCell><Outcome row={row} /></TableCell>
-                          <TableCell className="text-right"><Profit row={row} /></TableCell>
-                          <TableCell className="text-right text-xs tabular-nums">
-                            <span>{amount(battle.creatorCost, battle.currency)} cost</span>
-                            <span className="block text-muted-foreground">
+                          <TableCell className="text-right">
+                            <Profit row={row} />
+                            <span className="block text-xs font-normal text-muted-foreground">
                               {amount(battle.creatorPayout, battle.currency)} payout
                             </span>
                           </TableCell>

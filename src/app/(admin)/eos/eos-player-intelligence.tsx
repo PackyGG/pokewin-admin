@@ -139,11 +139,12 @@ export function EosPlayerIntelligencePanel({
             Highest-impact battle creators
           </CardTitle>
           <p className="max-w-3xl text-sm text-muted-foreground">
-            Rank completed battles by player profit against the site, activity, or creator-funded exposure.
+            Rank completed real-balance battles by player profit against the site,
+            activity, or creator-funded exposure.
           </p>
         </CardHeader>
         <CardContent className="pt-1">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[0.85fr_0.85fr_1.35fr_1fr_1fr_auto] xl:items-end">
+          <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-[0.9fr_1.35fr_1fr_1fr_auto] 2xl:items-end">
             <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
               Period
               <Select
@@ -158,23 +159,6 @@ export function EosPlayerIntelligencePanel({
                   <SelectItem value="24h">Last 24 hours</SelectItem>
                   <SelectItem value="7d">Last 7 days</SelectItem>
                   <SelectItem value="30d">Last 30 days</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-
-            <label className="space-y-1.5 text-xs font-medium text-muted-foreground">
-              Currency
-              <Select
-                value={filters.currency}
-                onValueChange={(currency) => currency && setFilters((current) => ({
-                  ...current,
-                  currency: currency as EosPlayerIntelligenceInput["currency"],
-                }))}
-              >
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="real">Real balance</SelectItem>
-                  <SelectItem value="coin">Coins</SelectItem>
                 </SelectContent>
               </Select>
             </label>
@@ -236,7 +220,7 @@ export function EosPlayerIntelligencePanel({
               />
             </label>
 
-            <Button type="button" className="w-full xl:w-auto" disabled={isPending} onClick={() => load()}>
+            <Button type="button" className="w-full 2xl:w-auto" disabled={isPending} onClick={() => load()}>
               {isPending ? <Loader2 className="size-4 animate-spin" /> : <BarChart3 className="size-4" />}
               Apply
             </Button>
