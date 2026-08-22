@@ -1,6 +1,7 @@
 import type { IconType } from "react-icons";
 import { FaAws, FaSlack } from "react-icons/fa6";
 import {
+  SiAppwrite,
   SiAuth0,
   SiClerk,
   SiCloudflare,
@@ -243,6 +244,12 @@ const BRANDS: Brand[] = [
     pattern: /\bsupabase\b/i,
     icon: SiSupabase,
     className: "bg-[#3ecf8e]/12 text-[#2da771] dark:text-[#3ecf8e]",
+  },
+  {
+    label: "Appwrite",
+    pattern: /\bappwrite\b/i,
+    icon: SiAppwrite,
+    className: "bg-[#fd366e]/12 text-[#fd366e]",
   },
   {
     label: "PostgreSQL",

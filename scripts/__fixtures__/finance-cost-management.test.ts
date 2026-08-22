@@ -107,6 +107,7 @@ test("subscriptions match common vendors to branded logos", () => {
     "Slack",
     "Datadog",
     "Supabase",
+    "Appwrite",
     "Cloudinary",
     "Auth0",
     "Clerk",
