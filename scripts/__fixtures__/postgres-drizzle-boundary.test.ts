@@ -58,8 +58,15 @@ test("tracked runtime and config contain no retired ClickHouse backend", () => {
     "CLICKHOUSE_[A-Z0-9_]+",
     "clickhouses?://",
   ].join("|");
+  const subscriptionVendorCatalog = new Set([
+    "src/app/(admin)/finances/subscriptions/subscription-brand.tsx",
+    "scripts/__fixtures__/finance-cost-management.test.ts",
+  ]);
+  const backendRelevantFiles = runtimeAndConfigFiles().filter(
+    (file) => !subscriptionVendorCatalog.has(file),
+  );
   assert.deepEqual(
-    filesContaining(retiredBackend, runtimeAndConfigFiles(), {
+    filesContaining(retiredBackend, backendRelevantFiles, {
       ignoreCase: true,
     }),
     [],
