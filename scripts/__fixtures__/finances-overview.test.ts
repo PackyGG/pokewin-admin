@@ -160,12 +160,12 @@ test("finance overview is owner-gated and reuses canonical profit math", () => {
   assert.match(query, /calculateWindowedPnlOneShot/);
   assert.match(query, /eq\(salary_employees\.active, true\)/);
   assert.match(page, /getSalaryExpenseSummary\(period, now\)/);
-  assert.match(page, /value=\{salaries\.periodExpense\}/);
+  assert.match(page, /salaryExpense: salary\.periodExpense/);
   assert.match(query, /monthly \* \(hours \/ \(30 \* 24\)\)/);
   assert.match(page, /Net result/);
-  assert.match(page, /Cash P&amp;L − tracked costs = net result/);
-  assert.match(page, /Actual profit after costs/);
-  assert.match(page, /Salary and subscriptions are prorated to the exact/);
+  assert.match(page, /Cash P&amp;L − operating costs = net result/);
+  assert.match(page, /Net profit/);
+  assert.match(page, /Recurring costs are/);
   assert.match(query, /financePeriodSince\(period, now\)/);
   assert.match(page, /getOperatingExpenseSummary\(period, now\)/);
   assert.match(page, /getFinanceDailyPnl\(period, now\)/);

@@ -129,7 +129,7 @@ test("finances streams each tile on its own boundary", () => {
 
   const boundaries = source.split("<Suspense").length - 1;
   assert.ok(
-    boundaries >= 5,
+    boundaries >= 4,
     `expected a boundary per finance tile, found ${boundaries}`,
   );
 });
@@ -151,7 +151,7 @@ test("finances renders its period control without waiting on a read", () => {
 
   const overviewAt = source.indexOf("function FinancesOverview");
   const chipsAt = source.indexOf("<PeriodChips");
-  const contentBoundaryAt = source.indexOf("<ProfitCardContent");
+  const contentBoundaryAt = source.indexOf("<NetProfitContent");
   assert.ok(
     overviewAt > 0 && chipsAt > overviewAt,
     "PeriodChips moved out of the overview",

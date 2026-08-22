@@ -119,21 +119,20 @@ export function FinanceProfitTimeline({
       <CardHeader className="border-b">
         <CardTitle>Profit timeline</CardTitle>
         <CardDescription>
-          Daily cash P&amp;L, tracked costs, net result, and running profit ·{" "}
-          {caption}
+          Daily performance and running net · {caption}
         </CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="pt-2">
         <ChartContainer
           config={chartConfig}
-          className="aspect-auto h-[260px] w-full lg:h-[330px]"
+          className="aspect-auto h-[250px] w-full lg:h-[300px]"
         >
           <ComposedChart
             data={chartData}
             accessibilityLayer
             margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
           >
-            <CartesianGrid vertical={false} />
+            <CartesianGrid vertical={false} strokeOpacity={0.45} />
             <XAxis
               dataKey="date"
               tickLine={false}
@@ -168,14 +167,14 @@ export function FinanceProfitTimeline({
               yAxisId="daily"
               dataKey="cashPnl"
               fill="var(--color-cashPnl)"
-              fillOpacity={0.7}
+              fillOpacity={0.5}
               radius={[3, 3, 0, 0]}
             />
             <Bar
               yAxisId="daily"
               dataKey="costBar"
               fill="var(--color-costBar)"
-              fillOpacity={0.75}
+              fillOpacity={0.55}
               radius={[0, 0, 3, 3]}
             />
             <Line
@@ -200,7 +199,7 @@ export function FinanceProfitTimeline({
           </ComposedChart>
         </ChartContainer>
 
-        <div className="mt-3 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[11px] text-muted-foreground">
           {Object.entries(chartConfig).map(([key, item]) => (
             <span key={key} className="flex items-center gap-2">
               <span

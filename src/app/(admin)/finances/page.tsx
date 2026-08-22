@@ -1,16 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import {
-  ArrowRight,
-  BadgeDollarSign,
-  CalendarDays,
-  Receipt,
-  TrendingDown,
-  TrendingUp,
-  Users,
-  Wallet,
-  type LucideIcon,
-} from "lucide-react";
+import { ArrowRight, BadgeDollarSign, Wallet } from "lucide-react";
 
 import { AnimatedNumber } from "@/components/animated-number";
 import { SectionHeading } from "@/components/modern-panels";
@@ -169,7 +159,7 @@ function FinancesOverview({ period }: { period: FinancePeriod }) {
 
   return (
     <div className="space-y-4">
-      <Card className="min-h-[330px]">
+      <Card>
         <CardHeader className="gap-3 border-b">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -204,41 +194,6 @@ function FinancesOverview({ period }: { period: FinancePeriod }) {
           />
         </Suspense>
       </Card>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Cash-P&L card — the trend icon and content stream independently.
-          The chips are the control the admin uses to change window, so
-          they live in the static net-result header above. */}
-        <Card className="min-h-[310px]">
-          <CardHeader className="border-b">
-            <CardTitle className="flex items-center gap-2">
-              <Suspense
-                fallback={<Skeleton className="size-4 shrink-0 rounded" />}
-              >
-                <ProfitTrendIcon promise={profitPromise} />
-              </Suspense>
-              Cash P&amp;L
-            </CardTitle>
-            <CardDescription>
-              Before salaries, subscriptions, and logged expenses
-            </CardDescription>
-          </CardHeader>
-
-          <Suspense fallback={<ProfitContentFallback />}>
-            <ProfitCardContent
-              promise={profitPromise}
-              caption={selectedPeriodCaption}
-            />
-          </Suspense>
-        </Card>
-
-        <Suspense fallback={<FinanceCardSkeleton />}>
-          <SalaryExpensesCard
-            promise={salaryPromise}
-            caption={period === "7d" ? `${weekRange} UTC` : `Last ${label}`}
-          />
-        </Suspense>
-      </div>
 
       <Suspense fallback={<FinanceCardSkeleton />}>
         <ProfitTimelineLeg
@@ -289,71 +244,46 @@ async function NetProfitContent({
       : null;
 
   return (
-    <CardContent className="flex flex-1 flex-col gap-4">
+    <CardContent className="space-y-5">
       {netProfit ? (
         <>
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.35fr)]">
-            <div className="flex min-h-44 flex-col justify-between rounded-xl border bg-muted/20 p-5">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                  {netProfit.netProfit >= 0
-                    ? "Actual profit after costs"
-                    : "Actual loss after costs"}
-                </p>
-                <p
-                  className={cn(
-                    "mt-2 text-4xl font-bold tracking-tight tabular-nums sm:text-5xl",
-                    houseAmountTextClass(netProfit.netProfit),
-                  )}
-                >
-                  {netProfit.netProfit >= 0 ? "+" : "−"}
-                  <AnimatedNumber
-                    value={Math.abs(netProfit.netProfit)}
-                    format="currency"
-                  />
-                </p>
-              </div>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                This is the number to use when asking what we made for the
-                selected period.
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)_minmax(0,0.75fr)] lg:divide-x">
+            <div className="lg:pr-6">
+              <p className="text-xs font-medium text-muted-foreground">
+                {netProfit.netProfit >= 0 ? "Net profit" : "Net loss"}
               </p>
+              <p
+                className={cn(
+                  "mt-1 text-4xl font-bold tracking-tight tabular-nums sm:text-5xl",
+                  houseAmountTextClass(netProfit.netProfit),
+                )}
+              >
+                {netProfit.netProfit >= 0 ? "+" : "−"}
+                <AnimatedNumber
+                  value={Math.abs(netProfit.netProfit)}
+                  format="currency"
+                />
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">{caption}</p>
             </div>
 
-            <div className="space-y-3">
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                Money flow
-              </p>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <MoneyFlowMetric
-                  label="Cash P&L"
-                  hint="Before operating costs"
-                  value={netProfit.cashProfit}
-                  tone={netProfit.cashProfit >= 0 ? "positive" : "negative"}
-                  signed
-                />
-                <MoneyFlowMetric
-                  label="Tracked costs"
-                  hint="Salary + tools + expenses"
-                  value={netProfit.operatingCosts}
-                  tone="negative"
-                  prefix="−"
-                />
-                <MoneyFlowMetric
-                  label="Net result"
-                  hint="What remains"
-                  value={netProfit.netProfit}
-                  tone={netProfit.netProfit >= 0 ? "positive" : "negative"}
-                  signed
-                  emphasized
-                />
-              </div>
-              <p className="text-center text-xs font-medium text-muted-foreground">
-                Cash P&amp;L − tracked costs = net result
-              </p>
-            </div>
+            <SummaryMetric
+              label="Cash P&L"
+              hint="Before operating costs"
+              value={netProfit.cashProfit}
+              tone={netProfit.cashProfit >= 0 ? "positive" : "negative"}
+              signed
+            />
+            <SummaryMetric
+              label="Operating costs"
+              hint="Deducted from cash P&L"
+              value={netProfit.operatingCosts}
+              tone="negative"
+              prefix="−"
+            />
           </div>
 
-          <div className="grid gap-2 border-t pt-4 sm:grid-cols-3">
+          <div className="grid border-y sm:grid-cols-3 sm:divide-x">
             <CostBreakdownItem
               href="/salaries"
               label="Salary accrual"
@@ -370,10 +300,9 @@ async function NetProfitContent({
               value={netProfit.oneTimeExpenses}
             />
           </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {caption}. Salary and subscriptions are prorated to the exact
-            window; one-time expenses use their recorded date. Unlogged costs
-            are not included.
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Cash P&amp;L − operating costs = net result. Recurring costs are
+            prorated to the exact window; expenses use their recorded date.
           </p>
         </>
       ) : (
@@ -385,21 +314,15 @@ async function NetProfitContent({
 
 function NetProfitContentFallback() {
   return (
-    <CardContent className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.35fr)]">
-        <Skeleton className="h-44 rounded-xl" />
-        <div className="space-y-3">
-          <Skeleton className="h-3 w-24" />
-          <div className="grid gap-2 sm:grid-cols-3">
-            {Array.from({ length: 3 }).map((_, index) => (
-              <Skeleton key={index} className="h-24 rounded-xl" />
-            ))}
-          </div>
-        </div>
+    <CardContent className="space-y-5">
+      <div className="grid gap-5 lg:grid-cols-3">
+        <Skeleton className="h-20 rounded-lg" />
+        <Skeleton className="h-20 rounded-lg" />
+        <Skeleton className="h-20 rounded-lg" />
       </div>
-      <div className="grid gap-2 border-t pt-4 sm:grid-cols-3">
+      <div className="grid border-y sm:grid-cols-3">
         {Array.from({ length: 3 }).map((_, index) => (
-          <Skeleton key={index} className="h-16 rounded-lg" />
+          <Skeleton key={index} className="m-3 h-10 rounded-md" />
         ))}
       </div>
     </CardContent>
@@ -490,16 +413,14 @@ async function RevenueToProfitBridge({
       <CardContent className="space-y-4">
         {gaming && profit ? (
           <>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="grid gap-px overflow-hidden rounded-xl border bg-border sm:grid-cols-2 xl:grid-cols-5">
               <BridgeStep
-                index="01"
                 label="Wager"
                 value={gaming.wager}
                 hint="Staked volume"
                 tone="neutral"
               />
               <BridgeStep
-                index="02"
                 label="GGR"
                 value={gaming.ggr}
                 hint="Wager − gaming payouts"
@@ -507,7 +428,6 @@ async function RevenueToProfitBridge({
                 signed
               />
               <BridgeStep
-                index="03"
                 label="Cash P&L"
                 value={profit.cashProfit}
                 hint="Balance-sheet result"
@@ -515,7 +435,6 @@ async function RevenueToProfitBridge({
                 signed
               />
               <BridgeStep
-                index="04"
                 label="Operating costs"
                 value={profit.operatingCosts}
                 hint="Salary + tools + expenses"
@@ -523,7 +442,6 @@ async function RevenueToProfitBridge({
                 prefix="−"
               />
               <BridgeStep
-                index="05"
                 label="Final net"
                 value={profit.netProfit}
                 hint="Cash P&L − costs"
@@ -548,7 +466,6 @@ async function RevenueToProfitBridge({
 }
 
 function BridgeStep({
-  index,
   label,
   value,
   hint,
@@ -557,7 +474,6 @@ function BridgeStep({
   prefix,
   emphasized = false,
 }: {
-  index: string;
   label: string;
   value: number;
   hint: string;
@@ -569,22 +485,10 @@ function BridgeStep({
   const sign = prefix ?? (signed ? (value >= 0 ? "+" : "−") : "");
 
   return (
-    <div
-      className={cn(
-        "min-w-0 rounded-xl border p-3.5",
-        emphasized
-          ? "border-foreground/15 bg-foreground/[0.04] ring-1 ring-foreground/10"
-          : "bg-muted/20",
-      )}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-          {label}
-        </p>
-        <span className="font-mono text-[9px] text-muted-foreground/60">
-          {index}
-        </span>
-      </div>
+    <div className={cn("min-w-0 p-4", emphasized ? "bg-muted" : "bg-card")}>
+      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
       <p
         className={cn(
           "mt-2 truncate text-xl font-bold tracking-tight tabular-nums",
@@ -600,208 +504,13 @@ function BridgeStep({
   );
 }
 
-async function ProfitTrendIcon({
-  promise,
-}: {
-  promise: QueryResult<FinanceProfitData>;
-}) {
-  const { data: profit } = await promise;
-  return profit && profit.pnl < 0 ? (
-    <TrendingDown className="size-4 text-rose-500" aria-hidden />
-  ) : (
-    <TrendingUp className="size-4 text-emerald-500" aria-hidden />
-  );
-}
-
-function ProfitContentFallback() {
-  return (
-    <CardContent className="flex flex-1 flex-col justify-between gap-5">
-      <div className="space-y-2">
-        <Skeleton className="h-3 w-20" />
-        <Skeleton className="h-12 w-48" />
-      </div>
-      <div className="grid grid-cols-3 gap-2">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <Skeleton key={index} className="h-16 rounded-lg" />
-        ))}
-      </div>
-      <Skeleton className="h-4 w-full" />
-    </CardContent>
-  );
-}
-
-async function ProfitCardContent({
-  promise,
-  caption,
-}: {
-  promise: QueryResult<FinanceProfitData>;
-  caption: string;
-}) {
-  const { data: profit } = await promise;
-
-  return (
-    <CardContent className="flex flex-1 flex-col justify-between gap-5">
-      {profit ? (
-        <>
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-              Cash P&amp;L · {caption}
-            </p>
-            <p
-              className={cn(
-                "mt-1 text-4xl font-bold tracking-tight tabular-nums sm:text-5xl",
-                houseAmountTextClass(profit.pnl),
-              )}
-            >
-              {profit.pnl >= 0 ? "+" : "−"}
-              <AnimatedNumber value={Math.abs(profit.pnl)} format="currency" />
-            </p>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2">
-            <ProfitDetail
-              label="Deposits"
-              value={profit.deposits}
-              tone="positive"
-            />
-            <ProfitDetail
-              label="Withdrawals"
-              value={profit.withdrawals}
-              tone="negative"
-            />
-            <ProfitDetail
-              label="Holdings Δ"
-              value={
-                profit.balanceChange +
-                profit.inventoryChange +
-                profit.voucherChange
-              }
-              tone="neutral"
-              signed
-            />
-          </div>
-
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Before operating costs: deposits − withdrawals − change in user
-            balances, inventory, and vouchers. Use the net-result card above for
-            what the business actually made after tracked costs.
-          </p>
-        </>
-      ) : (
-        <Unavailable message="Profit data could not be loaded. Refresh to retry." />
-      )}
-    </CardContent>
-  );
-}
-
-async function SalaryExpensesCard({
-  promise,
-  caption,
-}: {
-  promise: QueryResult<SalarySummaryData>;
-  caption: string;
-}) {
-  const { data: salaries } = await promise;
-
-  return (
-    <Card className="min-h-[310px]">
-      <CardHeader className="border-b">
-        <CardTitle className="flex items-center gap-2">
-          <Receipt className="size-4 text-amber-500" aria-hidden />
-          Salary expenses
-        </CardTitle>
-        <CardDescription>Active team commitments</CardDescription>
-      </CardHeader>
-
-      <CardContent className="flex flex-1 flex-col justify-between gap-5">
-        {salaries ? (
-          <>
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                {caption}
-              </p>
-              <p className="mt-1 text-4xl font-bold tracking-tight text-rose-600 tabular-nums dark:text-rose-400 sm:text-5xl">
-                −
-                <AnimatedNumber
-                  value={salaries.periodExpense}
-                  format="currency"
-                />
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Projected USDT salary expense
-              </p>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              <SalaryDetail
-                icon={CalendarDays}
-                label="Monthly"
-                value={formatCurrency(salaries.monthly)}
-              />
-              <SalaryDetail
-                icon={Receipt}
-                label="Annual"
-                value={formatCurrency(salaries.annual)}
-              />
-              <SalaryDetail
-                icon={Users}
-                label="Employees"
-                value={String(salaries.activeEmployees)}
-              />
-            </div>
-
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              Based on active salary records and prorated from a 30-day
-              operating month to match the selected profit period.
-            </p>
-          </>
-        ) : (
-          <Unavailable message="Salary expenses could not be loaded. Refresh to retry." />
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ProfitDetail({
-  label,
-  value,
-  tone,
-  signed = false,
-}: {
-  label: string;
-  value: number;
-  tone: "positive" | "negative" | "neutral";
-  signed?: boolean;
-}) {
-  const prefix = signed && value > 0 ? "+" : signed && value < 0 ? "−" : "";
-  return (
-    <div className="min-w-0 rounded-lg border bg-muted/20 p-2.5">
-      <p className="truncate text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </p>
-      <p
-        className={cn(
-          "mt-1 truncate text-sm font-semibold tabular-nums",
-          tone === "positive" && "text-emerald-600 dark:text-emerald-400",
-          tone === "negative" && "text-rose-600 dark:text-rose-400",
-        )}
-      >
-        {prefix}
-        {formatCurrency(Math.abs(value))}
-      </p>
-    </div>
-  );
-}
-
-function MoneyFlowMetric({
+function SummaryMetric({
   label,
   hint,
   value,
   tone,
   signed = false,
   prefix,
-  emphasized = false,
 }: {
   label: string;
   hint: string;
@@ -809,24 +518,16 @@ function MoneyFlowMetric({
   tone: "positive" | "negative";
   signed?: boolean;
   prefix?: string;
-  emphasized?: boolean;
 }) {
   const sign = prefix ?? (signed ? (value >= 0 ? "+" : "−") : "");
   return (
-    <div
-      className={cn(
-        "min-w-0 rounded-xl border p-3",
-        emphasized
-          ? "bg-foreground/[0.04] ring-1 ring-foreground/10"
-          : "bg-card",
-      )}
-    >
+    <div className="min-w-0 lg:px-6">
       <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
         {label}
       </p>
       <p
         className={cn(
-          "mt-1 truncate text-lg font-bold tabular-nums",
+          "mt-2 truncate text-2xl font-semibold tracking-tight tabular-nums",
           tone === "positive"
             ? "text-emerald-600 dark:text-emerald-400"
             : "text-rose-600 dark:text-rose-400",
@@ -835,7 +536,7 @@ function MoneyFlowMetric({
         {sign}
         {formatCurrency(Math.abs(value))}
       </p>
-      <p className="mt-1 truncate text-[10px] text-muted-foreground">{hint}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
     </div>
   );
 }
@@ -852,7 +553,7 @@ function CostBreakdownItem({
   return (
     <Link
       href={href}
-      className="group flex items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2.5 transition-colors hover:bg-muted/50"
+      className="group flex items-center justify-between gap-3 px-3 py-3 transition-colors hover:bg-muted/35"
     >
       <div className="min-w-0">
         <p className="truncate text-xs text-muted-foreground">{label}</p>
@@ -865,30 +566,6 @@ function CostBreakdownItem({
         aria-hidden
       />
     </Link>
-  );
-}
-
-function SalaryDetail({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="min-w-0 rounded-lg border bg-muted/20 p-2.5">
-      <div className="flex items-center gap-1.5 text-muted-foreground">
-        <Icon className="size-3" aria-hidden />
-        <p className="truncate text-[10px] font-medium uppercase tracking-wider">
-          {label}
-        </p>
-      </div>
-      <p className="mt-1 truncate text-sm font-semibold tabular-nums">
-        {value}
-      </p>
-    </div>
   );
 }
 

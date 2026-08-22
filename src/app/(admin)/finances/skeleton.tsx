@@ -1,9 +1,6 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
-/** Body of one finance card — the caption, the big number, the detail
- *  tiles, and the footnote. Split out so a card whose HEADER is static
- *  (the Profit card, which carries the period chips) can stream only its
- *  content while still falling back to the identical shape. */
+/** Generic streamed finance-card body. */
 export function FinanceCardContentSkeleton() {
   return (
     <div className="space-y-6 px-4 pt-4">
@@ -21,8 +18,7 @@ export function FinanceCardContentSkeleton() {
   );
 }
 
-/** One whole finance card. `withChips` reserves the period-selector slot
- *  so the Profit card's fallback is the same width as the real header. */
+/** One whole finance card. `withChips` reserves the period-selector slot. */
 export function FinanceCardSkeleton({
   withChips = false,
 }: {
@@ -46,10 +42,6 @@ export function FinancesOverviewSkeleton() {
   return (
     <div className="space-y-4">
       <FinanceCardSkeleton withChips />
-      <div className="grid gap-4 lg:grid-cols-2">
-        <FinanceCardSkeleton />
-        <FinanceCardSkeleton />
-      </div>
       <FinanceCardSkeleton />
       <FinanceCardSkeleton />
     </div>
